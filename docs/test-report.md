@@ -1,0 +1,34 @@
+# Test Report — quicksearch@yoji v1.0.0 (2026-08-23)
+
+Environment: Cinnamon 6.6.9+zena · mozjs-115 · plocate/locate(→plocate)/find · Soup-3.0
+
+## Unit tests (`node --test`): 16/16 PASS
+calculator (parser safety), url detection, backend picker + glob sanitize,
+result pipeline (classify/normalize/dedupe/rank/limits).
+
+## Live matrix (via dbus Eval against running Cinnamon)
+
+| # | Test | Hasil |
+|---|------|-------|
+| 1 | Race typing f→fi→…→firefox | ✅ final rows = firefox only; app top, limits 5/15/5 |
+| 2 | Cancellation | ✅ SIGTERM+force_exit on timeout/cancel; 0 orphan find; cb exactly-once |
+| 3 | Provider failure chain | ✅ forced-find → 187 hasil; no-backend → [] instan tanpa hang |
+| 4 | Missing file sebelum Enter | ✅ query_exists guard, no crash |
+| 5 | Dedup | ✅ Firefox app 1×; unit-tested stable ids (appid/path/canonical-url) |
+| 6 | Applet removal | ✅ instance GONE, hotkey unbound, 0 error log |
+| 7 | Re-add | ✅ REINSTALLED_OK |
+| 8 | Open/close ×10 | ✅ state CLOSED, tanpa error |
+| 9 | Empty query | ✅ cb instan ([]), tidak spawn fs/web |
+| 10 | Long/special chars & injection | ✅ argv array; nasty string settled aman (1 row) |
+| 11 | NUL output regression | ✅ newline protocol (GJS truncates at \0) |
+| 12 | Settings disable web | ✅ web provider null; file tetap jalan (guardrail 3) |
+| 13 | Recent persistence | ✅ JSON via settings; tampil saat kosong |
+| 14 | Calc activation | ✅ clipboard = "1000" |
+| 15 | DDG instant answers | ✅ upgrade ke score-90 rows (5 web) |
+| 16 | Focus otomatis | ✅ stage focus = entry clutter_text |
+
+## Guardrails
+1. find limit reader-side ✅ (slice MAX_CANDIDATES, no -quit)
+2. engine tanpa pending counter; flush per completion selama gen valid ✅
+3. cancellable baru per query efektif, dipakai konsisten file+web ✅
+4. argv diverifikasi aktual per tool; locate=plocate-symlink terdeteksi ✅
