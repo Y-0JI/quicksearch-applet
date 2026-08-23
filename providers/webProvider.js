@@ -10,11 +10,14 @@ const REQUEST_TIMEOUT_MS = 4000;
 function createWebProvider(helpers) {
     const makeResult = helpers.makeResult;
     const scoreResult = helpers.scoreResult;
+    // settings-driven: fallback URL per engine choice; DDG instant answers only for ddgo
+    const fallbackUrlFor = helpers.fallbackUrlFor || (q => 'https://duckduckgo.com/?q=' + encodeURIComponent(q));
+    const useInstantAnswers = helpers.useInstantAnswers !== false;
     let session = null;
 
     function search(query, cancellable, onDone) {
         const q = String(query || '').trim();
-        const searchUrl = 'https://duckduckgo.com/?q=' + encodeURIComponent(q);
+        const searchUrl = fallbackUrlFor(q);
 
         const fallback = makeResult({
             type: 'web',
@@ -36,7 +39,7 @@ function createWebProvider(helpers) {
 
         deliver([fallback]); // guaranteed, instant (spec 24-H)
 
-        if (!q) return;
+        if (!q || !useInstantAnswers) return;
 
         try {
             if (!session) session = new Soup.Session();

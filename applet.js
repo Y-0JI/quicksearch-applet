@@ -11,6 +11,8 @@ const utilsMod = require('./utils.js');
 const appProviderMod = require('./providers/appProvider.js');
 const fileProviderMod = require('./providers/fileProvider.js');
 const webProviderMod = require('./providers/webProvider.js');
+const urlProviderMod = require('./providers/urlProvider.js');
+const calculatorProviderMod = require('./providers/calculatorProvider.js');
 const searchEngineMod = require('./searchEngine.js');
 
 const UUID = "quicksearch@yoji";
@@ -18,9 +20,13 @@ const UUID = "quicksearch@yoji";
 // live handle for Looking Glass / dbus Eval testing
 var debug = { instance: null };
 
-const DEFAULT_LIMITS = { app: 5, file: 15, web: 5 };
-const DEBOUNCE_MS = 150;
 const RECENT_MAX = 15;
+
+const FALLBACK_URLS = {
+    ddgo: q => 'https://duckduckgo.com/?q=' + encodeURIComponent(q),
+    google: q => 'https://www.google.com/search?q=' + encodeURIComponent(q),
+    bing: q => 'https://www.bing.com/search?q=' + encodeURIComponent(q)
+};
 
 const QuickSearchOverlay = GObject.registerClass(
 class QuickSearchOverlay extends ModalDialog.ModalDialog {
@@ -73,37 +79,94 @@ class QuickSearchApplet extends Applet.IconApplet {
 
         this._overlay = null;
         this._hotkeyName = UUID + "-open";
+        this._hotkeyBound = null;
 
-        // ---- engine assembly (helpers injected; see zena loader note) ----
+        // ---- settings ----
+        this.settings = new Settings.AppletSettings(this, UUID, instance_id);
+        this.open_shortcut = "<Super>space";
+        this.enable_web = true;
+        this.enable_files = true;
+        this.search_engine = "ddgo";
+        this.file_locations = [];
+        this.max_apps = 5;
+        this.max_files = 15;
+        this.max_web = 5;
+        this.debounce_ms = 150;
+        this.show_recent = true;
+        this.recent_queries_json = "";
+
+        this.settings.bind("open-shortcut", "open_shortcut", () => this._bindHotkey());
+        this.settings.bind("enable-web", "enable_web", () => this._rebuildEngine());
+        this.settings.bind("enable-files", "enable_files", () => this._rebuildEngine());
+        this.settings.bind("search-engine", "search_engine", () => this._rebuildEngine());
+        this.settings.bind("file-locations", "file_locations", () => this._rebuildEngine());
+        this.settings.bind("max-apps", "max_apps", () => this._rebuildEngine());
+        this.settings.bind("max-files", "max_files", () => this._rebuildEngine());
+        this.settings.bind("max-web", "max_web", () => this._rebuildEngine());
+        this.settings.bind("debounce-ms", "debounce_ms", () => this._rebuildEngine());
+        this.settings.bind("show-recent", "show_recent");
+        this.settings.bind("recent-queries", "recent_queries_json");
+
+        // ---- recents (persisted as JSON string) ----
+        try { this._recent = JSON.parse(this.recent_queries_json || "[]") || []; }
+        catch (e) { this._recent = []; }
+
+        this._rows = [];
+        this._selIdx = -1;
+        this._current = [];
+
+        this._createEngine();
+        this._bindHotkey();
+    }
+
+    _createEngine() {
+        if (this._engine) {
+            try { this._engine.destroy(); } catch (e) {}
+            this._engine = null;
+        }
+
         const helperDeps = {
             makeResult: resultMod.makeResult,
             scoreResult: resultMod.scoreResult,
             pickFileBackend: utilsMod.pickFileBackend,
             sanitizeGlob: utilsMod.sanitizeGlob,
-            limits: DEFAULT_LIMITS
+            limits: { app: this.max_apps, file: this.max_files, web: this.max_web },
+            locations: Array.isArray(this.file_locations) ? this.file_locations : []
         };
+
+        const engineChoice = FALLBACK_URLS[this.search_engine] ? this.search_engine : "ddgo";
+
         const providers = {
             appProvider: appProviderMod.createAppProvider(helperDeps),
-            fileProvider: fileProviderMod.createFileProvider(helperDeps),
-            webProvider: webProviderMod.createWebProvider(helperDeps)
+            fileProvider: this.enable_files ? fileProviderMod.createFileProvider(helperDeps) : null,
+            webProvider: this.enable_web ? webProviderMod.createWebProvider(Object.assign({}, helperDeps, {
+                fallbackUrlFor: FALLBACK_URLS[engineChoice],
+                useInstantAnswers: engineChoice === "ddgo"
+            })) : null
         };
-        this._engine = searchEngineMod.createSearchEngine(Object.assign({
+
+        this._engine = searchEngineMod.createSearchEngine({
             makeResult: resultMod.makeResult,
             scoreResult: resultMod.scoreResult,
             classifyQuery: resultMod.classifyQuery,
             processResults: resultMod.processResults,
-            detectUrl: require('./providers/urlProvider.js').detectUrl,
-            tryCalculate: require('./providers/calculatorProvider.js').tryCalculate,
-            debounceMs: DEBOUNCE_MS,
-            enabled: { files: true, web: true } // settings-driven in Task 8
-        }, providers));
+            detectUrl: urlProviderMod.detectUrl,
+            tryCalculate: calculatorProviderMod.tryCalculate,
+            debounceMs: this.debounce_ms || 150,
+            limits: { app: this.max_apps, file: this.max_files, web: this.max_web },
+            appProvider: providers.appProvider,
+            fileProvider: providers.fileProvider,
+            webProvider: providers.webProvider
+        });
+    }
 
-        this._rows = [];
-        this._selIdx = -1;
-        this._current = [];
-        this._recent = [];
+    _rebuildEngine() {
+        this._createEngine();
+    }
 
-        Main.keybindingManager.addHotKey(this._hotkeyName, "<Super>space", () => this.toggle());
+    _bindHotkey() {
+        Main.keybindingManager.removeHotKey(this._hotkeyName);
+        Main.keybindingManager.addHotKey(this._hotkeyName, this.open_shortcut || "<Super>space", () => this.toggle());
     }
 
     on_applet_clicked() { this.toggle(); }
@@ -135,9 +198,13 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     onTextChanged(text) {
         this._selIdx = -1;
-        if (!text.trim() && this._recent.length) {
-            this._engine.cancel();
-            this.renderRecents();
+        if (!text.trim()) {
+            if (this.show_recent && this._recent.length) {
+                this._engine.cancel();
+                this.renderRecents();
+                return;
+            }
+            this.renderResults([]);
             return;
         }
         this._engine.query(text, (results) => this.renderResults(results));
@@ -183,10 +250,6 @@ class QuickSearchApplet extends Applet.IconApplet {
         const row = this._rows[idx];
         if (row) {
             row.button.add_style_class_name("quicksearch-row-selected");
-            try {
-                row.button.get_allocation_box(); // ensure mapped before scroll
-                this._overlay.resultsBox.get_stage().set_key_focus(this._overlay._entry.clutter_text);
-            } catch (e) {}
             this._scrollToRow(row.button);
         }
     }
@@ -215,7 +278,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             try { r.action(); } catch (e) {
                 Main.notifyError(_("Quick Search"), _("Action failed"));
             }
-            this._pushRecent(r.sourceQuery || this._overlay.getText());
+            this._pushRecent(this._overlay.getText());
             this.close();
         }
     }
@@ -224,6 +287,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         q = String(q || "").trim();
         if (!q) return;
         this._recent = [q].concat(this._recent.filter(x => x !== q)).slice(0, RECENT_MAX);
+        this.recent_queries_json = JSON.stringify(this._recent);
     }
 
     // ---- rendering (spec §16 sections; provider data only -> UI here) ----
@@ -251,7 +315,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         ];
 
         const flat = [];
-        for (const [type, header] of SECTION_ORDER) {
+        for (let s = 0; s < SECTION_ORDER.length; s++) {
+            const type = SECTION_ORDER[s][0];
+            const header = SECTION_ORDER[s][1];
             const group = results.filter(r => r.type === type);
             if (!group.length) continue;
             if (header) flat.push({ header: header });
@@ -280,9 +346,6 @@ class QuickSearchApplet extends Applet.IconApplet {
             box.add_child(row.button);
         }
 
-        if (!flat.length) {
-            // nothing at all: silent empty state (spec: quick & clean)
-        }
         if (this._rows.length) this.setSelection(0); // Enter activates top hit immediately
     }
 
@@ -330,6 +393,10 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     // ---- lifecycle cleanup (spec 24-B) ----
 
+    destroySettings() {
+        try { this.settings.finalize(); } catch (e) {}
+    }
+
     on_applet_removed_from_panel(reload) {
         Main.keybindingManager.removeHotKey(this._hotkeyName);
         if (this._engine) {
@@ -341,6 +408,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             this._overlay.destroy();
             this._overlay = null;
         }
+        this.destroySettings();
         this._rows = [];
         this._current = [];
         this._recent = [];

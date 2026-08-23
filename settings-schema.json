@@ -1,0 +1,77 @@
+{
+    "open-shortcut": {
+        "type": "keybinding",
+        "description": "Keyboard shortcut to open/close Quick Search",
+        "default": "<Super>space"
+    },
+    "enable-web": {
+        "type": "switch",
+        "description": "Enable web search",
+        "default": true
+    },
+    "enable-files": {
+        "type": "switch",
+        "description": "Enable file search",
+        "default": true
+    },
+    "search-engine": {
+        "type": "combobox",
+        "description": "Web search engine",
+        "default": "ddgo",
+        "options": {
+            "DuckDuckGo": "ddgo",
+            "Google": "google",
+            "Bing": "bing"
+        }
+    },
+    "file-locations": {
+        "type": "list",
+        "description": "File search locations (empty = home folder)",
+        "default": [],
+        "columns": [
+            {"id": "path", "title": "Path", "type": "string", "expander": true}
+        ]
+    },
+    "max-apps": {
+        "type": "spinbutton",
+        "description": "Max application results",
+        "default": 5,
+        "min": 1,
+        "max": 20,
+        "step": 1
+    },
+    "max-files": {
+        "type": "spinbutton",
+        "description": "Max file results",
+        "default": 15,
+        "min": 1,
+        "max": 50,
+        "step": 1
+    },
+    "max-web": {
+        "type": "spinbutton",
+        "description": "Max web results",
+        "default": 5,
+        "min": 1,
+        "max": 20,
+        "step": 1
+    },
+    "debounce-ms": {
+        "type": "spinbutton",
+        "description": "Debounce before searching (ms)",
+        "default": 150,
+        "min": 50,
+        "max": 500,
+        "step": 10
+    },
+    "show-recent": {
+        "type": "switch",
+        "description": "Show recent searches when the box is empty",
+        "default": true
+    },
+    "recent-queries": {
+        "type": "entry",
+        "description": "Recent queries (managed automatically, stored as JSON)",
+        "default": ""
+    }
+}
