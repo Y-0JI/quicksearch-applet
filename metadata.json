@@ -1,0 +1,7 @@
+{
+    "uuid": "quicksearch@yoji",
+    "name": "Quick Search",
+    "description": "Lightweight universal search: apps, files, web, URLs, calculator",
+    "version": "1.0.0",
+    "icon": "system-search"
+}

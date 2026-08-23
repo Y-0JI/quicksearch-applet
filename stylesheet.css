@@ -1,0 +1,15 @@
+.quicksearch-dialog {
+    border-radius: 12px;
+    padding: 16px;
+}
+
+.quicksearch-entry {
+    padding: 10px 14px;
+    font-size: 14pt;
+    width: 560px;
+}
+
+.quicksearch-results {
+    padding-top: 8px;
+    max-height: 420px;
+}
