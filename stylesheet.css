@@ -21,6 +21,26 @@
     selection-background-color: rgba(255, 255, 255, 0.85);
 }
 
+.quicksearch-entry-row {
+    spacing: 6px;
+}
+
+.quicksearch-mode-btn {
+    padding: 9px 10px;
+    border-radius: 8px;
+    background-color: rgba(0, 0, 0, 0.28);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.quicksearch-mode-btn:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+}
+
+.quicksearch-mode-active {
+    background-color: rgba(120, 160, 255, 0.28);
+    border: 1px solid rgba(150, 180, 255, 0.55);
+}
+
 .quicksearch-results {
     padding-top: 8px;
     max-height: 420px;

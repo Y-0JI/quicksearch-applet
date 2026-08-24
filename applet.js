@@ -41,7 +41,15 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             track_hover: true,
             style_class: "quicksearch-entry"
         });
-        this.contentLayout.add(this._entry);
+
+        // mode toggle: SEARCH (default) / ASK AI — single overlay, UI state only
+        this._searchModeBtn = this._makeModeBtn("system-search", _("Search"), "search");
+        this._aiModeBtn = this._makeModeBtn("starred", _("Ask AI"), "ai");
+        const entryRow = new St.BoxLayout({ style_class: "quicksearch-entry-row" });
+        entryRow.add(this._entry, { expand: true });
+        entryRow.add(this._searchModeBtn);
+        entryRow.add(this._aiModeBtn);
+        this.contentLayout.add(entryRow);
 
         this.resultsBox = new St.BoxLayout({ vertical: true });
         this._scroll = new St.ScrollView({
@@ -83,6 +91,24 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         }
     }
 
+    _makeModeBtn(icon, accessibleName, mode) {
+        const btn = new St.Button({
+            style_class: "quicksearch-mode-btn",
+            child: new St.Icon({ icon_name: icon, icon_size: 16 }),
+            can_focus: false
+        });
+        btn.connect("clicked", () => this._applet.setMode(mode));
+        return btn;
+    }
+
+    // reflect mode in UI only: hint text + active button highlight
+    setModeUi(mode) {
+        this._entry.hint_text = mode === "ai" ? _("Ask anything...") : _("Search...");
+        const active = " quicksearch-mode-active";
+        this._searchModeBtn.style_class = "quicksearch-mode-btn" + (mode === "search" ? active : "");
+        this._aiModeBtn.style_class = "quicksearch-mode-btn" + (mode === "ai" ? active : "");
+    }
+
     _isInsideDialog(gx, gy) {
         // Clutter here has no get_transformed_allocation(); use position+size
         const [px, py] = this.dialogLayout.get_transformed_position();
@@ -108,6 +134,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._overlay = null;
         this._hotkeyName = UUID + "-open";
         this._hotkeyBound = null;
+        this._mode = "search"; // SEARCH | AI — Phase 1: UI state only
 
         // ---- settings ----
         this.settings = new Settings.AppletSettings(this, UUID, instance_id);
@@ -220,9 +247,25 @@ class QuickSearchApplet extends Applet.IconApplet {
         }
         this._overlay.open(global.get_current_time());
         global.stage.set_key_focus(this._overlay._entry);
-        // initial state is ALWAYS empty: no stale text/results/recents
+        // initial state is ALWAYS empty + SEARCH mode: no stale text/results/recents
         this._overlay.setText("");
+        this._mode = "search";
+        this._overlay.setModeUi(this._mode);
         this.renderResults([]);
+    }
+
+    // ---- mode (Phase 1: UI state only, no AI requests yet) ----
+
+    setMode(mode) {
+        if (!this._overlay || (mode !== "search" && mode !== "ai")) return;
+        if (this._mode === mode) return;
+        this._mode = mode;
+        // switching cancels active search and clears results; query text is kept
+        if (this._engine) this._engine.cancel();
+        this.renderResults([]);
+        this._selIdx = -1;
+        this._overlay.setModeUi(mode);
+        global.stage.set_key_focus(this._overlay._entry);
     }
 
     close() {
@@ -248,6 +291,10 @@ class QuickSearchApplet extends Applet.IconApplet {
 
         if (sym === Clutter.KEY_Escape) {
             this.close();
+            return Clutter.EVENT_STOP;
+        }
+        if (sym === Clutter.KEY_Tab || sym === Clutter.KEY_KP_Tab || sym === Clutter.KEY_ISO_Left_Tab) {
+            this.setMode(this._mode === "search" ? "ai" : "search");
             return Clutter.EVENT_STOP;
         }
         if (sym === Clutter.KEY_Down || sym === Clutter.KEY_KP_Down) {
