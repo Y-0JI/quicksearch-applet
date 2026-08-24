@@ -78,11 +78,13 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this.resultsRegion.add_actor(this._scroll); // child 0: main results
 
         this.autoCompleteBox = new St.BoxLayout({ vertical: true });
-        this._autoScroll = new St.ScrollView({
+        // autocomplete is capped by buildLocalRows caps -> never scrollable;
+        // main results remain the only scrolling area
+        this._autoScroll = new St.BoxLayout({
+            vertical: true,
             style_class: "quicksearch-results quicksearch-autocomplete",
             visible: false
         });
-        this._autoScroll.set_policy(St.PolicyType.NEVER, St.PolicyType.OFF);
         this._autoScroll.add_actor(this.autoCompleteBox);
         this.resultsRegion.add_actor(this._autoScroll);
 
@@ -412,10 +414,14 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     _moveSelection(delta) {
         if (!this._rows.length) return;
-        let idx = this._selIdx + delta;
-        if (idx < 0) idx = this._rows.length - 1;
-        if (idx >= this._rows.length) idx = 0;
+        let idx = this._selIdx < 0 ? 0 : this._selIdx + delta;
+        idx = Math.max(0, Math.min(idx, this._rows.length - 1)); // clamp at ends
         this.setSelection(idx);
+        // crossing out of the autocomplete range hides the layer; moving back
+        // into it shows it again
+        const inAuto = idx < this._autoRows.length && this._autoRows.length > 0;
+        const auto = this._overlay ? this._overlay._autoScroll : null;
+        if (auto) auto.visible = inAuto;
     }
 
     setSelection(idx) {
@@ -432,13 +438,21 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     _scrollToRow(button) {
         try {
+            // only the main results area scrolls; keep the selected row visible
             const scroll = this._overlay._scroll;
+            if (!scroll.visible) return;
             const vbar = scroll.get_vscroll_bar();
-            const box = button.get_allocation_box();
-            const y = box.y1 + this._overlay.resultsBox.get_allocation_box().y1;
             const adj = vbar.get_adjustment();
-            const pos = y - adj.get_page_size() / 2;
-            adj.set_value(Math.max(0, Math.min(pos, adj.get_upper())));
+            const [sx, sy] = scroll.get_transformed_position();
+            const [bx, by] = button.get_transformed_position();
+            const rowTop = by - sy + adj.value;      // content-space position
+            const rowH = button.get_transformed_size()[1];
+            const viewH = adj.page_size;
+            if (rowTop < adj.value) {
+                adj.set_value(Math.max(adj.lower || 0, rowTop - 4));
+            } else if (rowTop + rowH > adj.value + viewH) {
+                adj.set_value(rowTop + rowH - viewH + 4);
+            }
         } catch (e) {}
     }
 
