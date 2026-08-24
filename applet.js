@@ -459,9 +459,17 @@ class QuickSearchApplet extends Applet.IconApplet {
     activateRow(row) {
         const r = row.result;
         if (r && r.query !== undefined) {
-            // recent-search row: refill and search
+            // local row activated: apply query, then drop the autocomplete
+            // layer immediately so main results take over
             this._overlay.setText(r.query);
             this.onTextChanged(r.query);
+            const auto = this._overlay._autoScroll;
+            if (auto) {
+                auto.visible = false;
+                this._selIdx = Math.min(this._autoRows.length,
+                                        Math.max(0, this._mainRows.length - 1));
+                if (this._rows[this._selIdx]) this.setSelection(this._selIdx);
+            }
             return;
         }
         if (r && r.action) {
@@ -541,9 +549,14 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     // selection spans both layers: autocomplete rows first, then main rows
     _syncSelection() {
+        const hidden = this._overlay && !this._overlay._autoScroll.visible;
+        const startAt = hidden ? Math.min(this._autoRows.length,
+                                          Math.max(0, this._rows ? this._autoRows.length : 0)) : 0;
         this._rows = this._autoRows.concat(this._mainRows);
         this._selIdx = -1;
-        if (this._rows.length) this.setSelection(0); // Enter activates top hit immediately
+        if (this._rows.length) {
+            this.setSelection(Math.min(startAt, this._rows.length - 1));
+        }
     }
 
     _buildRow(item) {
