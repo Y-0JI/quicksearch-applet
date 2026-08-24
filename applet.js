@@ -207,6 +207,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             })) : null
         };
 
+        this._appProvider = providers.appProvider; // local suggestion source (Phase 2)
         this._engine = searchEngineMod.createSearchEngine({
             makeResult: resultMod.makeResult,
             scoreResult: resultMod.scoreResult,
@@ -283,7 +284,26 @@ class QuickSearchApplet extends Applet.IconApplet {
             this.renderResults([]);
             return;
         }
-        this._engine.query(text, (results) => this.renderResults(results));
+        this._engine.query(text, (results) => this.renderResults(results.concat(this._buildLocals(text))));
+    }
+
+    // Phase 2: instant local rows (history + suggestions) for the typed query.
+    // Never rendered on empty query — empty state stays strict searchbox-only.
+    _buildLocals(text) {
+        if (this._mode !== "search" || !text.trim()) return [];
+        const appHits = this._appProvider
+            ? this._appProvider.searchApps(text, 6).map(r => String(r.title))
+            : [];
+        const loc = utilsMod.buildLocalRows(text, this._recent, appHits);
+        const histRows = loc.history.map(q => ({
+            type: "history", title: q, description: _("History"),
+            icon: "document-open-recent", score: resultMod.SCORES.history, query: q
+        }));
+        const sugRows = loc.suggestion.map(t => ({
+            type: "suggestion", title: t, description: _("Suggestion"),
+            icon: "system-search", score: resultMod.SCORES.suggestion, query: t
+        }));
+        return histRows.concat(sugRows);
     }
 
     onKeyPress(event) {
@@ -387,6 +407,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._current = results;
 
         const SECTION_ORDER = [
+            ["history", null],
+            ["suggestion", null],
             ["calc", null],
             ["url", null],
             ["app", _("APPLICATIONS")],

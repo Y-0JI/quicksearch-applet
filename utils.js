@@ -1,4 +1,4 @@
-// Pure helpers for file provider (node-testable).
+// Pure helpers (node-testable).
 
 function pickFileBackend(avail) {
     if (avail.hasPlocate) return 'plocate';
@@ -12,4 +12,33 @@ function sanitizeGlob(query) {
     return String(query).replace(/[\\*?\[\]]/g, '');
 }
 
-module.exports = { pickFileBackend, sanitizeGlob };
+// local history/suggestion rows for the typed query.
+// history: stored queries with case-insensitive prefix match, excluding the
+// exact active query. suggestions: app-name completions not already shown
+// as history. Empty query -> nothing (empty state must stay strict).
+function buildLocalRows(query, recent, appNames, caps) {
+    caps = caps || { history: 3, suggestion: 3 };
+    const q = String(query || '').toLowerCase().trim();
+    const out = { history: [], suggestion: [] };
+    if (!q) return out;
+
+    const seen = {};
+    for (const h of (recent || [])) {
+        const hl = String(h).toLowerCase().trim();
+        if (!hl || hl === q || seen[hl]) continue;
+        if (!hl.startsWith(q)) continue;
+        out.history.push(String(h));
+        seen[hl] = true;
+        if (out.history.length >= caps.history) break;
+    }
+    for (const a of (appNames || [])) {
+        const al = String(a).toLowerCase().trim();
+        if (!al || seen[al] || !al.startsWith(q)) continue;
+        out.suggestion.push(String(a));
+        seen[al] = true;
+        if (out.suggestion.length >= caps.suggestion) break;
+    }
+    return out;
+}
+
+module.exports = { pickFileBackend, sanitizeGlob, buildLocalRows };

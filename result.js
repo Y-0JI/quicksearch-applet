@@ -16,6 +16,8 @@ function classifyQuery(query) {
 
 // ---- Score tiers (spec §15) ----
 const SCORES = {
+    history: 450,
+    suggestion: 440,
     calc: 400,
     url: 400,
     'app-exact': 300,
