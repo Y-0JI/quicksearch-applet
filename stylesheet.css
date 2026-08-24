@@ -11,6 +11,9 @@
 
 .quicksearch-content {
     padding: 0;
+    /* keeps the searchbox pill at the same spot whether the floating
+       panel is shown or not (max panel 420 + pill ~54 + gap 6) */
+    min-height: 494px;
 }
 
 /* searchbox pill: the primary surface, stays compact */

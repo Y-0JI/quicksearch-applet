@@ -249,7 +249,10 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!this._overlay) {
             this._overlay = new QuickSearchOverlay(this);
         }
+        // Phase 2.5: fixed invisible frame -> vertical centering never shifts,
+        // searchbox pill stays put while the floating results panel grows below
         this._overlay.open(global.get_current_time());
+        this._overlay.dialogLayout.set_height(global.screen_height - 96);
         global.stage.set_key_focus(this._overlay._entry);
         // initial state is ALWAYS empty + SEARCH mode: no stale text/results/recents
         this._overlay.setText("");
