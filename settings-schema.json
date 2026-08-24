@@ -2,7 +2,7 @@
     "open-shortcut": {
         "type": "keybinding",
         "description": "Keyboard shortcut to open/close Quick Search",
-        "default": "<Super>space"
+        "default": "<Super>f"
     },
     "enable-web": {
         "type": "switch",

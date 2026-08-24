@@ -37,5 +37,6 @@ result pipeline (classify/normalize/dedupe/rank/limits).
 - "Ikon tidak muncul di panel": panel user memakai autohide mode **intel**
   (`panels-autohide=['1:intel',...]`) — panel disembunyikan saat jendela
   fullscreen/maksimal menutupinya. Ikon 🔍 ada di pojok kiri panel bawah
-  (terverifikasi via screenshot). Akses alternatif: **Super+Space**
-  (keybinding global terdaftar, action_id 149) — bekerja meski panel hidden.
+  (terverifikasi via screenshot). Akses alternatif: **Super+F**
+  (default sejak migrasi; `Super+Space` lama bentrok dengan switcher
+  input-source sistem `next-input-source`) — bekerja meski panel hidden.

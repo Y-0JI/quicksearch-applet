@@ -20,12 +20,12 @@ layar untuk aplikasi, file, web, URL, dan kalkulator.
 ```bash
 # sudah berada di ~/.local/share/cinnamon/applets/quicksearch@yoji
 # tambahkan ke panel: System Settings → Applets → Quick Search → +
-# atau tekan Super+Space
+# atau tekan Super+F
 ```
 
 ## Shortcut
 
-Default `Super+Space` (dapat diubah di pengaturan applet).
+Default `Super+F` (dapat diubah di pengaturan applet).
 
 ## Arsitektur
 
@@ -52,4 +52,4 @@ lihat `docs/test-report.md`.
 ## Catatan
 
 Jika panel memakai autohide "Intelligent", ikon applet tersembunyi bersama
-panel saat ada jendela fullscreen — gunakan `Super+Space`.
+panel saat ada jendela fullscreen — gunakan `Super+F`.

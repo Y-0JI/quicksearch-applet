@@ -135,6 +135,13 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.settings.bind("show-recent", "show_recent");
         this.settings.bind("recent-queries", "recent_queries_json");
 
+        // one-time migration: old default <Super>space conflicts with the
+        // system input-source switcher (next-input-source). Only touches
+        // users who never customized the shortcut.
+        if (this.open_shortcut === "<Super>space") {
+            this.open_shortcut = "<Super>f"; // bound prop -> auto-persists
+        }
+
         // ---- recents (persisted as JSON string) ----
         try { this._recent = JSON.parse(this.recent_queries_json || "[]") || []; }
         catch (e) { this._recent = []; }
