@@ -220,8 +220,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         }
         this._overlay.open(global.get_current_time());
         global.stage.set_key_focus(this._overlay._entry);
-        const text = this._overlay.getText();
-        if (!text.trim()) this.renderResults([]); // shows recents if any
+        // initial state is ALWAYS empty: no stale text/results/recents
+        this._overlay.setText("");
+        this.renderResults([]);
     }
 
     close() {
@@ -234,11 +235,8 @@ class QuickSearchApplet extends Applet.IconApplet {
     onTextChanged(text) {
         this._selIdx = -1;
         if (!text.trim()) {
-            if (this.show_recent && this._recent.length) {
-                this._engine.cancel();
-                this.renderRecents();
-                return;
-            }
+            // empty query: strictly no results and no auto-rendered recents
+            this._engine.cancel();
             this.renderResults([]);
             return;
         }
