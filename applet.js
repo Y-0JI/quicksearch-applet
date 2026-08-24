@@ -364,6 +364,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         while (box.get_n_children() > 0) box.remove_child(box.get_child_at_index(0));
         this._rows = [];
         this._selIdx = -1;
+        // compact empty state: no reserved space under the searchbox
+        this._overlay._scroll.visible = flat.length > 0;
 
         for (let i = 0; i < flat.length; i++) {
             const item = flat[i];
