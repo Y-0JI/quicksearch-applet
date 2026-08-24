@@ -462,11 +462,9 @@ class QuickSearchApplet extends Applet.IconApplet {
     _buildRow(item) {
         const isRecent = item.type === "recent";
         const r = isRecent ? item : item.result;
-        // history/suggestion rows carry .query -> single-line autocomplete style
-        const isLocal = !isRecent && r.query !== undefined;
 
         const icon = new St.Icon({
-            icon_size: isLocal ? 16 : 24,
+            icon_size: 24,
             x_align: Clutter.ActorAlign.START
         });
         if (typeof r.icon === "string") icon.icon_name = r.icon;
@@ -479,22 +477,13 @@ class QuickSearchApplet extends Applet.IconApplet {
         const descLbl = new St.Label({ text: descText, style_class: "quicksearch-desc" });
         descLbl.get_clutter_text().set_line_wrap(false);
 
-        let content;
-        if (isLocal) {
-            // [icon] title ................. Suggestion   (one line)
-            content = new St.BoxLayout({ vertical: false, style_class: "quicksearch-row-inner quicksearch-row-local" });
-            content.add(icon);
-            titleLbl.x_expand = true;
-            content.add(titleLbl);
-            content.add(descLbl);
-        } else {
-            const labels = new St.BoxLayout({ vertical: true, y_align: St.Align.MIDDLE });
-            labels.add(titleLbl);
-            labels.add(descLbl);
-            content = new St.BoxLayout({ vertical: false, style_class: "quicksearch-row-inner" });
-            content.add(icon);
-            content.add(labels);
-        }
+        const labels = new St.BoxLayout({ vertical: true, y_align: St.Align.MIDDLE });
+        labels.add(titleLbl);
+        labels.add(descLbl);
+
+        const content = new St.BoxLayout({ vertical: false, style_class: "quicksearch-row-inner" });
+        content.add(icon);
+        content.add(labels);
 
         const button = new St.Button({
             style_class: "quicksearch-row",
