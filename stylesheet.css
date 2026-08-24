@@ -4,7 +4,7 @@
     background: none;
     border: none;
     border-radius: 0;
-    padding: 0;
+    padding: 136px 0 0 0;
     box-shadow: none;
     color: #f2f3f5;
 }
@@ -12,8 +12,8 @@
 .quicksearch-content {
     padding: 0;
     /* keeps the searchbox pill at the same spot whether the floating
-       panel is shown or not (max panel 420 + pill ~54 + gap 6) */
-    min-height: 494px;
+       panel is shown or not (max main panel 650 + pill 54 + gap 6) */
+    min-height: 718px;
 }
 
 /* searchbox pill: the primary surface, stays compact */
@@ -64,7 +64,7 @@
     border: 1px solid rgba(255, 255, 255, 0.09);
     border-radius: 16px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-    max-height: 560px;
+    max-height: 650px;
 }
 
 .quicksearch-section-header {

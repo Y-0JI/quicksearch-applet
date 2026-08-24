@@ -278,7 +278,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         // Phase 2.5: fixed invisible frame -> vertical centering never shifts,
         // searchbox pill stays put while the floating results panel grows below
         this._overlay.open(global.get_current_time());
-        this._overlay.dialogLayout.set_height(global.screen_height - 96);
+        this._overlay.dialogLayout.set_height(global.screen_height - 2);
         global.stage.set_key_focus(this._overlay._entry);
         // initial state is ALWAYS empty + SEARCH mode: no stale text/results/recents
         this._overlay.setText("");
@@ -330,19 +330,21 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!ov || !ov.resultsRegion) return;
         const pillSize = ov._entryRow.get_transformed_size();
         const w = Math.round(pillSize[0]) || 690;
+        // physical fit: panel must stay on screen below the searchbox
+        const pillTf = ov._entryRow.get_transformed_position();
+        const pillBottom = (pillTf[1] || 146) + (ov._entryRow.get_transformed_size()[1] || 54);
+        const roomCap = Math.max(320, global.screen_height - pillBottom - 6 - 12);
         let h = 0;
         if (ov._scroll.visible) {
             const [, natH] = ov._scroll.get_preferred_height(w);
-            const mainH = Math.min(natH, 434);
-            // main results: behind, from region top
+            const mainH = Math.min(natH, 664, roomCap);
             ov._scroll.set_position(0, 0);
             ov._scroll.set_size(w, mainH);
             h = Math.max(h, mainH);
         }
         if (ov._autoScroll.visible) {
             const [, natH] = ov._autoScroll.get_preferred_height(w);
-            const autoH = Math.min(natH, 200);
-            // autocomplete layer: floats in front at the very top
+            const autoH = Math.min(natH, 200, roomCap);
             ov._autoScroll.set_position(0, 0);
             ov._autoScroll.set_size(w, autoH);
             h = Math.max(h, autoH);
