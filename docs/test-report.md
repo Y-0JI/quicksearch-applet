@@ -32,3 +32,10 @@ result pipeline (classify/normalize/dedupe/rank/limits).
 2. engine tanpa pending counter; flush per completion selama gen valid ✅
 3. cancellable baru per query efektif, dipakai konsisten file+web ✅
 4. argv diverifikasi aktual per tool; locate=plocate-symlink terdeteksi ✅
+
+## Known behavior (bukan bug)
+- "Ikon tidak muncul di panel": panel user memakai autohide mode **intel**
+  (`panels-autohide=['1:intel',...]`) — panel disembunyikan saat jendela
+  fullscreen/maksimal menutupinya. Ikon 🔍 ada di pojok kiri panel bawah
+  (terverifikasi via screenshot). Akses alternatif: **Super+Space**
+  (keybinding global terdaftar, action_id 149) — bekerja meski panel hidden.
