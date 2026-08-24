@@ -49,6 +49,9 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         entryRow.add(this._entry, { expand: true });
         entryRow.add(this._searchModeBtn);
         entryRow.add(this._aiModeBtn);
+        // Phase 2.5 floating layout: neutralize inherited chrome paddings;
+        // gap between searchbox pill and results panel comes from CSS margin
+        this.contentLayout.add_style_class_name("quicksearch-content");
         this.contentLayout.add(entryRow);
 
         this.resultsBox = new St.BoxLayout({ vertical: true });

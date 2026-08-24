@@ -75,6 +75,36 @@
 
 ---
 
+## Phase 2.5 — Floating Results UI
+
+> Sisipan hasil review Phase 2. **Murni UI/presentation** — nol perubahan logic.
+
+**Tujuan:** searchbox tetap compact sebagai surface tersendiri; history/suggestion/hasil search tampil sebagai **panel floating di bawah searchbox** (pola UX Google Search pada mockup), dalam overlay yang sama.
+
+### Keputusan desain
+- Tetap **satu QuickSearchOverlay** — tidak ada window/dialog Cinnamon kedua, tanpa global event listener
+- Pendekatan paling sederhana: pisahkan *chrome* visual — searchbox jadi surface berdiri sendiri (rounded, opaque), results area diberi surface gelapnya sendiri (border/radius/typography mengikuti Orchidea-Dark QuickSearch existing), dengan gap kecil di antara keduanya; dialog induk dibuat transparan ketika panel tampil
+- Lebar panel mengikuti searchbox; batas tinggi tetap (max-height existing ~420px) agar tidak memenuhi layar
+- Urutan konten tidak berubah: History 🕘 → Suggestion 🔍 → hasil search (tanpa header besar)
+- Interaksi tak disentuh: `activateRow()` existing untuk semua klik, ↑↓/Enter/Esc, click-outside via `_backgroundBin`/lightbox mekanisme existing
+
+### Scope eksplisit
+- Eksplorasi struktur layout existing lebih dulu, lalu pilih solusi minimal (CSS-first; struktur actor hanya jika perlu)
+- TIDAK mengubah: `buildLocalRows()`, SearchEngine, calculator, providers, history persistence, shortcut, mode SEARCH/AI, AIProvider
+- Tanpa dependency baru, tanpa refactor besar
+
+### Verifikasi exit
+1. `node --check` + full unit test PASS (26/26 saat ini)
+2. Reload Cinnamon tanpa error
+3. Open kosong → **hanya searchbox**, panel tidak muncul, tetap compact
+4. Ketik → panel muncul tepat di bawah searchbox, lebar sama
+5. History + suggestion + hasil search berurutan sesuai Phase 2
+6. ↑↓ Enter, klik history/suggestion/result, Esc, click-outside — semua tetap bekerja
+7. Buka/tutup berulang → tidak ada handler/overlay menumpuk (scan binding tetap tunggal)
+8. Screenshot dibandingkan dengan mockup Google-style
+
+---
+
 ## Phase 3 — AIProvider (Abstraksi + OpenRouter)
 
 **Tujuan:** modul AI terpisah total dari SearchEngine.

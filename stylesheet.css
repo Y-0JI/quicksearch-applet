@@ -1,50 +1,67 @@
+/* Phase 2.5 floating layout: the dialog itself is an invisible container;
+   the searchbox row and the results panel are two separate surfaces. */
 .quicksearch-dialog {
+    background: none;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    box-shadow: none;
+    color: #f2f3f5;
+}
+
+.quicksearch-content {
+    padding: 0;
+}
+
+/* searchbox pill: the primary surface, stays compact */
+.quicksearch-entry-row {
+    spacing: 6px;
+    padding: 9px 12px;
+    margin-bottom: 6px;
     background-color: rgba(36, 39, 46, 0.97);
     border: 1px solid rgba(255, 255, 255, 0.09);
-    border-radius: 12px;
-    padding: 14px;
-    color: #f2f3f5;
+    border-radius: 24px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
 .quicksearch-entry {
-    padding: 10px 14px;
+    padding: 4px 10px;
     font-size: 13pt;
     width: 560px;
     color: rgba(255, 255, 255, 0.95);
-    background-color: rgba(0, 0, 0, 0.42);
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    border-radius: 8px;
+    background-color: rgba(0, 0, 0, 0);
+    border: none;
+    border-radius: 0;
     caret-color: rgba(255, 255, 255, 0.90);
     caret-size: 1px;
     selected-color: rgba(0, 0, 0, 0.85);
     selection-background-color: rgba(255, 255, 255, 0.85);
 }
 
-.quicksearch-entry-row {
-    spacing: 6px;
-}
-
 .quicksearch-mode-btn {
     padding: 9px 10px;
-    border-radius: 8px;
-    background-color: rgba(0, 0, 0, 0.28);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    background-color: rgba(255, 255, 255, 0.06);
+    border: none;
 }
 
 .quicksearch-mode-btn:hover {
-    background-color: rgba(255, 255, 255, 0.12);
+    background-color: rgba(255, 255, 255, 0.14);
 }
 
 .quicksearch-mode-active {
-    background-color: rgba(120, 160, 255, 0.28);
-    border: 1px solid rgba(150, 180, 255, 0.55);
+    background-color: rgba(120, 160, 255, 0.30);
+    border: none;
 }
 
+/* floating results panel: separate surface right below the searchbox */
 .quicksearch-results {
-    padding-top: 8px;
+    padding: 6px 4px;
+    background-color: rgba(36, 39, 46, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 16px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
     max-height: 420px;
-    max-width: 580px;
 }
 
 .quicksearch-section-header {
@@ -65,7 +82,7 @@
 
 .quicksearch-row-inner {
     spacing: 10px;
-    max-width: 560px;
+    max-width: 640px;
 }
 
 .quicksearch-title {
