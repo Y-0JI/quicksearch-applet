@@ -46,6 +46,7 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._searchModeBtn = this._makeModeBtn("system-search", _("Search"), "search");
         this._aiModeBtn = this._makeModeBtn("starred", _("Ask AI"), "ai");
         const entryRow = new St.BoxLayout({ style_class: "quicksearch-entry-row" });
+        this._entryRow = entryRow;
         entryRow.add(this._entry, { expand: true });
         entryRow.add(this._searchModeBtn);
         entryRow.add(this._aiModeBtn);
@@ -62,7 +63,28 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         });
         this._scroll.add_actor(this.resultsBox);
         this._scroll.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
-        this.contentLayout.add(this._scroll);
+        // floating autocomplete layer: same overlay, custom region where the
+        // layer's size is EXCLUDED from layout (only main results drive the
+        // region height) and the layer is allocated at the region's top,
+        // painting in front of the main results.
+        // plain container WITHOUT a layout manager: children are positioned
+        // manually in _syncRegionGeometry so the autocomplete layer can float
+        // above the main results without affecting their layout
+        this.resultsRegion = new St.Widget({ x_expand: true });
+        this.contentLayout.add(this.resultsRegion, {
+            expand: true, x_fill: true, y_fill: false,
+            x_align: St.Align.MIDDLE, y_align: St.Align.START
+        });
+        this.resultsRegion.add_actor(this._scroll); // child 0: main results
+
+        this.autoCompleteBox = new St.BoxLayout({ vertical: true });
+        this._autoScroll = new St.ScrollView({
+            style_class: "quicksearch-results quicksearch-autocomplete",
+            visible: false
+        });
+        this._autoScroll.set_policy(St.PolicyType.NEVER, St.PolicyType.OFF);
+        this._autoScroll.add_actor(this.autoCompleteBox);
+        this.resultsRegion.add_actor(this._autoScroll);
 
         this._entry.clutter_text.connect("text-changed", (actor) => {
             this._applet.onTextChanged(actor.get_text());
@@ -138,6 +160,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._hotkeyName = UUID + "-open";
         this._hotkeyBound = null;
         this._mode = "search"; // SEARCH | AI — Phase 1: UI state only
+        this._autoRows = [];
+        this._mainRows = [];
 
         // ---- settings ----
         this.settings = new Settings.AppletSettings(this, UUID, instance_id);
@@ -284,13 +308,45 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     onTextChanged(text) {
         this._selIdx = -1;
+        // floating autocomplete layer: computed per keystroke, rendered in
+        // its own container in front of main results (never concatenated)
+        this._renderAutocomplete(this._buildLocals(text));
         if (!text.trim()) {
             // empty query: strictly no results and no auto-rendered recents
             this._engine.cancel();
             this.renderResults([]);
             return;
         }
-        this._engine.query(text, (results) => this.renderResults(results.concat(this._buildLocals(text))));
+        this._engine.query(text, (results) => this.renderResults(results));
+    }
+
+    // explicit geometry: the framework ignores custom preferred-size vfuncs,
+    // so drive the region size directly (width = searchbox pill, height =
+    // whichever layers are visible); children are placed explicitly.
+    _syncRegionGeometry() {
+        const ov = this._overlay;
+        if (!ov || !ov.resultsRegion) return;
+        const pillSize = ov._entryRow.get_transformed_size();
+        const w = Math.round(pillSize[0]) || 690;
+        let h = 0;
+        if (ov._scroll.visible) {
+            const [, natH] = ov._scroll.get_preferred_height(w);
+            const mainH = Math.min(natH, 434);
+            // main results: behind, from region top
+            ov._scroll.set_position(0, 0);
+            ov._scroll.set_size(w, mainH);
+            h = Math.max(h, mainH);
+        }
+        if (ov._autoScroll.visible) {
+            const [, natH] = ov._autoScroll.get_preferred_height(w);
+            const autoH = Math.min(natH, 200);
+            // autocomplete layer: floats in front at the very top
+            ov._autoScroll.set_position(0, 0);
+            ov._autoScroll.set_size(w, autoH);
+            h = Math.max(h, autoH);
+            ov._autoScroll.raise_top();
+        }
+        ov.resultsRegion.set_size(w, h);
     }
 
     // Phase 2: instant local rows (history + suggestions) for the typed query.
@@ -310,6 +366,20 @@ class QuickSearchApplet extends Applet.IconApplet {
             icon: "system-search", score: resultMod.SCORES.suggestion, query: t
         }));
         return histRows.concat(sugRows);
+    }
+
+    // renders the floating autocomplete layer; hidden when no local rows
+    _renderAutocomplete(locals) {
+        const box = this._overlay.autoCompleteBox;
+        while (box.get_n_children() > 0) box.remove_child(box.get_child_at_index(0));
+        this._autoRows = locals.map(item => {
+            const row = this._buildRow({ result: item });
+            box.add_child(row.button);
+            return row;
+        });
+        this._overlay._autoScroll.visible = this._autoRows.length > 0;
+        this._syncRegionGeometry();
+        this._syncSelection();
     }
 
     onKeyPress(event) {
@@ -413,8 +483,6 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._current = results;
 
         const SECTION_ORDER = [
-            ["history", null],
-            ["suggestion", null],
             ["calc", null],
             ["url", null],
             ["app", _("APPLICATIONS")],
@@ -422,26 +490,22 @@ class QuickSearchApplet extends Applet.IconApplet {
             ["web", _("WEB")]
         ];
 
-        const flat = [];
+        const mainRows = [];
         for (let s = 0; s < SECTION_ORDER.length; s++) {
             const type = SECTION_ORDER[s][0];
             const header = SECTION_ORDER[s][1];
             const group = results.filter(r => r.type === type);
             if (!group.length) continue;
-            if (header) flat.push({ header: header });
-            for (const r of group) flat.push({ result: r });
+            if (header) mainRows.push({ header: header });
+            for (const r of group) mainRows.push({ result: r });
         }
-        this._renderRows(flat);
+        this._renderMainRows(mainRows);
     }
 
-    _renderRows(flat) {
+    _renderMainRows(flat) {
         const box = this._overlay.resultsBox;
         while (box.get_n_children() > 0) box.remove_child(box.get_child_at_index(0));
-        this._rows = [];
-        this._selIdx = -1;
-        // compact empty state: no reserved space under the searchbox
-        this._overlay._scroll.visible = flat.length > 0;
-
+        this._mainRows = [];
         for (let i = 0; i < flat.length; i++) {
             const item = flat[i];
             if (item.header) {
@@ -452,10 +516,19 @@ class QuickSearchApplet extends Applet.IconApplet {
                 continue;
             }
             const row = this._buildRow(item);
-            this._rows.push(row);
+            this._mainRows.push(row);
             box.add_child(row.button);
         }
+        // compact empty state: no reserved space under the searchbox
+        this._overlay._scroll.visible = flat.length > 0;
+        this._syncRegionGeometry();
+        this._syncSelection();
+    }
 
+    // selection spans both layers: autocomplete rows first, then main rows
+    _syncSelection() {
+        this._rows = this._autoRows.concat(this._mainRows);
+        this._selIdx = -1;
         if (this._rows.length) this.setSelection(0); // Enter activates top hit immediately
     }
 
