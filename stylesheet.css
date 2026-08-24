@@ -1,12 +1,24 @@
 .quicksearch-dialog {
+    background-color: rgba(36, 39, 46, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.09);
     border-radius: 12px;
-    padding: 16px;
+    padding: 14px;
+    color: #f2f3f5;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
 .quicksearch-entry {
     padding: 10px 14px;
     font-size: 13pt;
     width: 560px;
+    color: rgba(255, 255, 255, 0.95);
+    background-color: rgba(0, 0, 0, 0.42);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 8px;
+    caret-color: rgba(255, 255, 255, 0.90);
+    caret-size: 1px;
+    selected-color: rgba(0, 0, 0, 0.85);
+    selection-background-color: rgba(255, 255, 255, 0.85);
 }
 
 .quicksearch-results {
@@ -16,19 +28,19 @@
 }
 
 .quicksearch-section-header {
-    font-size: 9pt;
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 8.5pt;
     font-weight: bold;
-    opacity: 0.6;
     padding: 8px 8px 2px 8px;
 }
 
 .quicksearch-row {
-    padding: 4px;
+    padding: 5px 8px;
     border-radius: 8px;
 }
 
 .quicksearch-row-selected {
-    background-color: rgba(255, 255, 255, 0.12);
+    background-color: rgba(255, 255, 255, 0.14);
 }
 
 .quicksearch-row-inner {
@@ -37,10 +49,11 @@
 }
 
 .quicksearch-title {
+    color: rgba(255, 255, 255, 0.95);
     font-size: 11pt;
 }
 
 .quicksearch-desc {
+    color: rgba(255, 255, 255, 0.62);
     font-size: 9pt;
-    opacity: 0.55;
 }

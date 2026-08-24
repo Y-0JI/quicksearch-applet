@@ -60,6 +60,34 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._entry.clutter_text.connect("key-press-event", (actor, event) => {
             return this._applet.onKeyPress(event);
         });
+
+        // Click outside closes the overlay. Empirically (XTEST-verified):
+        // outside clicks are delivered to the lightbox shade (which covers
+        // the screen above everything), inside clicks reach the dialog
+        // actors directly — so the lightbox handler IS the outside detector.
+        // Fallback (no lightbox, e.g. OSK mode): coords check on the bin.
+        if (this._lightbox && this._lightbox.actor) {
+            this._outsideClickId = this._lightbox.actor.connect("button-press-event", () => {
+                this._applet.close();
+                return Clutter.EVENT_STOP;
+            });
+        } else {
+            this._outsideClickId = this._backgroundBin.connect("button-press-event", (actor, event) => {
+                const [gx, gy] = event.get_coords();
+                if (!this._isInsideDialog(gx, gy)) {
+                    this._applet.close();
+                    return Clutter.EVENT_STOP;
+                }
+                return Clutter.EVENT_PROPAGATE;
+            });
+        }
+    }
+
+    _isInsideDialog(gx, gy) {
+        // Clutter here has no get_transformed_allocation(); use position+size
+        const [px, py] = this.dialogLayout.get_transformed_position();
+        const [w, h] = this.dialogLayout.get_transformed_size();
+        return gx >= px && gx <= px + w && gy >= py && gy <= py + h;
     }
 
     getText() { return this._entry.get_text(); }
