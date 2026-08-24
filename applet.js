@@ -111,7 +111,7 @@ class QuickSearchApplet extends Applet.IconApplet {
 
         // ---- settings ----
         this.settings = new Settings.AppletSettings(this, UUID, instance_id);
-        this.open_shortcut = "<Super>space";
+        this.open_shortcut = "<Super>f";
         this.enable_web = true;
         this.enable_files = true;
         this.search_engine = "ddgo";
@@ -201,7 +201,7 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     _bindHotkey() {
         Main.keybindingManager.removeHotKey(this._hotkeyName);
-        Main.keybindingManager.addHotKey(this._hotkeyName, this.open_shortcut || "<Super>space", () => this.toggle());
+        Main.keybindingManager.addHotKey(this._hotkeyName, this.open_shortcut || "<Super>f", () => this.toggle());
     }
 
     on_applet_clicked() { this.toggle(); }
