@@ -106,3 +106,18 @@ result pipeline (classify/normalize/dedupe/rank/limits).
   close mid-flight (rollback+sweep bubble), switch mode mid-flight
   (aman), stub timeout/429/500 inline masing-masing; SEARCH regression;
   reload bersih. 63/63 tests.
+
+## Phase 6 — UX Integration (Lifecycle & Konsistensi)
+- Audit read-only: query preservation SEARCH<->AI bolak-balik preserved;
+  empty state compact 60px kedua mode; stale AI tidak bocor ke SEARCH;
+  Up/Down aman di panel kosong; Tab toggle + highlight benar;
+  focus per mode benar.
+- Open/close x20: keybinding tetap 1, region children tetap 2,
+  conversation/chat session-only utuh, tanpa leak.
+- Remove/re-add applet (canonical enabled-applets path):
+  remove -> instance UNLOADED, keybinding 0, tanpa JS error;
+  re-add -> instance 99 ter-load ulang, keybinding 1 (tanpa duplikat),
+  settings utuh (model coba9router, provider 9router),
+  conversation session-only BENAR-BENAR hilang (in-memory),
+  Super+F + kalkulator + AI stub langsung normal.
+- Final clean reload: 63/63 tests, 0 error.
