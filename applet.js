@@ -396,6 +396,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!this._overlay || (mode !== "search" && mode !== "ai")) return;
         if (this._mode === mode) return;
         this._aiSeq++; // invalidate any pending AI response across modes
+        if (this._aiManager && this._aiManager.cancel) this._aiManager.cancel(); // Phase 5
         this._mode = mode;
         // switching cancels active search and clears results; query text is kept
         if (this._engine) this._engine.cancel();
@@ -414,6 +415,12 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     close() {
         if (this._engine) this._engine.cancel();
+        if (this._aiManager && this._aiManager.cancel) this._aiManager.cancel(); // Phase 5
+        this._aiSeq++;
+        // sweep pending Thinking bubbles so reopen never shows a stuck state
+        for (const e of this._aiChat) {
+            if (e.pending) { e.text = _("— dibatalkan —"); e.pending = false; }
+        }
         if (this._overlay) this._overlay.close(global.get_current_time());
     }
 
@@ -542,6 +549,8 @@ class QuickSearchApplet extends Applet.IconApplet {
             : (this._overlay ? this._overlay.getText() : "")).trim();
         if (!question) return;
         const token = ++this._aiSeq;
+        // Phase 5: abort the previous in-flight request for real
+        if (this._aiManager && this._aiManager.cancel) this._aiManager.cancel();
         // a newer submit supersedes older pending ones (single-flight):
         // mark stale Thinking bubbles instead of leaving them stuck
         for (const e of this._aiChat) {
@@ -644,15 +653,20 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     _aiErrorText(code, detail) {
+        code = String(code || "");
         let base;
-        switch (code) {
-            case "no-api-key": base = _("AI API key belum diatur."); break;
-            case "http-401": base = _("API key tidak valid."); break;
-            case "http-429": base = _("Request AI terlalu banyak. Coba lagi nanti."); break;
-            case "timeout":
-            case "network": base = _("AI tidak dapat dihubungi."); break;
-            case "bad-response": base = _("Response AI tidak valid."); break;
-            default: base = _("Terjadi kesalahan pada AI.");
+        if (code.indexOf("http-5") === 0) {
+            base = _("Server AI bermasalah. Coba lagi nanti."); // 5xx (Phase 5)
+        } else {
+            switch (code) {
+                case "no-api-key": base = _("AI API key belum diatur."); break;
+                case "http-401": base = _("API key tidak valid."); break;
+                case "http-429": base = _("Request AI terlalu banyak. Coba lagi nanti."); break;
+                case "timeout":
+                case "network": base = _("AI tidak dapat dihubungi."); break;
+                case "bad-response": base = _("Response AI tidak valid."); break;
+                default: base = _("Terjadi kesalahan pada AI.");
+            }
         }
         // provider/router messages (e.g. from 9Router) are informative —
         // show them alongside the friendly line instead of hiding them

@@ -8,6 +8,9 @@
 // No UI/SearchEngine knowledge lives here. The first concrete backend is
 // OpenRouter, expressed only as the default endpoint + request shape.
 
+let Gio = null;
+try { Gio = require('gi.Gio'); } catch (e) { /* plain node: no cancellable */ }
+
 const DEFAULT_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_MODEL = 'openai/gpt-4o-mini';
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -39,7 +42,9 @@ function defaultTransport(timeoutMs) {
                         cb(null, { status: msg.get_status(), text: text });
                     } catch (e) {
                         const msg2 = String(e.message || '');
-                        cb({ error: /cancel/i.test(msg2) ? 'cancelled' : 'network', detail: msg2 });
+                        if (/cancel/i.test(msg2)) cb({ error: 'cancelled' });
+                        else if (/timed?\s*out/i.test(msg2)) cb({ error: 'timeout', detail: msg2 });
+                        else cb({ error: 'network', detail: msg2 });
                     }
                 });
         };
@@ -92,6 +97,10 @@ function createAIProvider(opts) {
     const http = opts.http || defaultTransport(timeoutMs);
 
     let gen = 0;
+    // Phase 5: real transport cancellation (Soup aborts the request).
+    // opts.cancellable override exists for tests (node has no Gio).
+    const cancellable = opts.cancellable ||
+        ((Gio && Gio.Cancellable) ? new Gio.Cancellable() : null);
 
     // ask(question, ctx, cb): cb(err, result)
     // err/result are normalized objects; exactly one callback per call,
@@ -100,7 +109,9 @@ function createAIProvider(opts) {
         ctx = ctx || {};
         const myGen = ++gen;
         const done = (err, data) => {
-            if (myGen !== gen) return; // stale: superseded by cancel()/newer ask
+            // stale results are dropped — EXCEPT cancellation, a terminal
+            // state upper layers need so they can roll back pending turns
+            if (myGen !== gen && !(err && err.error === 'cancelled')) return;
             cb(err, data);
         };
 
@@ -137,7 +148,7 @@ function createAIProvider(opts) {
                 'X-Title': 'Quick Search'
             },
             body: body,
-            cancellable: ctx.cancellable || null,
+            cancellable: ctx.cancellable || cancellable || null,
             timeoutMs: timeoutMs
         }, (err, res) => {
             if (err) { done(err); return; }
@@ -170,10 +181,10 @@ function createAIProvider(opts) {
         });
     }
 
-    // invalidates every in-flight ask(); transport-level abort happens through
-    // the Gio.Cancellable supplied by the caller in ctx
+    // invalidates every in-flight ask() and aborts the real HTTP request
     function cancel() {
         gen++;
+        if (cancellable) { try { cancellable.cancel(); } catch (e) {} }
     }
 
     return { ask: ask, cancel: cancel };

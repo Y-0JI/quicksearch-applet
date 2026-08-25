@@ -92,3 +92,17 @@ result pipeline (classify/normalize/dedupe/rank/limits).
 - Percakapan baru (tombol) mengosongkan history+UI; reopen overlay setelah
   clear tetap kosong; session-only sesuai spec.
 - Error rollback: user turn ditarik dari history + bubble user dihapus.
+
+## Phase 5 — Cancellation + Error Handling AI
+- Engine: Gio.Cancellable internal per instance (opts.cancellable override
+  untuk test); cancel() memutus HTTP nyata; 'cancelled' MENEMBUS stale-guard
+  agar ConversationManager dapat rollback orphaned user turn.
+- Timeout Soup dipetakan ke error 'timeout'; manager.cancel() delegasi +
+  passthrough; applet: submit baru/close/switch mode memanggil cancel,
+  callback 'cancelled' diabaikan UI secara diam-diam.
+- Mapping baru: http-5xx -> "Server AI bermasalah. Coba lagi nanti."
+- Tanpa retry. UX 4.6 dan ConversationManager tidak berubah perilaku.
+- RUNTIME: race A-lambat/B-baru (hanya B, A dibatalkan+rollback),
+  close mid-flight (rollback+sweep bubble), switch mode mid-flight
+  (aman), stub timeout/429/500 inline masing-masing; SEARCH regression;
+  reload bersih. 63/63 tests.

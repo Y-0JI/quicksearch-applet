@@ -87,3 +87,15 @@ test('5-turn conversation keeps full order', () => {
         assert.equal(h[i * 2 + 1].content, 'jawaban ' + i);
     }
 });
+
+test('phase 5: cancelled request rolls back the user turn (no orphan)', () => {
+    const cm = createConversationManager({});
+    cm.send('satu', OK('a satu'), () => {});
+    const before = cm.history();
+    // request kedua dibatalkan (mis. close overlay / switch mode)
+    cm.send('dua dibatalkan', (q, ctx, cb) => cb({ error: 'cancelled' }), (err) => {
+        assert.equal(err.error, 'cancelled');
+    });
+    assert.deepEqual(cm.history(), before); // no orphaned user turn
+    assert.equal(cm.size(), 2);
+});

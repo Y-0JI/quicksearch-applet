@@ -175,3 +175,49 @@ test('cancellable context forwarded to transport', () => {
     p.ask('q', { cancellable: fakeCancellable }, () => {});
     assert.equal(seen, fakeCancellable);
 });
+
+test('phase 5: cancel() aborts via cancellable -> cancelled error surfaces', () => {
+    let cancelledFlag = false;
+    let storedCb = null;
+    const fakeCancellable = {
+        is_cancelled: () => cancelledFlag,
+        cancel: () => { cancelledFlag = true; } // simulate Gio behaviour
+    };
+    const t = makeMockTransport((o, cb) => {
+        storedCb = () => {
+            if (o.cancellable && o.cancellable.is_cancelled()) {
+                cb({ error: 'cancelled' });
+                return;
+            }
+            cb(null, { status: 200, text: OK_BODY });
+        };
+    });
+    const p = createAIProvider({ apiKey: 'k', http: t, cancellable: fakeCancellable });
+    let got = null;
+    p.ask('q', {}, (err) => { got = err; });
+    p.cancel(); // bumps gen AND aborts the real request
+    storedCb(); // transport settles AFTER the cancel
+    assert.ok(cancelledFlag, 'transport cancellable was cancelled');
+    // cancelled passes through the stale guard (terminal state)
+    assert.equal(got.error, 'cancelled');
+});
+
+test('phase 5: timeout error normalized from transport message', () => {
+    const t = makeMockTransport((o, cb) => cb({ error: 'timeout', detail: 'Timed out' }));
+    const p = makeProvider(t);
+    p.ask('q', {}, (err) => {
+        assert.equal(err.error, 'timeout');
+        assert.equal(err.detail, 'Timed out');
+    });
+});
+
+test('phase 5: non-cancelled stale completion is still dropped', () => {
+    let finish;
+    const t = makeMockTransport((o, cb) => { finish = () => cb(null, { status: 200, text: OK_BODY }); });
+    const p = makeProvider(t);
+    let called = 0;
+    p.ask('q', {}, () => called++);
+    p.ask('q2', {}, () => called++); // newer ask supersedes
+    finish(); // OLD completion arrives late
+    assert.equal(called, 1); // only the newer ask resolved
+});

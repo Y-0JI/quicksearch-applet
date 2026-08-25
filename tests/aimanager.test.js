@@ -89,3 +89,21 @@ test('cancel() invalidates in-flight ask through the manager', () => {
     finish();
     assert.equal(called, 0);
 });
+
+test('phase 5: manager.cancel() delegates to the active provider', () => {
+    let providerCancelled = 0;
+    const mgr = createAIManager({
+        getProviderId: () => '9router',
+        getConfig: () => ({}),
+        registry: { '9router': { defaultEndpoint: 'http://x/v1', defaultModel: '', needsKey: false } },
+        createProviderEngine: () => ({
+            ask: (q, ctx, cb) => { /* never completes */ },
+            cancel: () => { providerCancelled++; }
+        })
+    });
+    let called = 0;
+    mgr.ask('q', {}, () => called++);
+    mgr.cancel();
+    assert.equal(providerCancelled, 1, 'active provider cancel() invoked');
+    assert.equal(called, 0, 'suppressed completion stays suppressed');
+});

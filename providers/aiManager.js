@@ -28,7 +28,9 @@ function createAIManager(opts) {
         ctx = ctx || {};
         const myGen = ++gen;
         const done = (err, data) => {
-            if (myGen !== gen) return; // superseded by cancel()/newer ask
+            // cancellation passes through stale guards so the conversation
+            // layer can roll back orphaned user turns (Phase 5)
+            if (myGen !== gen && !(err && err.error === 'cancelled')) return;
             cb(err, data);
         };
 
