@@ -538,7 +538,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._showPill();
         const fu = this._overlay ? this._overlay.followUpRow : null;
         if (fu) fu.visible = false;
-        this._renderAIChat();
+        // full reset to the initial state: empty entry, no panel below
+        this._overlay.setText("");
+        this.renderResults([]);
         global.stage.set_key_focus(this._overlay._entry);
     }
 
