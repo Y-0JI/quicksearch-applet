@@ -97,3 +97,14 @@
     color: rgba(255, 255, 255, 0.62);
     font-size: 9pt;
 }
+
+/* Phase 4: inline AI answer / error text */
+.quicksearch-ai-text {
+    padding: 8px 10px;
+    font-size: 10.5pt;
+    color: rgba(255, 255, 255, 0.92);
+}
+
+.quicksearch-ai-error {
+    color: rgba(255, 160, 160, 0.95);
+}

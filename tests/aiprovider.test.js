@@ -102,11 +102,16 @@ test('empty question -> empty-question without hitting transport', () => {
     assert.equal(t.calls.length, 0);
 });
 
-test('no api key -> no-api-key without hitting transport', () => {
-    const t = makeMockTransport(() => assert.fail('transport must not be called'));
+test('empty key is allowed at engine level (gating lives in AIManager)', () => {
+    let auth = '';
+    const t = makeMockTransport((o, cb) => { auth = o.headers['Authorization']; cb(null, { status: 200, text: OK_BODY }); });
     const p = createAIProvider({ apiKey: '', http: t });
-    p.ask('q', {}, (err) => assert.equal(err.error, 'no-api-key'));
-    assert.equal(t.calls.length, 0);
+    p.ask('q', {}, (err, res) => {
+        assert.equal(err, null);
+        assert.equal(auth, 'Bearer ');
+        assert.ok(res.answer.length > 0);
+    });
+    assert.equal(t.calls.length, 1);
 });
 
 test('default transport outside Cinnamon fails gracefully (no crash)', () => {

@@ -49,11 +49,43 @@ function defaultTransport(timeoutMs) {
     }
 }
 
+// Provider registry metadata: adding a new OpenAI-compatible backend is a
+// data-only change (id + label + defaults). Non-OpenAI-compatible APIs
+// (e.g. Ollama) need their own engine before being registered.
+const REGISTRY = {
+    '9router': {
+        label: '9Router',
+        defaultEndpoint: 'http://127.0.0.1:20128/v1/chat/completions',
+        defaultModel: '',
+        needsKey: false
+    },
+    'openrouter': {
+        label: 'OpenRouter',
+        defaultEndpoint: 'https://openrouter.ai/api/v1/chat/completions',
+        defaultModel: '',
+        needsKey: true
+    },
+    'openai': {
+        label: 'OpenAI',
+        defaultEndpoint: '',
+        defaultModel: '',
+        needsKey: true
+    },
+    'custom': {
+        label: 'Custom OpenAI-compatible',
+        defaultEndpoint: '',
+        defaultModel: '',
+        needsKey: false
+    }
+};
+
 function createAIProvider(opts) {
     opts = opts || {};
     const endpoint = opts.endpoint || DEFAULT_ENDPOINT;
     const apiKey = String(opts.apiKey || '');
-    const model = String(opts.model || DEFAULT_MODEL);
+    // explicit empty string is respected (local routers may not need one);
+    // omitting the option falls back to the generic default
+    const model = (opts.model != null) ? String(opts.model) : DEFAULT_MODEL;
     const timeoutMs = Number(opts.timeoutMs || DEFAULT_TIMEOUT_MS);
     const http = opts.http || defaultTransport(timeoutMs);
 
@@ -72,7 +104,8 @@ function createAIProvider(opts) {
 
         const q = String(question == null ? '' : question).trim();
         if (!q) { done({ error: 'empty-question' }); return; }
-        if (!apiKey) { done({ error: 'no-api-key' }); return; }
+        // NOTE: key requirement is decided by AIManager via registry
+        // needsKey; local/keyless providers may send an empty Bearer.
 
         const body = JSON.stringify({
             model: model,
@@ -120,4 +153,4 @@ function createAIProvider(opts) {
     return { ask: ask, cancel: cancel };
 }
 
-module.exports = { createAIProvider, DEFAULT_ENDPOINT, DEFAULT_MODEL, DEFAULT_TIMEOUT_MS, MAX_TOKENS };
+module.exports = { createAIProvider, REGISTRY, DEFAULT_ENDPOINT, DEFAULT_MODEL, DEFAULT_TIMEOUT_MS, MAX_TOKENS };

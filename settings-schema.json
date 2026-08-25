@@ -69,6 +69,22 @@
         "description": "Show recent searches when the box is empty",
         "default": true
     },
+    "ai-provider": {
+        "type": "combobox",
+        "description": "AI provider",
+        "options": {
+            "9router": "9Router (local)",
+            "openrouter": "OpenRouter",
+            "openai": "OpenAI",
+            "custom": "Custom OpenAI-compatible"
+        },
+        "default": "9router"
+    },
+    "ai-endpoint": {
+        "type": "entry",
+        "description": "AI endpoint (empty = provider default; custom/openai require this)",
+        "default": ""
+    },
     "ai-api-key": {
         "type": "entry",
         "description": "OpenRouter API key (stored locally in user config, never in git)",
@@ -76,7 +92,7 @@
     },
     "ai-model": {
         "type": "entry",
-        "description": "AI model id (OpenRouter), e.g. openai/gpt-4o-mini",
+        "description": "AI model id (provider-specific), e.g. cc/claude-sonnet-... or openai/gpt-4o-mini",
         "default": "openai/gpt-4o-mini"
     },
     "recent-queries": {

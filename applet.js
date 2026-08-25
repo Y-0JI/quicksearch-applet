@@ -13,7 +13,9 @@ const fileProviderMod = require('./providers/fileProvider.js');
 const webProviderMod = require('./providers/webProvider.js');
 const urlProviderMod = require('./providers/urlProvider.js');
 const calculatorProviderMod = require('./providers/calculatorProvider.js');
+const aiProviderMod = require('./providers/aiProvider.js');
 const searchEngineMod = require('./searchEngine.js');
+const aiManagerMod = require('./providers/aiManager.js');
 
 const UUID = "quicksearch@yoji";
 
@@ -162,6 +164,19 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._hotkeyName = UUID + "-open";
         this._hotkeyBound = null;
         this._mode = "search"; // SEARCH | AI — Phase 1: UI state only
+        this._aiSeq = 0;
+        // AIManager is the ONLY AI entry point; the applet knows nothing
+        // about concrete providers (Phase 4)
+        this._aiManager = aiManagerMod.createAIManager({
+            createProviderEngine: (cfg) => aiProviderMod.createAIProvider(cfg),
+            registry: aiProviderMod.REGISTRY,
+            getProviderId: () => String(this.settings.getValue("ai-provider") || ""),
+            getConfig: () => ({
+                apiKey: this.settings.getValue("ai-api-key"),
+                model: this.settings.getValue("ai-model"),
+                endpoint: this.settings.getValue("ai-endpoint")
+            })
+        });
         this._autoRows = [];
         this._mainRows = [];
 
@@ -282,6 +297,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         global.stage.set_key_focus(this._overlay._entry);
         // initial state is ALWAYS empty + SEARCH mode: no stale text/results/recents
         this._overlay.setText("");
+        this._aiSeq++;
         this._mode = "search";
         this._overlay.setModeUi(this._mode);
         this.renderResults([]);
@@ -292,6 +308,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     setMode(mode) {
         if (!this._overlay || (mode !== "search" && mode !== "ai")) return;
         if (this._mode === mode) return;
+        this._aiSeq++; // invalidate any pending AI response across modes
         this._mode = mode;
         // switching cancels active search and clears results; query text is kept
         if (this._engine) this._engine.cancel();
@@ -310,6 +327,14 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     onTextChanged(text) {
         this._selIdx = -1;
+        if (this._mode === "ai") {
+            // ASK AI: typing never runs the SearchEngine or local providers;
+            // the AI request happens only on Enter (_submitAI)
+            this._engine.cancel();
+            this._renderAutocomplete([]);
+            if (!text.trim()) this.renderResults([]); // reset panel when cleared
+            return;
+        }
         // floating autocomplete layer: computed per keystroke, rendered in
         // its own container in front of main results (never concatenated)
         this._renderAutocomplete(this._buildLocals(text));
@@ -366,6 +391,59 @@ class QuickSearchApplet extends Applet.IconApplet {
         ov.resultsRegion.set_size(w, h);
     }
 
+    // ---- Phase 4: ASK AI inline result ----
+
+    _submitAI() {
+        const question = String(this._overlay ? this._overlay.getText() : "").trim();
+        if (!question) return;
+        const token = ++this._aiSeq;
+        this._renderAIPanel(_("Thinking..."), false);
+        this._aiManager.ask(question, {}, (err, res) => {
+            if (token !== this._aiSeq) return; // stale response, drop it
+            if (err) {
+                this._renderAIPanel(this._aiErrorText(err.error || ""), true);
+            } else {
+                this._renderAIPanel(res.answer || _("(empty response)"), false);
+            }
+        });
+    }
+
+    _aiErrorText(code) {
+        switch (code) {
+            case "no-api-key": return _("AI API key belum diatur.");
+            case "http-401": return _("API key tidak valid.");
+            case "http-429": return _("Request AI terlalu banyak. Coba lagi nanti.");
+            case "timeout":
+            case "network": return _("AI tidak dapat dihubungi.");
+            case "bad-response": return _("Response AI tidak valid.");
+            default: return _("Terjadi kesalahan pada AI.");
+        }
+    }
+
+    _renderAIPanel(text, isError) {
+        const box = this._overlay.resultsBox;
+        while (box.get_n_children() > 0) box.remove_child(box.get_child_at_index(0));
+        this._mainRows = [];
+        this._autoRows = [];
+        this._rows = [];
+        this._selIdx = -1;
+        if (this._overlay._autoScroll) this._overlay._autoScroll.visible = false;
+        this._overlay._scroll.visible = true;
+
+        box.add_child(new St.Label({
+            text: _("AI"),
+            style_class: "quicksearch-section-header"
+        }));
+        const lbl = new St.Label({
+            text: String(text),
+            style_class: isError ? "quicksearch-ai-text quicksearch-ai-error"
+                                 : "quicksearch-ai-text"
+        });
+        lbl.get_clutter_text().set_line_wrap(true);
+        box.add_child(lbl);
+        this._syncRegionGeometry();
+    }
+
     // Phase 2: instant local rows (history + suggestions) for the typed query.
     // Never rendered on empty query — empty state stays strict searchbox-only.
     _buildLocals(text) {
@@ -419,6 +497,10 @@ class QuickSearchApplet extends Applet.IconApplet {
             return Clutter.EVENT_STOP;
         }
         if (sym === Clutter.KEY_Return || sym === Clutter.KEY_KP_Enter) {
+            if (this._mode === "ai") {
+                this._submitAI(); // ASK AI: Enter submits to the provider only
+                return Clutter.EVENT_STOP;
+            }
             if (this._selIdx >= 0 && this._rows[this._selIdx]) {
                 this.activateRow(this._rows[this._selIdx]);
                 return Clutter.EVENT_STOP;
