@@ -1,36 +1,45 @@
 {
+    "qs-header": {
+        "type": "section",
+        "description": "QUICK SEARCH"
+    },
+    "sec-general": {
+        "type": "section",
+        "description": "General"
+    },
     "open-shortcut": {
         "type": "keybinding",
-        "description": "Keyboard shortcut to open/close Quick Search",
+        "description": "Keyboard shortcut",
         "default": "<Super>f"
-    },
-    "enable-web": {
-        "type": "switch",
-        "description": "Enable web search",
-        "default": true
     },
     "enable-files": {
         "type": "switch",
         "description": "Enable file search",
         "default": true
     },
+    "enable-web": {
+        "type": "switch",
+        "description": "Enable web search",
+        "default": true
+    },
+    "show-recent": {
+        "type": "switch",
+        "description": "Show recent searches while typing",
+        "default": true
+    },
+    "sec-search": {
+        "type": "section",
+        "description": "Search"
+    },
     "search-engine": {
         "type": "combobox",
         "description": "Web search engine",
         "default": "ddgo",
         "options": {
-            "DuckDuckGo": "ddgo",
-            "Google": "google",
-            "Bing": "bing"
+            "ddgo": "DuckDuckGo",
+            "google": "Google",
+            "bing": "Bing"
         }
-    },
-    "file-locations": {
-        "type": "list",
-        "description": "File search locations (empty = home folder)",
-        "default": [],
-        "columns": [
-            {"id": "path", "title": "Path", "type": "string", "expander": true}
-        ]
     },
     "max-apps": {
         "type": "spinbutton",
@@ -38,7 +47,8 @@
         "default": 5,
         "min": 1,
         "max": 20,
-        "step": 1
+        "step": 1,
+        "units": "apps"
     },
     "max-files": {
         "type": "spinbutton",
@@ -46,7 +56,8 @@
         "default": 15,
         "min": 1,
         "max": 50,
-        "step": 1
+        "step": 1,
+        "units": "files"
     },
     "max-web": {
         "type": "spinbutton",
@@ -54,59 +65,77 @@
         "default": 5,
         "min": 1,
         "max": 20,
-        "step": 1
+        "step": 1,
+        "units": "results"
     },
     "debounce-ms": {
         "type": "spinbutton",
-        "description": "Debounce before searching (ms)",
+        "description": "Search delay",
         "default": 150,
         "min": 50,
-        "max": 500,
-        "step": 10
+        "max": 1000,
+        "step": 10,
+        "units": "ms"
     },
-    "show-recent": {
-        "type": "switch",
-        "description": "Show recent searches when the box is empty",
-        "default": true
+    "sec-ai": {
+        "type": "section",
+        "description": "AI"
     },
     "ai-provider": {
         "type": "combobox",
         "description": "AI provider",
+        "default": "9router",
         "options": {
-            "9router": "9Router (local)",
-            "openrouter": "OpenRouter",
-            "openai": "OpenAI",
-            "custom": "Custom OpenAI-compatible"
-        },
-        "default": "9router"
+            "9Router (local)": "9router",
+            "OpenRouter": "openrouter",
+            "OpenAI": "openai",
+            "Custom OpenAI-compatible": "custom"
+        }
     },
-    "ai-endpoint": {
+    "ai-model": {
         "type": "entry",
-        "description": "AI endpoint (empty = provider default; custom/openai require this)",
+        "description": "AI model / Combo",
         "default": ""
     },
     "ai-api-key": {
         "type": "entry",
-        "description": "OpenRouter API key (stored locally in user config, never in git)",
-        "default": ""
-    },
-    "ai-model": {
-        "type": "entry",
-        "description": "AI model id / nama Combo 9Router (mis. coba9router)",
+        "description": "AI API key",
         "default": ""
     },
     "ai-max-tokens": {
         "type": "spinbutton",
-        "description": "AI max tokens (reasoning models butuh lebih besar)",
+        "description": "Max AI tokens",
         "default": 2048,
         "min": 256,
         "max": 16384,
         "step": 128,
         "units": "tokens"
     },
-    "recent-queries": {
+    "sec-advanced": {
+        "type": "section",
+        "description": "Advanced"
+    },
+    "ai-endpoint": {
         "type": "entry",
-        "description": "Recent queries (managed automatically, stored as JSON)",
+        "description": "Leave empty to use the selected provider default.",
+        "default": ""
+    },
+    "file-locations": {
+        "type": "list",
+        "description": "File search locations",
+        "default": [],
+        "columns": [
+            {
+                "id": "path",
+                "title": "Path",
+                "type": "string",
+                "expander": true
+            }
+        ]
+    },
+    "recent-queries": {
+        "type": "generic",
+        "description": "Internal: recent search history (managed automatically)",
         "default": ""
     }
 }
