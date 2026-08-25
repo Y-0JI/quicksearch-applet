@@ -55,7 +55,8 @@ function createAIManager(opts) {
         });
 
         active.ask(String(question == null ? '' : question),
-                   { cancellable: ctx.cancellable || null },
+                   { cancellable: ctx.cancellable || null,
+                     messages: ctx.messages || null },
                    (err, data) => {
                        active = null;
                        done(err, data);

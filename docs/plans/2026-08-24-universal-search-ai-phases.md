@@ -147,6 +147,49 @@
 
 ---
 
+## Phase 4.5 — Conversational AI / Chat 2 Arah
+
+**Tujuan:** ASK AI menjadi percakapan multi-turn: user → assistant → user → assistant.
+Setiap pertanyaan berikutnya mengirim history yang relevan, bukan hanya pertanyaan terbaru.
+
+### Arsitektur
+```text
+ASK AI (Enter)
+   ↓
+ConversationManager (pure, history + context limit)
+   ↓ ctx.messages
+AIManager (satu-satunya entry point AI)
+   ↓
+AIProvider generic OpenAI-compatible → 9Router Combo
+```
+
+### Fitur wajib
+- Conversation history in-memory (session-only; tidak ada database persisten)
+- UI chat 2 arah: bubble/entry USER dan AI bertumpuk — jawaban lama TIDAK diganti
+- Follow-up question dipahami dalam konteks percakapan
+- Context limit sederhana: `maxTurns = 8` PASANGAN (maks 16 message) dikirim
+  sebagai context; sisanya dipotong FIFO
+- New/Clear conversation action sederhana
+- SEARCH tetap terpisah total dari ASK AI
+
+### Guardrail
+- "Thinking..." hanya loading state UI, tidak pernah masuk history
+- Request gagal: user turn di-ROLLBACK dari history, bubble user dihapus dari
+  UI, error tampil sementara, history sebelumnya tetap utuh
+- Tanpa: streaming, tool calling, vision, RAG, database chat, sophistication
+  Phase 5
+
+### File
+- `providers/conversationManager.js` (BARU, pure) · `tests/conversation.test.js` (BARU)
+- `providers/aiProvider.js` + `aiManager.js` (ctx.messages passthrough)
+- `applet.js` (chat UI + clear button) · `stylesheet.css` (2-3 class)
+
+### Verifikasi
+1. User→AI  2. follow-up terkait  3. 3–5 turn  4. clear  5. long response+scroll
+6. switch Search↔AI  7. reopen overlay (chat tersimpan)  8. regression penuh
+
+---
+
 ## Phase 5 — Cancellation + Error Handling AI
 
 **Tujuan:** response basi tak pernah menimpa yang baru; semua failure path aman.

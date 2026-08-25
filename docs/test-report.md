@@ -81,3 +81,14 @@ result pipeline (classify/normalize/dedupe/rank/limits).
 - Web fallback description memakai label engine terpilih
   (DuckDuckGo/Google/Bing) — tidak ada lagi fallback diam-diam ke DDG;
   instant answers tetap eksklusif ddgo.
+
+## Phase 4.5 — Conversational AI (Chat 2 Arah)
+- ConversationManager pure (maxTurns=8 PASANGAN = maks 16 message context,
+  FIFO trim); Thinking hanya loading UI, tidak masuk history.
+- LIVE PASS 9Router Combo coba9router, 5 turn:
+  BMRI → fundamental → dividend → risiko → kesimpulan; follow-up dijawab
+  kontekstual ("fundamentalnya?" paham konteks BMRI). Entries menumpuk
+  (2→10) tanpa menimpa; history 10 messages.
+- Percakapan baru (tombol) mengosongkan history+UI; reopen overlay setelah
+  clear tetap kosong; session-only sesuai spec.
+- Error rollback: user turn ditarik dari history + bubble user dihapus.

@@ -16,6 +16,7 @@ const calculatorProviderMod = require('./providers/calculatorProvider.js');
 const aiProviderMod = require('./providers/aiProvider.js');
 const searchEngineMod = require('./searchEngine.js');
 const aiManagerMod = require('./providers/aiManager.js');
+const conversationMod = require('./providers/conversationManager.js');
 
 const UUID = "quicksearch@yoji";
 
@@ -167,6 +168,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiSeq = 0;
         // AIManager is the ONLY AI entry point; the applet knows nothing
         // about concrete providers (Phase 4)
+        // Phase 4.5: in-memory conversation (session-only, NOT reset by open())
+        this._aiChat = [];   // UI entries: {who:'you'|'ai', text, pending?, isError?}
+        this._conversation = conversationMod.createConversationManager({ maxTurns: 8 });
         this._aiManager = aiManagerMod.createAIManager({
             createProviderEngine: (cfg) => aiProviderMod.createAIProvider(cfg),
             registry: aiProviderMod.REGISTRY,
@@ -343,6 +347,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         // switching cancels active search and clears results; query text is kept
         if (this._engine) this._engine.cancel();
         this.renderResults([]);
+        if (mode === "ai" && this._aiChat.length) this._renderAIChat(); // resume conversation
         this._selIdx = -1;
         this._overlay.setModeUi(mode);
         global.stage.set_key_focus(this._overlay._entry);
@@ -437,21 +442,91 @@ class QuickSearchApplet extends Applet.IconApplet {
         ov.resultsRegion.set_size(w, h);
     }
 
-    // ---- Phase 4: ASK AI inline result ----
+    // ---- Phase 4/4.5: ASK AI conversational inline panel ----
 
     _submitAI() {
         const question = String(this._overlay ? this._overlay.getText() : "").trim();
         if (!question) return;
         const token = ++this._aiSeq;
-        this._renderAIPanel(_("Thinking..."), false);
-        this._aiManager.ask(question, {}, (err, res) => {
+
+        // UI: append the user bubble + a pending AI bubble (Thinking is a
+        // UI-only loading state, never conversation history)
+        this._aiChat.push({ who: "you", text: question });
+        const pend = { who: "ai", text: _("Thinking..."), pending: true };
+        this._aiChat.push(pend);
+        this._renderAIChat();
+
+        const askFn = (q, ctx, cb) => this._aiManager.ask(q, ctx, cb);
+        this._conversation.send(question, askFn, (err, res) => {
             if (token !== this._aiSeq) return; // stale response, drop it
             if (err) {
-                this._renderAIPanel(this._aiErrorText(err.error || "", err.detail || ""), true);
+                // guardrail: rollback the failed user bubble from the UI;
+                // ConversationManager already rolled back its history
+                const lastYou = [...this._aiChat].reverse().findIndex(e => e.who === "you");
+                if (lastYou !== -1) this._aiChat.splice(this._aiChat.length - 1 - lastYou, 1);
+                pend.text = this._aiErrorText(err.error || "", err.detail || "");
+                pend.pending = false;
+                pend.isError = true;
             } else {
-                this._renderAIPanel(res.answer || _("(empty response)"), false);
+                pend.text = (res && res.answer) ? res.answer : _("(empty response)");
+                pend.pending = false;
             }
+            this._renderAIChat();
         });
+    }
+
+    _clearConversation() {
+        this._conversation.clear();
+        this._aiChat = [];
+        this._renderAIChat();
+    }
+
+    _renderAIChat() {
+        const box = this._overlay.resultsBox;
+        while (box.get_n_children() > 0) box.remove_child(box.get_child_at_index(0));
+        this._mainRows = [];
+        this._autoRows = [];
+        this._rows = [];
+        this._selIdx = -1;
+        if (this._overlay._autoScroll) this._overlay._autoScroll.visible = false;
+        this._overlay._scroll.visible = true;
+
+        // header: AI + New conversation action (only when there is history)
+        const head = new St.BoxLayout({ vertical: false, x_align: St.Align.END });
+        const headLbl = new St.Label({ text: _("AI"), style_class: "quicksearch-section-header" });
+        head.add(headLbl);
+        if (this._aiChat.length > 0) {
+            const btn = new St.Button({
+                label: _("Percakapan baru"),
+                style_class: "quicksearch-newchat-btn",
+                can_focus: false
+            });
+            btn.connect("clicked", () => this._clearConversation());
+            head.add(btn);
+        }
+        box.add_child(head);
+
+        if (this._aiChat.length === 0) {
+            box.add_child(new St.Label({
+                text: _("Tanya apa saja. Tekan Enter untuk mengirim."),
+                style_class: "quicksearch-desc"
+            }));
+        }
+        for (const e of this._aiChat) {
+            const who = e.who === "you" ? _("Anda") : _("AI");
+            box.add_child(new St.Label({
+                text: who,
+                style_class: "quicksearch-chat-header " +
+                    (e.who === "you" ? "quicksearch-chat-you" : "quicksearch-chat-ai")
+            }));
+            const lbl = new St.Label({
+                text: String(e.text),
+                style_class: "quicksearch-ai-text" + (e.isError ? " quicksearch-ai-error" : "")
+            });
+            lbl.get_clutter_text().set_line_wrap(true);
+            box.add_child(lbl);
+        }
+        this._syncRegionGeometry();
     }
 
     _aiErrorText(code, detail) {
@@ -469,30 +544,6 @@ class QuickSearchApplet extends Applet.IconApplet {
         // show them alongside the friendly line instead of hiding them
         if (detail) return base + "\n" + String(detail).slice(0, 240);
         return base;
-    }
-
-    _renderAIPanel(text, isError) {
-        const box = this._overlay.resultsBox;
-        while (box.get_n_children() > 0) box.remove_child(box.get_child_at_index(0));
-        this._mainRows = [];
-        this._autoRows = [];
-        this._rows = [];
-        this._selIdx = -1;
-        if (this._overlay._autoScroll) this._overlay._autoScroll.visible = false;
-        this._overlay._scroll.visible = true;
-
-        box.add_child(new St.Label({
-            text: _("AI"),
-            style_class: "quicksearch-section-header"
-        }));
-        const lbl = new St.Label({
-            text: String(text),
-            style_class: isError ? "quicksearch-ai-text quicksearch-ai-error"
-                                 : "quicksearch-ai-text"
-        });
-        lbl.get_clutter_text().set_line_wrap(true);
-        box.add_child(lbl);
-        this._syncRegionGeometry();
     }
 
     // Phase 2: instant local rows (history + suggestions) for the typed query.

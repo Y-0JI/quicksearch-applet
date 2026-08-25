@@ -108,3 +108,30 @@
 .quicksearch-ai-error {
     color: rgba(255, 160, 160, 0.95);
 }
+
+/* Phase 4.5: conversational chat entries */
+.quicksearch-chat-header {
+    font-size: 8.5pt;
+    font-weight: bold;
+    padding: 6px 10px 2px 10px;
+}
+
+.quicksearch-chat-you {
+    color: rgba(138, 180, 255, 0.95);
+}
+
+.quicksearch-chat-ai {
+    color: rgba(195, 166, 255, 0.95);
+}
+
+.quicksearch-newchat-btn {
+    padding: 3px 10px;
+    border-radius: 10px;
+    font-size: 8.5pt;
+    color: rgba(255, 255, 255, 0.75);
+    background-color: rgba(255, 255, 255, 0.07);
+}
+
+.quicksearch-newchat-btn:hover {
+    background-color: rgba(255, 255, 255, 0.16);
+}

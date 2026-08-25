@@ -109,9 +109,20 @@ function createAIProvider(opts) {
         // NOTE: key requirement is decided by AIManager via registry
         // needsKey; local/keyless providers may send an empty Bearer.
 
+        // multi-turn (Phase 4.5): a valid ctx.messages array replaces the
+        // single-message body; its last user message IS the question
+        let messages = null;
+        if (Array.isArray(ctx.messages) && ctx.messages.length) {
+            messages = ctx.messages.map(m => ({
+                role: (m && m.role === 'assistant') ? 'assistant' : 'user',
+                content: String((m && m.content) != null ? m.content : '')
+            }));
+        }
+        if (!messages) messages = [{ role: 'user', content: q }];
+
         const body = JSON.stringify({
             model: model,
-            messages: [{ role: 'user', content: q }],
+            messages: messages,
             stream: false,
             max_tokens: maxTokens
         });
