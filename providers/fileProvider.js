@@ -22,7 +22,7 @@ function createFileProvider(helpers) {
         hasLocate: !!GLib.find_program_in_path('locate'),
         hasFind: !!GLib.find_program_in_path('find')
     };
-    const backend = helpers.forceBackend || pickFileBackend(avail); // forceBackend: testing hook
+    const backend = pickFileBackend(avail);
 
     const cache = new Map(); // key "query|loc0|backend" -> results array
 

@@ -59,13 +59,6 @@ function createSearchEngine(helpers) {
         try { webProvider.destroy(); } catch (e) {}
     }
 
-    function debugState() {
-        return { gen: gen, hasTimer: !!timerId, hasCancellable: !!cancellable,
-                 buckets: buckets ? { calc: buckets.calc.length, url: buckets.url.length,
-                                      app: buckets.app.length, file: buckets.file.length,
-                                      web: buckets.web.length } : null,
-                 lastError: lastError };
-    }
 
     // ---- internals ----
 
@@ -186,7 +179,7 @@ function createSearchEngine(helpers) {
         } catch (e) {}
     }
 
-    return { query, cancel, destroy, debugState };
+    return { query, cancel, destroy };
 }
 
 module.exports = { createSearchEngine };

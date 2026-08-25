@@ -16,7 +16,6 @@ function classifyQuery(query) {
 
 // ---- Score tiers (spec §15) ----
 const SCORES = {
-    ai: 460,
     history: 450,
     suggestion: 440,
     calc: 400,

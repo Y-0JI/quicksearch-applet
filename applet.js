@@ -21,7 +21,6 @@ const conversationMod = require('./providers/conversationManager.js');
 const UUID = "quicksearch@yoji";
 
 // live handle for Looking Glass / dbus Eval testing
-var debug = { instance: null };
 
 const RECENT_MAX = 15;
 
@@ -176,6 +175,7 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         const btn = new St.Button({
             style_class: "quicksearch-mode-btn",
             child: new St.Icon({ icon_name: icon, icon_size: 16 }),
+            accessible_name: accessibleName,
             can_focus: false
         });
         btn.connect("clicked", () => this._applet.setMode(mode));
@@ -817,16 +817,6 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     // ---- rendering (spec §16 sections; provider data only -> UI here) ----
 
-    renderRecents() {
-        const rows = this._recent.map(q => ({
-            type: "recent",
-            title: q,
-            description: _("Recent"),
-            icon: "document-open-recent",
-            query: q
-        }));
-        this._renderRows(rows);
-    }
 
     renderResults(results) {
         this._current = results;
@@ -953,8 +943,7 @@ class QuickSearchApplet extends Applet.IconApplet {
 }
 
 function main(metadata, orientation, panel_height, instance_id) {
-    debug.instance = new QuickSearchApplet(orientation, panel_height, instance_id);
-    return debug.instance;
+    return new QuickSearchApplet(orientation, panel_height, instance_id);
 }
 
-module.exports = { QuickSearchApplet, QuickSearchOverlay, main, debug };
+module.exports = { main };

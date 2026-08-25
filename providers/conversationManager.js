@@ -82,7 +82,7 @@ function createConversationManager(opts) {
     function size() { return msgs.length; }
     function history() { return msgs.map(m => ({ role: m.role, content: m.content })); }
 
-    return { send, buildMessages, addUser, addAssistant, popLast, clear, size, history, maxTurns };
+    return { send, buildMessages, addUser, addAssistant, clear, size, history, maxTurns };
 }
 
 module.exports = { createConversationManager };
