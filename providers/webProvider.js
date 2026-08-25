@@ -12,6 +12,7 @@ function createWebProvider(helpers) {
     const scoreResult = helpers.scoreResult;
     // settings-driven: fallback URL per engine choice; DDG instant answers only for ddgo
     const fallbackUrlFor = helpers.fallbackUrlFor || (q => 'https://duckduckgo.com/?q=' + encodeURIComponent(q));
+    const searchEngineLabel = helpers.searchEngineLabel || 'DuckDuckGo';
     const useInstantAnswers = helpers.useInstantAnswers !== false;
     let session = null;
 
@@ -22,7 +23,7 @@ function createWebProvider(helpers) {
         const fallback = makeResult({
             type: 'web',
             title: 'Search the web for "' + q + '"',
-            description: 'DuckDuckGo',
+            description: searchEngineLabel,
             icon: 'web-browser',
             score: scoreResult('web-fallback'),
             url: searchUrl,
@@ -61,7 +62,7 @@ function createWebProvider(helpers) {
                         extra.push(makeResult({
                             type: 'web',
                             title: String(data.AbstractText).slice(0, 120),
-                            description: data.Heading || 'DuckDuckGo',
+                            description: data.Heading || searchEngineLabel,
                             icon: 'web-browser',
                             score: scoreResult('web-instant'),
                             url: data.AbstractURL,

@@ -69,3 +69,15 @@ result pipeline (classify/normalize/dedupe/rank/limits).
   jawaban nyata inline (max tokens cukup untuk melewati fase reasoning),
   overlay tetap terbuka >12s setelah jawaban; Esc/outside/Super+F/search pass;
   47/47 tests.
+
+### Perbaikan BUG pasca-Phase 4
+- Autocomplete height kini diukur dari konten aktual autoCompleteBox
+  (bukan preferred ScrollView yang stale): 1 row -> 1 row + padding,
+  dst; tidak ada sisa tinggi dari state sebelumnya.
+- search-engine dinormalisasi (id + label legacy, case-insensitive);
+  nilai invalid di-log warning dan dipersist sebagai 'ddgo'. Deteksi
+  perubahan engine dilakukan lazily per keystroke karena setValue
+  combobox tidak memicu bind callback di build Cinnamon ini.
+- Web fallback description memakai label engine terpilih
+  (DuckDuckGo/Google/Bing) — tidak ada lagi fallback diam-diam ke DDG;
+  instant answers tetap eksklusif ddgo.

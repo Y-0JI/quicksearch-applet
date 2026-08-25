@@ -198,7 +198,13 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.settings.bind("open-shortcut", "open_shortcut", () => this._bindHotkey());
         this.settings.bind("enable-web", "enable_web", () => this._rebuildEngine());
         this.settings.bind("enable-files", "enable_files", () => this._rebuildEngine());
-        this.settings.bind("search-engine", "search_engine", () => this._rebuildEngine());
+        this.settings.bind("search-engine", "search_engine", (v) => {
+            // two-way binding may hand us the raw value: normalize explicitly,
+            // then rebuild so providers pick up the new engine + label
+            this.search_engine = v;
+            this._applySearchEngineSetting();
+            this._rebuildEngine();
+        });
         this.settings.bind("file-locations", "file_locations", () => this._rebuildEngine());
         this.settings.bind("max-apps", "max_apps", () => this._rebuildEngine());
         this.settings.bind("max-files", "max_files", () => this._rebuildEngine());
@@ -206,6 +212,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.settings.bind("debounce-ms", "debounce_ms", () => this._rebuildEngine());
         this.settings.bind("show-recent", "show_recent");
         this.settings.bind("recent-queries", "recent_queries_json");
+
+        this._applySearchEngineSetting(); // normalize stored/legacy values once
 
         // one-time migration: old default <Super>space conflicts with the
         // system input-source switcher (next-input-source). Only touches
@@ -232,16 +240,19 @@ class QuickSearchApplet extends Applet.IconApplet {
             this._engine = null;
         }
 
+        this._applySearchEngineSetting(); // defense in depth
+        const engineChoice = FALLBACK_URLS[this.search_engine] ? this.search_engine : "ddgo";
+        const searchEngineLabel = this._searchEngineLabel(engineChoice);
+        this._engineForId = engineChoice;
         const helperDeps = {
             makeResult: resultMod.makeResult,
             scoreResult: resultMod.scoreResult,
             pickFileBackend: utilsMod.pickFileBackend,
             sanitizeGlob: utilsMod.sanitizeGlob,
             limits: { app: this.max_apps, file: this.max_files, web: this.max_web },
-            locations: Array.isArray(this.file_locations) ? this.file_locations : []
+            locations: Array.isArray(this.file_locations) ? this.file_locations : [],
+            searchEngineLabel: searchEngineLabel
         };
-
-        const engineChoice = FALLBACK_URLS[this.search_engine] ? this.search_engine : "ddgo";
 
         const providers = {
             appProvider: appProviderMod.createAppProvider(helperDeps),
@@ -270,6 +281,24 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     _rebuildEngine() {
         this._createEngine();
+    }
+
+    // BUG2: accept ids and legacy labels; log clearly, default only as needed
+    _applySearchEngineSetting() {
+        const n = utilsMod.normalizeSearchEngine(this.search_engine);
+        if (!n) {
+            global.logWarning("[quicksearch@yoji] invalid search-engine value '" +
+                              this.search_engine + "' - falling back to 'ddgo'");
+            this.search_engine = "ddgo";
+            try { this.settings.setValue("search-engine", "ddgo"); } catch (e) {}
+        } else {
+            this.search_engine = n;
+        }
+        return this.search_engine;
+    }
+
+    _searchEngineLabel(id) {
+        return { ddgo: "DuckDuckGo", google: "Google", bing: "Bing" }[id] || "DuckDuckGo";
     }
 
     _bindHotkey() {
@@ -345,6 +374,11 @@ class QuickSearchApplet extends Applet.IconApplet {
             this.renderResults([]);
             return;
         }
+        // combobox setValue may not fire the bind callback on this Cinnamon
+        // build: detect engine change lazily right before querying
+        if (this._applySearchEngineSetting() !== this._engineForId) {
+            this._rebuildEngine();
+        }
         this._engine.query(text, (results) => this.renderResults(results));
     }
 
@@ -382,7 +416,18 @@ class QuickSearchApplet extends Applet.IconApplet {
             h = Math.max(h, mainH);
         }
         if (ov._autoScroll.visible) {
-            const [, natH] = ov._autoScroll.get_preferred_height(w);
+            // measure the actual rows container: the scroll widget's own
+            // preferred height can go stale when rows are rebuilt
+            let natH = 0;
+            try {
+                const [ , cNat] = ov.autoCompleteBox.get_preferred_height(w);
+                natH = Number(cNat) || 0;
+            } catch (e) { natH = 0; }
+            if (natH <= 0) {
+                const [, fb] = ov._autoScroll.get_preferred_height(w);
+                natH = Number(fb) || 0;
+            }
+            natH += 16; // panel padding + border allowance
             const autoH = Math.min(natH, 200, roomCap);
             ov._autoScroll.set_position(0, 0);
             ov._autoScroll.set_size(w, autoH);

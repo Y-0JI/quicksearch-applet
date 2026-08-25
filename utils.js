@@ -41,4 +41,18 @@ function buildLocalRows(query, recent, appNames, caps) {
     return out;
 }
 
-module.exports = { pickFileBackend, sanitizeGlob, buildLocalRows };
+// normalize a raw search-engine setting into a valid engine id.
+// accepts ids and legacy/human labels (case-insensitive); returns null for
+// anything unrecognized so the caller can log and apply its default.
+const ENGINE_IDS = ['ddgo', 'google', 'bing'];
+const ENGINE_ALIASES = {
+    'ddgo': 'ddgo', 'duckduckgo': 'ddgo', 'duck duck go': 'ddgo',
+    'google': 'google',
+    'bing': 'bing'
+};
+function normalizeSearchEngine(raw) {
+    const k = String(raw == null ? '' : raw).toLowerCase().trim();
+    return Object.prototype.hasOwnProperty.call(ENGINE_ALIASES, k) ? ENGINE_ALIASES[k] : null;
+}
+
+module.exports = { pickFileBackend, sanitizeGlob, buildLocalRows, normalizeSearchEngine, ENGINE_IDS };
