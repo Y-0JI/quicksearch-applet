@@ -401,23 +401,28 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiManager.ask(question, {}, (err, res) => {
             if (token !== this._aiSeq) return; // stale response, drop it
             if (err) {
-                this._renderAIPanel(this._aiErrorText(err.error || ""), true);
+                this._renderAIPanel(this._aiErrorText(err.error || "", err.detail || ""), true);
             } else {
                 this._renderAIPanel(res.answer || _("(empty response)"), false);
             }
         });
     }
 
-    _aiErrorText(code) {
+    _aiErrorText(code, detail) {
+        let base;
         switch (code) {
-            case "no-api-key": return _("AI API key belum diatur.");
-            case "http-401": return _("API key tidak valid.");
-            case "http-429": return _("Request AI terlalu banyak. Coba lagi nanti.");
+            case "no-api-key": base = _("AI API key belum diatur."); break;
+            case "http-401": base = _("API key tidak valid."); break;
+            case "http-429": base = _("Request AI terlalu banyak. Coba lagi nanti."); break;
             case "timeout":
-            case "network": return _("AI tidak dapat dihubungi.");
-            case "bad-response": return _("Response AI tidak valid.");
-            default: return _("Terjadi kesalahan pada AI.");
+            case "network": base = _("AI tidak dapat dihubungi."); break;
+            case "bad-response": base = _("Response AI tidak valid."); break;
+            default: base = _("Terjadi kesalahan pada AI.");
         }
+        // provider/router messages (e.g. from 9Router) are informative —
+        // show them alongside the friendly line instead of hiding them
+        if (detail) return base + "\n" + String(detail).slice(0, 240);
+        return base;
     }
 
     _renderAIPanel(text, isError) {

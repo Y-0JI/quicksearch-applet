@@ -110,6 +110,7 @@ function createAIProvider(opts) {
         const body = JSON.stringify({
             model: model,
             messages: [{ role: 'user', content: q }],
+            stream: false,
             max_tokens: MAX_TOKENS
         });
 
@@ -129,14 +130,26 @@ function createAIProvider(opts) {
             if (err) { done(err); return; }
             const status = Number(res.status) || 0;
             if (status < 200 || status >= 300) {
-                done({ error: 'http-' + status });
+                // surface the upstream/provider message when present so the
+                // UI can show something informative instead of a bare code
+                let detail = '';
+                try {
+                    const j = JSON.parse(res.text);
+                    const m = j && j.error ? (j.error.message || j.error) : null;
+                    if (m) detail = String(m).slice(0, 200);
+                } catch (e) {}
+                done({ error: 'http-' + status, detail: detail });
                 return;
             }
             try {
                 const json = JSON.parse(res.text);
                 const choice = json.choices && json.choices[0];
                 const content = choice && choice.message && choice.message.content;
-                if (content == null) { done({ error: 'bad-response' }); return; }
+                if (content == null || !String(content).trim()) {
+                    const why = choice && choice.finish_reason ? ('finish_reason=' + choice.finish_reason) : '';
+                    done({ error: 'bad-response', detail: why });
+                    return;
+                }
                 done(null, { answer: String(content).trim(), model: json.model || model });
             } catch (e) {
                 done({ error: 'bad-response' });

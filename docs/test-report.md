@@ -40,3 +40,20 @@ result pipeline (classify/normalize/dedupe/rank/limits).
   (terverifikasi via screenshot). Akses alternatif: **Super+F**
   (default sejak migrasi; `Super+Space` lama bentrok dengan switcher
   input-source sistem `next-input-source`) — bekerja meski panel hidden.
+
+## Phase 4 — ASK AI inline (multi-provider)
+
+- Arsitektur: Applet → AIManager (satu-satunya entry point) → registry metadata
+  (9router/openrouter/openai/custom) → engine OpenAI-compatible generik.
+- Settings: ai-provider (combobox), ai-model, ai-endpoint, ai-api-key
+  (key hanya di ~/.config/cinnamon/spices, di luar repo).
+- Request shape terbukti: {model:"coba9router", messages:[user], stream:false,
+  max_tokens:512} ke http://127.0.0.1:20128/v1/chat/completions.
+- LIVE PASS: mode ASK AI + "jelaskan plocate dalam 2 kalimat" + Enter →
+  "Thinking..." → jawaban bahasa Indonesia inline di panel utama; overlay tetap
+  terbuka; scroll area existing dipakai.
+- Error informatif: pesan error upstream 9Router ditampilkan sebagai detail
+  setelah baris ramah (mis. HTTP 401 → "API key tidak valid." + detail router);
+  konten kosong dengan finish_reason=length juga dilaporkan.
+- Catatan model reasoning (hy3-free): sebagian token habis di fase reasoning;
+  bila jawaban kosong, UI menampilkan penyebab finish_reason secara informatif.

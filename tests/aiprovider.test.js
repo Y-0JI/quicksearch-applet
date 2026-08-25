@@ -49,8 +49,19 @@ test('request shape: endpoint, headers, model, question, max_tokens', () => {
     assert.equal(body.model, 'anthropic/claude-3-haiku');
     assert.equal(body.messages[0].role, 'user');
     assert.equal(body.messages[0].content, 'hai');
+    assert.equal(body.stream, false); // proven terminal request shape
     assert.equal(body.max_tokens, MAX_TOKENS);
     assert.ok(captured.timeoutMs > 0);
+});
+
+test('http error body message surfaces as detail', () => {
+    const errBody = JSON.stringify({ error: { message: 'Model tidak terdaftar' } });
+    const t = makeMockTransport((o, cb) => cb(null, { status: 400, text: errBody }));
+    const p = makeProvider(t);
+    p.ask('q', {}, (err) => {
+        assert.equal(err.error, 'http-400');
+        assert.equal(err.detail, 'Model tidak terdaftar');
+    });
 });
 
 test('defaults applied when not specified', () => {
