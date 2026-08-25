@@ -135,3 +135,27 @@
 .quicksearch-newchat-btn:hover {
     background-color: rgba(255, 255, 255, 0.16);
 }
+
+/* Phase 4.6: dedicated follow-up input below the AI conversation panel */
+.quicksearch-followup-row {
+    margin-top: 6px;
+    spacing: 8px;
+}
+
+.quicksearch-followup {
+    padding: 8px 12px;
+    font-size: 11pt;
+    color: rgba(255, 255, 255, 0.95);
+    background-color: rgba(36, 39, 46, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 14px;
+    caret-color: rgba(255, 255, 255, 0.90);
+    selected-color: rgba(0, 0, 0, 0.85);
+    selection-background-color: rgba(255, 255, 255, 0.85);
+}
+
+.quicksearch-followup-hint {
+    font-size: 11pt;
+    color: rgba(255, 255, 255, 0.45);
+    padding: 0 4px;
+}

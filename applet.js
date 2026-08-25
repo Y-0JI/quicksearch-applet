@@ -91,6 +91,55 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._autoScroll.add_actor(this.autoCompleteBox);
         this.resultsRegion.add_actor(this._autoScroll);
 
+        // Phase 4.6: dedicated follow-up input BELOW the conversation panel.
+        // Lives outside the scroll area so it never scrolls with history,
+        // and never triggers the SearchEngine.
+        this.followUpRow = new St.BoxLayout({
+            style_class: "quicksearch-followup-row",
+            visible: false
+        });
+        this.followUpEntry = new St.Entry({
+            hint_text: _("Tanyakan sesuatu... (Enter)"),
+            can_focus: true,
+            style_class: "quicksearch-followup"
+        });
+        this.followUpEntry.clutter_text.connect("text-changed", () => {
+            // intentionally no-op: follow-up input never runs local search
+        });
+        this.followUpEntry.clutter_text.connect("key-press-event", (actor, event) => {
+            const sym = event.get_key_symbol();
+            if (sym === Clutter.KEY_Escape) { this._applet.close(); return Clutter.EVENT_STOP; }
+            if (sym === Clutter.KEY_Return || sym === Clutter.KEY_KP_Enter) {
+                this._applet._submitAIFromFollowUp();
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+        const enterHint = new St.Label({ text: "\u21b5", style_class: "quicksearch-followup-hint" });
+        this.followUpEntry.x_expand = true;
+        this.followUpRow.add(this.followUpEntry);
+        this.followUpRow.add(enterHint);
+        // backgroundStack (BinLayout, full-screen): child is centered, so we
+        // shift it to the bottom via translation_y — deterministic, never
+        // scrolls with history, and always on screen
+        this.backgroundStack.add_actor(this.followUpRow);
+        this.followUpRow.set_width(690);
+        this._fuTy = 0;
+        this._syncFollowUpPosition = () => {
+            if (!this.followUpRow.visible) return;
+            const h = this.followUpRow.get_transformed_size()[1] || 40;
+            const desiredY = global.screen_height - h - 10;
+            const curY = this.followUpRow.get_transformed_position()[1];
+            const centeredY = curY - this._fuTy;      // strip previous shift
+            const ty = Math.round(desiredY - centeredY);
+            if (Math.abs(ty - this._fuTy) > 0.5) {
+                this._fuTy = ty;
+                this.followUpRow.translation_y = ty;
+            }
+        };
+        this.followUpRow.connect("notify::allocation", () => this._syncFollowUpPosition());
+        this.followUpRow.connect("notify::visible", () => this._syncFollowUpPosition());
+
         this._entry.clutter_text.connect("text-changed", (actor) => {
             this._applet.onTextChanged(actor.get_text());
         });
@@ -334,6 +383,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiSeq++;
         this._mode = "search";
         this._overlay.setModeUi(this._mode);
+        if (this._overlay.followUpRow) this._overlay.followUpRow.visible = false;
         this.renderResults([]);
     }
 
@@ -350,6 +400,10 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (mode === "ai" && this._aiChat.length) this._renderAIChat(); // resume conversation
         this._selIdx = -1;
         this._overlay.setModeUi(mode);
+        if (this._overlay.followUpRow) {
+            this._overlay.followUpRow.visible =
+                (mode === "ai" && this._aiChat.length > 0);
+        }
         global.stage.set_key_focus(this._overlay._entry);
     }
 
@@ -398,7 +452,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         // physical fit: panel must stay on screen below the searchbox
         const pillTf = ov._entryRow.get_transformed_position();
         const pillBottom = (pillTf[1] || 146) + (ov._entryRow.get_transformed_size()[1] || 54);
-        const roomCap = Math.max(320, global.screen_height - pillBottom - 6 - 12);
+        const fuH = (ov.followUpRow && ov.followUpRow.visible)
+            ? Math.max(40, Math.round(ov.followUpRow.get_transformed_size()[1]) || 44) + 6 : 0;
+        const roomCap = Math.max(320, global.screen_height - pillBottom - 6 - fuH - 12);
         let h = 0;
         if (ov._scroll.visible) {
             // reliable source: measure the CONTENT (resultsBox) directly.
@@ -444,10 +500,16 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     // ---- Phase 4/4.5: ASK AI conversational inline panel ----
 
-    _submitAI() {
-        const question = String(this._overlay ? this._overlay.getText() : "").trim();
+    _submitAI(questionOverride) {
+        const question = String(questionOverride != null ? questionOverride
+            : (this._overlay ? this._overlay.getText() : "")).trim();
         if (!question) return;
         const token = ++this._aiSeq;
+        // a newer submit supersedes older pending ones (single-flight):
+        // mark stale Thinking bubbles instead of leaving them stuck
+        for (const e of this._aiChat) {
+            if (e.pending) { e.text = _("— dibatalkan —"); e.pending = false; }
+        }
 
         // UI: append the user bubble + a pending AI bubble (Thinking is a
         // UI-only loading state, never conversation history)
@@ -475,10 +537,13 @@ class QuickSearchApplet extends Applet.IconApplet {
         });
     }
 
-    _clearConversation() {
-        this._conversation.clear();
-        this._aiChat = [];
-        this._renderAIChat();
+    _submitAIFromFollowUp() {
+        const fu = this._overlay ? this._overlay.followUpEntry : null;
+        if (!fu) return;
+        const q = String(fu.get_text() || "").trim();
+        if (!q) return;
+        fu.set_text("");
+        this._submitAI(q);
     }
 
     _renderAIChat() {
@@ -491,20 +556,15 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (this._overlay._autoScroll) this._overlay._autoScroll.visible = false;
         this._overlay._scroll.visible = true;
 
-        // header: AI + New conversation action (only when there is history)
-        const head = new St.BoxLayout({ vertical: false, x_align: St.Align.END });
-        const headLbl = new St.Label({ text: _("AI"), style_class: "quicksearch-section-header" });
-        head.add(headLbl);
-        if (this._aiChat.length > 0) {
-            const btn = new St.Button({
-                label: _("Percakapan baru"),
-                style_class: "quicksearch-newchat-btn",
-                can_focus: false
-            });
-            btn.connect("clicked", () => this._clearConversation());
-            head.add(btn);
-        }
-        box.add_child(head);
+        // header: AI (conversation panel)
+        box.add_child(new St.Label({
+            text: _("AI"),
+            style_class: "quicksearch-section-header"
+        }));
+
+        // follow-up input appears below the panel once a conversation started
+        const fu = this._overlay.followUpRow;
+        if (fu) fu.visible = this._aiChat.length > 0;
 
         if (this._aiChat.length === 0) {
             box.add_child(new St.Label({
