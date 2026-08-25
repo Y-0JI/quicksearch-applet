@@ -20,8 +20,15 @@ function createConversationManager(opts) {
         return msgs.slice(-maxMessages);
     }
 
+    // heal orphans: a trailing user turn without an assistant reply means its
+    // exchange was cancelled/superseded — drop it before composing context
+    function _heal() {
+        while (msgs.length && msgs[msgs.length - 1].role === 'user') msgs.pop();
+    }
+
     // messages to send for a new question (history + the question itself)
     function buildMessages(question) {
+        _heal();
         const out = _trim().map(m => ({ role: m.role, content: m.content }));
         const q = String(question == null ? '' : question).trim();
         if (q) out.push({ role: 'user', content: q });
@@ -54,6 +61,7 @@ function createConversationManager(opts) {
         const q = String(question == null ? '' : question).trim();
         if (!q) { cb({ error: 'empty-question' }); return; }
 
+        _heal();
         addUser(q);
         const messages = _trim(); // includes this question as the last message
         askFn(q, { messages: messages }, (err, res) => {

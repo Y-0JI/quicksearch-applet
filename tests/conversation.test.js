@@ -99,3 +99,17 @@ test('phase 5: cancelled request rolls back the user turn (no orphan)', () => {
     assert.deepEqual(cm.history(), before); // no orphaned user turn
     assert.equal(cm.size(), 2);
 });
+
+test('phase 7: orphaned user turn (no assistant) is healed on next send', () => {
+    const cm = createConversationManager({});
+    cm.send('satu', OK('a satu'), () => {});
+    cm.addUser('orphan tanpa jawaban');   // cancelled/superseded exchange
+    const msgs = cm.buildMessages('lanjutan');
+    assert.equal(msgs[msgs.length - 1].content, 'lanjutan');
+    assert.ok(!msgs.some(m => m.content === 'orphan tanpa jawaban'));
+    // send berikutnya membersihkan orphan dari history
+    cm.send('lanjutan', OK('a lanjutan'), () => {});
+    const h = cm.history();
+    assert.ok(!h.some(m => m.content === 'orphan tanpa jawaban'));
+    assert.equal(h[h.length - 1].content, 'a lanjutan');
+});

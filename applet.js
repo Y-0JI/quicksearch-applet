@@ -561,7 +561,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         // UI-only loading state, never conversation history)
         const firstQuestion = this._aiChat.length === 0;
         this._aiChat.push({ who: "you", text: question });
-        const pend = { who: "ai", text: _("Thinking..."), pending: true };
+        const pend = { who: "ai", text: _("Thinking..."), pending: true, token: token };
         this._aiChat.push(pend);
         if (firstQuestion) this._hidePillAnimated(); // pill gives way to the panel
         this._renderAIChat();

@@ -121,3 +121,37 @@ result pipeline (classify/normalize/dedupe/rank/limits).
   conversation session-only BENAR-BENAR hilang (in-memory),
   Super+F + kalkulator + AI stub langsung normal.
 - Final clean reload: 63/63 tests, 0 error.
+
+## Phase 7 — Final Verification (Definition of Done)
+64/64 unit tests · node --check semua modul · reload Cinnamon bersih (0 error).
+
+| DoD item | Status |
+|---|---|
+| Initial state hanya searchbox | PASS (pill 60px) |
+| Empty state compact | PASS |
+| SEARCH mode bekerja | PASS (apps/files/web/URL/calc/history/suggestions) |
+| ASK AI mode tersedia | PASS |
+| Mode switching | PASS (query preserved, panel swap bersih) |
+| History icon | PASS (document-open-recent) |
+| Suggestion icon | PASS (system-search) |
+| History/suggestion dibedakan | PASS |
+| Existing search provider | PASS |
+| Calculator | PASS (10/2=5, 2+2=4) |
+| AI result inline | PASS (live 9Router Combo) |
+| AI request asynchronous | PASS (Soup async, UI tidak blok) |
+| AI cancellation | PASS (close/switch/new-submit memutus HTTP) |
+| Stale AI response dibuang | PASS (token guard + orphan heal) |
+| Click outside menutup | PASS |
+| Esc menutup | PASS |
+| Super+F | PASS |
+| Tidak ada API key di repository | PASS (git grep secret patterns bersih) |
+| Full regression PASS | PASS (64/64) |
+
+### Temuan & perbaikan selama Phase 7
+- Orphaned user turn saat response tiba setelah close/supersede ->
+  ConversationManager kini heal trailing user turn saat compose context
+  (send & buildMessages); bubble Thinking lama ditandai "dibatalkan".
+- Timeout live terverifikasi: "Socket I/O timed out" -> inline informatif.
+- Catatan: jawaban AI 351-char muat di panel tanpa scroll; mekanisme scroll
+  panel terverifikasi via SEARCH battery (upper 717 > page 420, widget sama).
+- Security: tanpa shell-exec dari user input; key hanya di user config.
