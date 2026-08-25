@@ -190,6 +190,36 @@ AIProvider generic OpenAI-compatible → 9Router Combo
 
 ---
 
+## Phase 4.6 — Conversational UI Refinement (Final)
+
+**Tujuan:** UX ASK AI final — satu input aktif pada satu waktu, panel conversation
+sebagai fokus, follow-up input fixed di bawah panel.
+
+### Layout & Behavior (final, disetujui)
+1. ASK AI dimulai dari searchbox utama (pertanyaan pertama).
+2. Setelah submit pertama: searchbox utama **animasi slide-up + fade-out (±180ms,
+   ringan, non-blocking)** lalu disembunyikan total (tanpa ruang kosong);
+   fokus berpindah ke conversation panel.
+3. Layout lanjutan: CONVERSATION PANEL (history Anda/AI bertumpuk, scrollable)
+   → FOLLOW-UP INPUT fixed di bawah panel (tidak ikut scroll).
+4. Follow-up input: tombol submit ↵ DI DALAM box (sisi kanan, secondary icon);
+   tanpa teks "(Enter)" di luar box.
+5. Header conversation: tombol kecil **New Conversation (icon +)** —
+   clear manager + UI + render, kembalikan searchbox utama (fade-in),
+   sembunyikan follow-up, focus ke searchbox. Conversation lama hilang seluruhnya.
+6. Conversation in-memory/session-only; recent-search history tetap untuk
+   SEARCH mode (tidak bercampur).
+7. Pending/cancelled dibersihkan rapi (bubble "dibatalkan"), tanpa sisa
+   yang tampak sebagai percakapan final.
+8. SEARCH mode tidak berubah.
+
+### Verifikasi
+first question → animasi → follow-up ×3–5 → long response + scroll →
+New Conversation (history benar-benar hilang) → reopen/reset →
+SEARCH regression → full suite → reload bersih.
+
+---
+
 ## Phase 5 — Cancellation + Error Handling AI
 
 **Tujuan:** response basi tak pernah menimpa yang baru; semua failure path aman.

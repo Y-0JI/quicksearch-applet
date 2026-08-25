@@ -99,7 +99,7 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             visible: false
         });
         this.followUpEntry = new St.Entry({
-            hint_text: _("Tanyakan sesuatu... (Enter)"),
+            hint_text: _("Tanyakan sesuatu..."),
             can_focus: true,
             style_class: "quicksearch-followup"
         });
@@ -115,10 +115,12 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             }
             return Clutter.EVENT_PROPAGATE;
         });
-        const enterHint = new St.Label({ text: "\u21b5", style_class: "quicksearch-followup-hint" });
         this.followUpEntry.x_expand = true;
+        const sendIcon = new St.Icon({ icon_name: "go-up-symbolic", icon_size: 14 });
+        this.followUpEntry.set_secondary_icon(sendIcon);
+        this.followUpEntry.connect("secondary-icon-clicked",
+            () => this._applet._submitAIFromFollowUp());
         this.followUpRow.add(this.followUpEntry);
-        this.followUpRow.add(enterHint);
         // backgroundStack (BinLayout, full-screen): child is centered, so we
         // shift it to the bottom via translation_y — deterministic, never
         // scrolls with history, and always on screen
@@ -384,6 +386,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._mode = "search";
         this._overlay.setModeUi(this._mode);
         if (this._overlay.followUpRow) this._overlay.followUpRow.visible = false;
+        this._showPill();
         this.renderResults([]);
     }
 
@@ -404,6 +407,8 @@ class QuickSearchApplet extends Applet.IconApplet {
             this._overlay.followUpRow.visible =
                 (mode === "ai" && this._aiChat.length > 0);
         }
+        if (mode === "ai" && this._aiChat.length > 0) this._hidePillAnimated();
+        else this._showPill();
         global.stage.set_key_focus(this._overlay._entry);
     }
 
@@ -498,6 +503,38 @@ class QuickSearchApplet extends Applet.IconApplet {
         ov.resultsRegion.set_size(w, h);
     }
 
+    // ---- Phase 4.6: main pill hide/show (animated, non-blocking) ----
+    _hidePillAnimated() {
+        const row = this._overlay ? this._overlay._entryRow : null;
+        if (!row || !row.visible) return;
+        try {
+            row.ease({
+                opacity: 0, translation_y: -18,
+                duration: 180, mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                onComplete: () => { row.hide(); row.opacity = 255; row.translation_y = 0; }
+            });
+        } catch (e) { row.hide(); }
+    }
+
+    _showPill() {
+        const row = this._overlay ? this._overlay._entryRow : null;
+        if (!row) return;
+        row.show();
+        row.opacity = 255;
+        row.translation_y = 0;
+    }
+
+    _newConversation() {
+        this._aiSeq++; // drop pending AI callbacks
+        this._conversation.clear();
+        this._aiChat = [];
+        this._showPill();
+        const fu = this._overlay ? this._overlay.followUpRow : null;
+        if (fu) fu.visible = false;
+        this._renderAIChat();
+        global.stage.set_key_focus(this._overlay._entry);
+    }
+
     // ---- Phase 4/4.5: ASK AI conversational inline panel ----
 
     _submitAI(questionOverride) {
@@ -513,9 +550,11 @@ class QuickSearchApplet extends Applet.IconApplet {
 
         // UI: append the user bubble + a pending AI bubble (Thinking is a
         // UI-only loading state, never conversation history)
+        const firstQuestion = this._aiChat.length === 0;
         this._aiChat.push({ who: "you", text: question });
         const pend = { who: "ai", text: _("Thinking..."), pending: true };
         this._aiChat.push(pend);
+        if (firstQuestion) this._hidePillAnimated(); // pill gives way to the panel
         this._renderAIChat();
 
         const askFn = (q, ctx, cb) => this._aiManager.ask(q, ctx, cb);
@@ -556,11 +595,26 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (this._overlay._autoScroll) this._overlay._autoScroll.visible = false;
         this._overlay._scroll.visible = true;
 
-        // header: AI (conversation panel)
-        box.add_child(new St.Label({
+        // header: AI + New Conversation (+) action
+        const head = new St.BoxLayout({ vertical: false });
+        head.add_child(new St.Label({
             text: _("AI"),
             style_class: "quicksearch-section-header"
         }));
+        head.add_child(new St.Label({ text: "" })); // spacer via expand below
+        if (this._aiChat.length > 0) {
+            const plus = new St.Button({
+                style_class: "quicksearch-newchat-btn",
+                child: new St.Icon({ icon_name: "list-add-symbolic", icon_size: 14 }),
+                can_focus: false
+            });
+            plus.set_x_align(Clutter.ActorAlign.END);
+            plus.set_x_expand(true);
+            plus.connect("clicked", () => this._newConversation());
+            head.add_child(plus);
+        }
+        head.set_x_expand(true);
+        box.add_child(head);
 
         // follow-up input appears below the panel once a conversation started
         const fu = this._overlay.followUpRow;
