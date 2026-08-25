@@ -69,6 +69,16 @@
         "description": "Show recent searches when the box is empty",
         "default": true
     },
+    "ai-api-key": {
+        "type": "entry",
+        "description": "OpenRouter API key (stored locally in user config, never in git)",
+        "default": ""
+    },
+    "ai-model": {
+        "type": "entry",
+        "description": "AI model id (OpenRouter), e.g. openai/gpt-4o-mini",
+        "default": "openai/gpt-4o-mini"
+    },
     "recent-queries": {
         "type": "entry",
         "description": "Recent queries (managed automatically, stored as JSON)",
