@@ -155,3 +155,17 @@ result pipeline (classify/normalize/dedupe/rank/limits).
 - Catatan: jawaban AI 351-char muat di panel tanpa scroll; mekanisme scroll
   panel terverifikasi via SEARCH battery (upper 717 > page 420, widget sama).
 - Security: tanpa shell-exec dari user input; key hanya di user config.
+
+### Fitur tambahan: clickable links dalam jawaban AI
+- utils.extractUrls: hanya http/https (javascript:/file:/data: tidak pernah
+  dieksekusi), trailing punctuation di-strip, dedupe, order preserved. 6/6 tests.
+- Render: teks jawaban tetap satu label wrap utuh (isi tidak diubah); setiap
+  URL dirender sebagai St.Button link di bawah teks (style link biru, wrap
+  untuk URL panjang); klik -> Gio.AppInfo.launch_default_for_uri_async
+  (native, tanpa shell) — pola sama dengan action web results existing.
+- LIVE: jawaban stub dengan URL Maps -> link button ter-render dengan URL
+  lengkap; handler terhubung standar St.Button 'clicked'.
+- Catatan env: delivery klik fisik xtest tidak konsisten di sesi verifikasi
+  ini (mempengaruhi semua tombol termasuk lightbox), sehingga handler
+  diverifikasi via emit + direct method call; mekanisme klik identik dengan
+  tombol lain yang sudah dipakai user.

@@ -4,6 +4,7 @@ const ModalDialog = require('ui.modalDialog');
 const Settings = require('ui.settings');
 const St = require('gi.St');
 const Clutter = require('gi.Clutter');
+const Gio = require('gi.Gio');
 const GObject = require('gi.GObject');
 
 const resultMod = require('./result.js');
@@ -510,6 +511,13 @@ class QuickSearchApplet extends Applet.IconApplet {
         ov.resultsRegion.set_size(w, h);
     }
 
+    // ---- clickable links in AI answers (untrusted -> scheme-whitelisted) ----
+    _openExternalUrl(url) {
+        try {
+            Gio.AppInfo.launch_default_for_uri_async(url, null, null, null);
+        } catch (e) { /* never crash */ }
+    }
+
     // ---- Phase 4.6: main pill hide/show (animated, non-blocking) ----
     _hidePillAnimated() {
         const row = this._overlay ? this._overlay._entryRow : null;
@@ -650,6 +658,22 @@ class QuickSearchApplet extends Applet.IconApplet {
             });
             lbl.get_clutter_text().set_line_wrap(true);
             box.add_child(lbl);
+
+            // clickable links: only for AI answers, http/https only
+            if (e.who === "ai" && !e.pending) {
+                for (const url of utilsMod.extractUrls(e.text)) {
+                    const link = new St.Button({
+                        label: url,
+                        style_class: "quicksearch-link-btn"
+                    });
+                    const lbl2 = link.get_child();
+                    if (lbl2 && lbl2.get_clutter_text) {
+                        lbl2.get_clutter_text().set_line_wrap(true);
+                    }
+                    link.connect("clicked", () => this._openExternalUrl(url));
+                    box.add_child(link);
+                }
+            }
         }
         this._syncRegionGeometry();
     }

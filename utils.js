@@ -54,4 +54,19 @@ function normalizeSearchEngine(raw) {
     return Object.prototype.hasOwnProperty.call(ENGINE_ALIASES, k) ? ENGINE_ALIASES[k] : null;
 }
 
-module.exports = { pickFileBackend, sanitizeGlob, buildLocalRows, normalizeSearchEngine };
+// extract http/https URLs from AI text (untrusted input): scheme-whitelisted,
+// trailing punctuation stripped, duplicates removed, order preserved
+function extractUrls(text) {
+    const out = [];
+    const seen = {};
+    const re = /https?:\/\/[^\s<>"'`]+/gi;
+    const s = String(text || '');
+    let m;
+    while ((m = re.exec(s)) !== null) {
+        const url = m[0].replace(/[.,;:!?)\]}'"]+$/, '');
+        if (url.length > 8 && !seen[url]) { seen[url] = true; out.push(url); }
+    }
+    return out;
+}
+
+module.exports = { pickFileBackend, sanitizeGlob, buildLocalRows, normalizeSearchEngine, extractUrls };
