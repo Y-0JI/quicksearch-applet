@@ -336,7 +336,20 @@ class QuickSearchApplet extends Applet.IconApplet {
         const roomCap = Math.max(320, global.screen_height - pillBottom - 6 - 12);
         let h = 0;
         if (ov._scroll.visible) {
-            const [, natH] = ov._scroll.get_preferred_height(w);
+            // reliable source: measure the CONTENT (resultsBox) directly.
+            // St.ScrollView's own preferred height can report a stale minimal
+            // value right after rows are refilled, shrinking the panel to a
+            // sliver under the autocomplete layer.
+            let natH = 0;
+            try {
+                const [ , contentNat] = ov.resultsBox.get_preferred_height(w);
+                natH = Number(contentNat) || 0;
+            } catch (e) { natH = 0; }
+            if (natH <= 0) {
+                const [, fb] = ov._scroll.get_preferred_height(w);
+                natH = Number(fb) || 0;
+            }
+            natH += 16; // panel padding + border allowance
             const mainH = Math.min(natH, 664, roomCap);
             ov._scroll.set_position(0, 0);
             ov._scroll.set_size(w, mainH);
