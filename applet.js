@@ -174,7 +174,8 @@ class QuickSearchApplet extends Applet.IconApplet {
             getConfig: () => ({
                 apiKey: this.settings.getValue("ai-api-key"),
                 model: this.settings.getValue("ai-model"),
-                endpoint: this.settings.getValue("ai-endpoint")
+                endpoint: this.settings.getValue("ai-endpoint"),
+                maxTokens: this.settings.getValue("ai-max-tokens")
             })
         });
         this._autoRows = [];

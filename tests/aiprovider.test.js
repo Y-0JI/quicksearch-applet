@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { createAIProvider, DEFAULT_ENDPOINT, DEFAULT_MODEL, MAX_TOKENS } = require('../providers/aiProvider.js');
+const { createAIProvider, DEFAULT_ENDPOINT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS } = require('../providers/aiProvider.js');
 
 const OK_BODY = JSON.stringify({
     model: 'openai/gpt-4o-mini',
@@ -50,8 +50,27 @@ test('request shape: endpoint, headers, model, question, max_tokens', () => {
     assert.equal(body.messages[0].role, 'user');
     assert.equal(body.messages[0].content, 'hai');
     assert.equal(body.stream, false); // proven terminal request shape
-    assert.equal(body.max_tokens, MAX_TOKENS);
+    assert.equal(body.max_tokens, DEFAULT_MAX_TOKENS); // default raised for reasoning combos
     assert.ok(captured.timeoutMs > 0);
+});
+
+test('max_tokens override is forwarded', () => {
+    let captured = null;
+    const t = makeMockTransport((o, cb) => { captured = o; cb(null, { status: 200, text: OK_BODY }); });
+    const p = createAIProvider({ apiKey: 'k', http: t, maxTokens: 7777 });
+    p.ask('q', {}, () => {});
+    assert.equal(JSON.parse(captured.body).max_tokens, 7777);
+});
+
+test('finish_reason=length with usable content is still SUCCESS', () => {
+    const body = JSON.stringify({ choices: [{ finish_reason: 'length',
+        message: { role: 'assistant', content: 'jawaban parsial tapi ada' } }] });
+    const t = makeMockTransport((o, cb) => cb(null, { status: 200, text: body }));
+    const p = makeProvider(t);
+    p.ask('q', {}, (err, res) => {
+        assert.equal(err, null);
+        assert.equal(res.answer, 'jawaban parsial tapi ada');
+    });
 });
 
 test('http error body message surfaces as detail', () => {

@@ -11,7 +11,7 @@
 const DEFAULT_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_MODEL = 'openai/gpt-4o-mini';
 const DEFAULT_TIMEOUT_MS = 30000;
-const MAX_TOKENS = 512;
+const DEFAULT_MAX_TOKENS = 2048;
 
 function defaultTransport(timeoutMs) {
     try {
@@ -87,6 +87,8 @@ function createAIProvider(opts) {
     // omitting the option falls back to the generic default
     const model = (opts.model != null) ? String(opts.model) : DEFAULT_MODEL;
     const timeoutMs = Number(opts.timeoutMs || DEFAULT_TIMEOUT_MS);
+    // configurable: some Combo/reasoning models spend many tokens thinking
+    const maxTokens = Number(opts.maxTokens) || DEFAULT_MAX_TOKENS;
     const http = opts.http || defaultTransport(timeoutMs);
 
     let gen = 0;
@@ -111,7 +113,7 @@ function createAIProvider(opts) {
             model: model,
             messages: [{ role: 'user', content: q }],
             stream: false,
-            max_tokens: MAX_TOKENS
+            max_tokens: maxTokens
         });
 
         http({
@@ -166,4 +168,4 @@ function createAIProvider(opts) {
     return { ask: ask, cancel: cancel };
 }
 
-module.exports = { createAIProvider, REGISTRY, DEFAULT_ENDPOINT, DEFAULT_MODEL, DEFAULT_TIMEOUT_MS, MAX_TOKENS };
+module.exports = { createAIProvider, REGISTRY, DEFAULT_ENDPOINT, DEFAULT_MODEL, DEFAULT_TIMEOUT_MS, DEFAULT_MAX_TOKENS };

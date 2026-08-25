@@ -57,3 +57,15 @@ result pipeline (classify/normalize/dedupe/rank/limits).
   konten kosong dengan finish_reason=length juga dilaporkan.
 - Catatan model reasoning (hy3-free): sebagian token habis di fase reasoning;
   bila jawaban kosong, UI menampilkan penyebab finish_reason secara informatif.
+
+### Perbaikan pasca-review Phase 4
+- max_tokens tidak lagi hard-coded 512: default 2048, configurable via setting
+  `ai-max-tokens` (spinbutton 256-16384) — reasoning combo membutuhkan lebih.
+- finish_reason=length DENGAN konten -> tetap SUCCESS; hanya benar-benar kosong
+  yang dilaporkan informatif (finish_reason ikut ditampilkan).
+- recent-queries berubah type `generic` (storage internal, tidak dirender di
+  Settings UI); persistence/history/suggestion tetap identik.
+- LIVE PASS ulang 9Router Combo coba9router: pertanyaan pendek & panjang ->
+  jawaban nyata inline (max tokens cukup untuk melewati fase reasoning),
+  overlay tetap terbuka >12s setelah jawaban; Esc/outside/Super+F/search pass;
+  47/47 tests.

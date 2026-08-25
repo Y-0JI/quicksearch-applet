@@ -49,6 +49,7 @@ function createAIManager(opts) {
             endpoint: endpoint,
             apiKey: String(cfg.apiKey || ''),
             model: (cfg.model != null) ? String(cfg.model) : entry.defaultModel,
+            maxTokens: (cfg.maxTokens != null) ? Number(cfg.maxTokens) : undefined,
             timeoutMs: Number(cfg.timeoutMs) || undefined,
             http: http || undefined
         });

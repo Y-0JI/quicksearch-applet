@@ -92,8 +92,17 @@
     },
     "ai-model": {
         "type": "entry",
-        "description": "AI model id (provider-specific), e.g. cc/claude-sonnet-... or openai/gpt-4o-mini",
-        "default": "openai/gpt-4o-mini"
+        "description": "AI model id / nama Combo 9Router (mis. coba9router)",
+        "default": ""
+    },
+    "ai-max-tokens": {
+        "type": "spinbutton",
+        "description": "AI max tokens (reasoning models butuh lebih besar)",
+        "default": 2048,
+        "min": 256,
+        "max": 16384,
+        "step": 128,
+        "units": "tokens"
     },
     "recent-queries": {
         "type": "entry",
