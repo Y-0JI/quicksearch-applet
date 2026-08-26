@@ -20,6 +20,8 @@ const aiProviderMod = require('./providers/aiProvider.js');
 const searchEngineMod = require('./searchEngine.js');
 const aiManagerMod = require('./providers/aiManager.js');
 const conversationMod = require('./providers/conversationManager.js');
+const toolRegistryMod = require('./providers/toolRegistry.js');
+const toolsMod = require('./providers/tools/index.js');
 
 const UUID = "quicksearch@yoji";
 
@@ -301,6 +303,10 @@ class QuickSearchApplet extends Applet.IconApplet {
             try { this._engine.destroy(); } catch (e) {}
             this._engine = null;
         }
+        if (this._toolRegistry) {
+            try { this._toolRegistry.destroy(); } catch (e) {}
+            this._toolRegistry = null;
+        }
 
         this._applySearchEngineSetting(); // defense in depth
         const engineChoice = FALLBACK_URLS[this.search_engine] ? this.search_engine : "ddgo";
@@ -326,6 +332,22 @@ class QuickSearchApplet extends Applet.IconApplet {
         };
 
         this._appProvider = providers.appProvider; // local suggestion source (Phase 2)
+
+        // Phase 8: tool foundation. Not consulted by any flow yet (Phase 9 wires
+        // the agent loop); constructed here so tools share the LIVE provider
+        // instances and are rebuilt together with the engine.
+        this._toolRegistry = toolRegistryMod.createToolRegistry();
+        for (const t of toolsMod.createDefaultTools({
+            fileProvider: providers.fileProvider,
+            webProvider: providers.webProvider,
+            appProvider: providers.appProvider,
+            detectUrl: urlProviderMod.detectUrl,
+            tryCalculate: calculatorProviderMod.tryCalculate,
+            openPath: fileProviderMod.openPath
+        })) this._toolRegistry.register(t);
+        try { global.log("[quicksearch@yoji] tool registry ready: " +
+                         this._toolRegistry.list().map(t => t.id).join(", ")); } catch (e) {}
+
         this._engine = searchEngineMod.createSearchEngine({
             makeResult: resultMod.makeResult,
             scoreResult: resultMod.scoreResult,
