@@ -39,6 +39,13 @@ const AGENT_SYSTEM_PROMPT =
     'If a tool returns an error (for example permission-denied or app-not-found), ' +
     'say so honestly.';
 
+// Fast Path system prompt (Phase 13 latency fix): a general assistant with NO
+// tool mandate. Used for questions that never need tools so the model answers
+// in one round instead of being nudged into a tool call.
+const FAST_SYSTEM_PROMPT =
+    'You are Quick Search, a concise assistant. Answer the user directly. ' +
+    'Do not mention tools unless the user asked about them.';
+
 function createAgentManager(opts) {
     opts = opts || {};
     if (typeof opts.aiAsk !== 'function') throw new Error('agent-manager-requires-aiAsk');
@@ -63,6 +70,10 @@ function createAgentManager(opts) {
     const onToolStart = typeof opts.onToolStart === 'function' ? opts.onToolStart : null;
     const onToolComplete = typeof opts.onToolComplete === 'function' ? opts.onToolComplete : null;
     const onToolError = typeof opts.onToolError === 'function' ? opts.onToolError : null;
+    // Phase 13 latency fix: optional question router. (question) -> boolean:
+    // true => use the tool-enabled agent loop; false => Fast Path (single call,
+    // no tools). Absent router => legacy behavior (always the agent loop).
+    const routeToAgent = typeof opts.routeToAgent === 'function' ? opts.routeToAgent : null;
     const safeEmit = (fn, ...args) => {
         if (!fn) return;
         try { fn.apply(null, args); } catch (e) {}
@@ -270,6 +281,35 @@ function createAgentManager(opts) {
             });
         }
 
+        // Fast Path (Phase 13 latency fix): one model call, NO tool definitions,
+        // a general-assistant prompt. The model cannot call tools, so it answers
+        // directly. Shares the same generation guard + cancellable as the loop,
+        // so a cancel/supersede mid-flight still goes silent. Tool capability is
+        // deliberately untouched — tool questions are routed to step() instead.
+        function runFast() {
+            if (myGen !== gen) return;
+            safeEmit(onPhase, 'thinking');
+            const fastBase = Array.isArray(ctx && ctx.messages) ? ctx.messages.slice() : [];
+            if (!fastBase.length) fastBase.push({ role: 'user', content: String(question == null ? '' : question) });
+            if (!fastBase.some(m => m && m.role === 'system')) {
+                fastBase.unshift({ role: 'system', content: FAST_SYSTEM_PROMPT });
+            }
+            aiAsk(String(question == null ? '' : question), {
+                messages: fastBase,
+                tools: null,
+                cancellable: cancellable
+            }, (err, res) => {
+                if (myGen !== gen) return;  // cancelled/superseded -> silent stop
+                if (err) { finish(err, null); return; }
+                finish(null, { answer: String(res && res.answer == null ? '' : (res && res.answer)) });
+            });
+        }
+
+        // Route: Fast Path for general questions, agent loop for tool intent.
+        if (routeToAgent && !routeToAgent(String(question == null ? '' : question))) {
+            runFast();
+            return;
+        }
         step();
     }
 

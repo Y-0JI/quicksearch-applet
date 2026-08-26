@@ -23,6 +23,7 @@ const conversationMod = require('./providers/conversationManager.js');
 const toolRegistryMod = require('./providers/toolRegistry.js');
 const toolsMod = require('./providers/tools/index.js');
 const agentManagerMod = require('./providers/agentManager.js');
+const questionRouterMod = require('./providers/questionRouter.js');
 const screenCaptureMod = require('./providers/screenCapture.js');
 const computerControlMod = require('./providers/computerControl.js');
 const permissionPolicyMod = require('./providers/permissionPolicy.js');
@@ -402,7 +403,15 @@ class QuickSearchApplet extends Applet.IconApplet {
                 isAgentEnabled: () => !!this.ai_agent_enabled,
                 isComputerControlAllowed: () => !!this.ai_computer_control
             }),
-            requestConfirmation: (req, cb) => this._confirmTool(req, cb)
+            requestConfirmation: (req, cb) => this._confirmTool(req, cb),
+            // Phase 13 latency fix: route general questions to the Fast Path
+            // (one model call, no tools); tool-intent questions use the loop.
+            routeToAgent: questionRouterMod.createQuestionRouter({
+                detectUrl: urlProviderMod.detectUrl,
+                appProvider: providers.appProvider,
+                computerControl: computerControlMod,
+                hasScreen: () => true
+            })
         });
 
         this._engine = searchEngineMod.createSearchEngine({
