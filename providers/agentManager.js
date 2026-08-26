@@ -24,7 +24,8 @@ try { Gio = require('gi.Gio'); } catch (e) { /* plain node: no cancellable */ }
 const FALLBACK_LIMITS = {
     maxAgentSteps: 8,
     maxResultChars: 4000,
-    maxImageDataUrlChars: 6000000
+    maxImageDataUrlChars: 6000000,
+    agentWebGraceMs: 1200
 };
 
 // Phase 12: keeps the model honest about tool use — intent narration is NOT
@@ -191,7 +192,8 @@ function createAgentManager(opts) {
                 safeEmit(onToolStart, String(c.name || ''));
                 try {
                     registry.execute(String(c.name || ''), parsed,
-                        { cancellable: cancellable, capabilities: capabilities },
+                        { cancellable: cancellable, capabilities: capabilities,
+                          agent: true, webGraceMs: L.agentWebGraceMs },
                         (err, result) => {
                             if (myGen !== gen) return;
                             if (err) {

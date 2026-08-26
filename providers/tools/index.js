@@ -52,6 +52,10 @@ function createDefaultTools(deps) {
             execute(args, ctx, cb) {
                 if (!d.webProvider) { cb({ error: 'unavailable', message: 'web search disabled' }); return; }
                 let settled = false, timerId = 0;
+                // Phase 13 latency fix: the agent waits only a SHORT grace for the
+                // upgrade (real results) instead of the SEARCH-mode 2500ms window.
+                // The upgrade still finishes the tool IMMEDIATELY when it arrives.
+                const graceMs = (ctx && typeof ctx.webGraceMs === 'number') ? ctx.webGraceMs : LIMITS.webGraceMs;
                 const finish = list => {
                     if (settled) return;
                     settled = true;
@@ -61,14 +65,15 @@ function createDefaultTools(deps) {
                     cb(null, { query: String(args.query), count: results.length, results: results });
                 };
                 let first = true;
+                const opts = (ctx && ctx.agent) ? { agent: true } : undefined;
                 d.webProvider.search(String(args.query), ctx.cancellable || null, list => {
                     if (first) {
                         first = false;
-                        timerId = timers.after(LIMITS.webGraceMs, () => finish(list));
+                        timerId = timers.after(graceMs, () => finish(list));
                     } else {
                         finish(list); // upgraded answers arrived: done early
                     }
-                });
+                }, opts);
             }
         },
         {   // URLProvider.detectUrl gates schemes strictly (http/https/bare domain
