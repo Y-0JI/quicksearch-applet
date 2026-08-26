@@ -1,0 +1,160 @@
+// AgentManager (Phase 9): orchestrates AIManager <-> ToolRegistry in a bounded
+// agent loop. Pure CJS module: runs under Cinnamon GJS AND node --test.
+//
+// Responsibilities (roadmap Phase 9):
+//   - send available tool definitions with each model call
+//   - accept final answer OR tool requests from the model
+//   - validate + execute tool calls through the EXISTING ToolRegistry
+//     (unknown tool / invalid arguments / failures become normalized
+//     role:'tool' error payloads — never crashes, never auto-retries)
+//   - hard step cap (LIMITS.maxAgentSteps)
+//   - one cancellable per run shared by AI + tools; cancel() kills the whole
+//     run and stale callbacks are silently dropped (never render)
+//
+// No UI/SearchEngine knowledge lives here. ConversationManager keeps owning
+// history; the agent only extends its own working message list within a run.
+
+let Gio = null;
+try { Gio = require('gi.Gio'); } catch (e) { /* plain node: no cancellable */ }
+
+const { LIMITS } = require('./toolRegistry.js');
+
+function createAgentManager(opts) {
+    opts = opts || {};
+    if (typeof opts.aiAsk !== 'function') throw new Error('agent-manager-requires-aiAsk');
+    const aiAsk = opts.aiAsk;
+    const registry = opts.registry || null;
+    const maxSteps = Number(opts.maxSteps) || LIMITS.maxAgentSteps;
+    const maxToolChars = LIMITS.maxResultChars;
+    // injectable for node tests; real Gio.Cancellable inside Cinnamon
+    const makeCancellable = opts.makeCancellable ||
+        (() => ((Gio && Gio.Cancellable) ? new Gio.Cancellable() : null));
+
+    let gen = 0;                    // monotonic run generation: stale-run guard
+    let activeCancellable = null;
+
+    // OpenAI wire-format tool definitions, derived fresh from the registry.
+    // Conversion lives HERE so ToolRegistry stays free of AI knowledge.
+    function toolDefs() {
+        if (!registry) return null;
+        const defs = registry.list().map(t => ({
+            type: 'function',
+            function: {
+                name: t.id,
+                description: t.description,
+                parameters: {
+                    type: 'object',
+                    properties: t.inputSchema.properties || {},
+                    required: t.inputSchema.required || []
+                }
+            }
+        }));
+        return defs.length ? defs : null;
+    }
+
+    // run(question, ctx, cb): cb(err|null, {answer}|null). A new run
+    // supersedes any previous run (single-flight, stale runs go silent).
+    function run(question, ctx, cb) {
+        const myGen = ++gen;
+        if (activeCancellable) { try { activeCancellable.cancel(); } catch (e) {} }
+        const cancellable = makeCancellable() || null;
+        activeCancellable = cancellable;
+
+        const base = Array.isArray(ctx && ctx.messages) ? ctx.messages.slice() : [];
+        if (!base.length) base.push({ role: 'user', content: String(question == null ? '' : question) });
+        let steps = 0;
+
+        function finish(err, data) {
+            if (activeCancellable === cancellable) activeCancellable = null;
+            if (myGen !== gen) return;  // superseded/cancelled -> NEVER render
+            cb(err || null, err ? null : data);
+        }
+
+        // every tool outcome — success or normalized failure — becomes a
+        // role:'tool' message the model can read on its next turn
+        function pushToolMessage(callId, payload) {
+            let s;
+            try { s = JSON.stringify(payload); } catch (e) { s = '{"error":"unserializable"}'; }
+            base.push({ role: 'tool', tool_call_id: String(callId || ''),
+                        content: s.slice(0, maxToolChars) });
+        }
+
+        function executeCalls(calls, i) {
+            if (myGen !== gen) return;
+            if (i >= calls.length) { step(); return; }
+            const c = calls[i];
+
+            let parsed = null, parseErr = null;
+            try { parsed = JSON.parse(String(c.argsJson == null ? '{}' : c.argsJson)); }
+            catch (e) { parseErr = e; }
+            if (parseErr || typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+                pushToolMessage(c.id, parseErr
+                    ? { error: 'invalid-arguments', reason: 'unparseable-json' }
+                    : { error: 'invalid-arguments', reason: 'args-must-be-object' });
+                executeCalls(calls, i + 1);
+                return;
+            }
+
+            try {
+                registry.execute(String(c.name || ''), parsed, { cancellable: cancellable },
+                    (err, result) => {
+                        if (myGen !== gen) return;
+                        pushToolMessage(c.id,
+                            err ? Object.assign({ error: err.error || 'tool-error' }, err) : result);
+                        executeCalls(calls, i + 1);
+                    });
+            } catch (e) {
+                // defense in depth: registry already guards, this can't leak
+                pushToolMessage(c.id, { error: 'tool-failed',
+                                        message: String((e && e.message) || e) });
+                executeCalls(calls, i + 1);
+            }
+        }
+
+        function step() {
+            if (myGen !== gen) return;
+            if (steps >= maxSteps) { finish({ error: 'max-steps', steps: steps }); return; }
+            steps++;
+            aiAsk(String(question == null ? '' : question), {
+                messages: base,
+                tools: toolDefs(),
+                cancellable: cancellable
+            }, (err, res) => {
+                if (myGen !== gen) return;  // cancelled/superseded -> silent stop
+                if (err) { finish(err, null); return; }
+                if (!res.toolCalls || !res.toolCalls.length) {
+                    finish(null, { answer: String(res.answer == null ? '' : res.answer) });
+                    return;
+                }
+                // record the assistant tool_calls turn exactly as received:
+                // the OpenAI protocol requires it before any role:'tool' reply
+                base.push({
+                    role: 'assistant',
+                    content: String(res.answer == null ? '' : res.answer),
+                    tool_calls: res.toolCalls.map(tc => ({
+                        id: tc.id, type: 'function',
+                        function: { name: tc.name, arguments: tc.argsJson }
+                    }))
+                });
+                executeCalls(res.toolCalls, 0);
+            });
+        }
+
+        step();
+    }
+
+    // cancel(): terminates the whole active run — pending AI HTTP request and
+    // in-flight tool work share the same cancellable; late callbacks are
+    // dropped by the generation guard. No partial rendering ever happens.
+    function cancel() {
+        gen++;
+        if (activeCancellable) { try { activeCancellable.cancel(); } catch (e) {} }
+        activeCancellable = null;
+    }
+
+    function destroy() { cancel(); }
+
+    return { run: run, cancel: cancel, destroy: destroy };
+}
+
+module.exports = { createAgentManager };
