@@ -104,6 +104,24 @@ function createDefaultTools(deps) {
                 hits[0].action();
                 cb(null, { launched: hits[0].title, appId: hits[0].appId });
             }
+        },
+        {   // Phase 10 screen awareness. On-demand ONLY (no timers/listeners);
+            // transient capture (temp file deleted right after read); the
+            // vision gate fires BEFORE any pixels are taken so a text-only
+            // model never triggers a screenshot. No computer control here.
+            id: 'get_screen', name: 'Get Screen', riskLevel: 'LOW',
+            description: 'Take one on-demand screenshot of the current screen for visual analysis.',
+            inputSchema: { type: 'object', properties: {}, required: [] },
+            execute(args, ctx, cb) {
+                if (!(ctx && ctx.capabilities && ctx.capabilities.vision)) {
+                    cb({ error: 'vision-not-supported' });
+                    return;
+                }
+                if (!d.screenCapture) { cb({ error: 'unavailable' }); return; }
+                d.screenCapture.capture(ctx.cancellable || null, (err, dataUrl) => {
+                    cb(err || null, err ? null : { image: dataUrl });
+                });
+            }
         }
     ];
 }

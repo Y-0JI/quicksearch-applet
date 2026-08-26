@@ -32,13 +32,14 @@ function registryWith(deps) {
     return reg;
 }
 
-test('all six tools registered with expected ids + risk levels', () => {
+test('all seven tools registered with expected ids + risk levels', () => {
     const reg = registryWith(makeDeps());
     const ids = reg.list().map(t => t.id).sort();
-    assert.deepEqual(ids, ['calculator', 'launch_app', 'open_file', 'open_url', 'search_files', 'search_web']);
+    assert.deepEqual(ids, ['calculator', 'get_screen', 'launch_app', 'open_file', 'open_url', 'search_files', 'search_web']);
     assert.equal(reg.get('launch_app').riskLevel, 'MEDIUM');
     assert.equal(reg.get('open_file').riskLevel, 'MEDIUM');
     assert.equal(reg.get('calculator').riskLevel, 'LOW');
+    assert.equal(reg.get('get_screen').riskLevel, 'LOW');
 });
 
 test('calculator: valid expression -> {expression,value}; invalid -> error', () => {
@@ -111,4 +112,58 @@ test('SECURITY: tool sources contain no shell/exec primitives', () => {
         const src = fs.readFileSync(require.resolve(f), 'utf8');
         assert.ok(!/child_process|spawnSync|spawn\(|\bexec(Sync)?\(|\/bin\/sh|system\(/.test(src), 'no shell in ' + f);
     }
+});
+
+// ---- Phase 10: get_screen ----
+
+const IMG = 'data:image/png;base64,iVBORw0KGgo=';
+
+test('get_screen: registered LOW risk, zero-arg schema', () => {
+    const reg = registryWith(makeDeps());
+    assert.equal(reg.get('get_screen').riskLevel, 'LOW');
+    assert.deepEqual(reg.get('get_screen').inputSchema.required, []);
+    assert.deepEqual(reg.get('get_screen').inputSchema.properties, {});
+});
+
+test('get_screen: success returns data URL, cancellable forwarded', () => {
+    let seenCanc = 'none';
+    const deps = makeDeps({ screenCapture: {
+        capture: (cancellable, cb) => { seenCanc = cancellable; cb(null, IMG); } } });
+    const [gs] = createDefaultTools(deps).filter(t => t.id === 'get_screen');
+    gs.execute({}, { capabilities: { vision: true }, cancellable: { c: 1 } }, (e, r) => {
+        assert.equal(e, null);
+        assert.equal(r.image, IMG);
+    });
+    assert.ok(seenCanc && seenCanc.c === 1, 'cancellable passed through');
+});
+
+test('get_screen: vision NOT supported -> vision-not-supported, NO capture at all', () => {
+    let captured = 0;
+    const deps = makeDeps({ screenCapture: { capture: (c, cb) => { captured++; cb(null, IMG); } } });
+    const [gs] = createDefaultTools(deps).filter(t => t.id === 'get_screen');
+    // gate must fire BEFORE any pixels are taken (privacy + cost)
+    gs.execute({}, { capabilities: { vision: false } }, e1 => assert.equal(e1.error, 'vision-not-supported'));
+    gs.execute({}, {}, e2 => assert.equal(e2.error, 'vision-not-supported'));   // capabilities absent
+    assert.equal(captured, 0, 'capture never invoked without vision capability');
+});
+
+test('get_screen: capture failure normalized (no display / session / iface)', () => {
+    const deps = makeDeps({ screenCapture: {
+        capture: (c, cb) => cb({ error: 'screenshot-unavailable' }) } });
+    const [gs] = createDefaultTools(deps).filter(t => t.id === 'get_screen');
+    gs.execute({}, { capabilities: { vision: true } },
+        e => assert.equal(e.error, 'screenshot-unavailable'));
+});
+
+test('get_screen: cancelled capture surfaces as cancelled error', () => {
+    const deps = makeDeps({ screenCapture: {
+        capture: (c, cb) => cb({ error: 'cancelled' }) } });
+    const [gs] = createDefaultTools(deps).filter(t => t.id === 'get_screen');
+    gs.execute({}, { capabilities: { vision: true } },
+        e => assert.equal(e.error, 'cancelled'));
+});
+
+test('get_screen: missing screenCapture dep -> unavailable', () => {
+    const [gs] = createDefaultTools(makeDeps()).filter(t => t.id === 'get_screen');
+    gs.execute({}, { capabilities: { vision: true } }, e => assert.equal(e.error, 'unavailable'));
 });
