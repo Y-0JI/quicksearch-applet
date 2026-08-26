@@ -138,3 +138,115 @@ test('no automatic retry: AI error finishes the run immediately', async () => {
     assert.equal(err.error, 'http-500');
     assert.equal(ai.calls.length, 1, 'exactly one attempt, zero retries');
 });
+
+// ---- Phase 9 error paths + cancellation ----
+
+test('unknown tool -> controlled payload, loop continues to final answer', async () => {
+    const { agent, ai } = makeAgent([
+        { toolCalls: [TC('u1', 'no_such_tool', '{"x":1}')] },
+        { answer: 'tool tidak ada, maaf' }
+    ]);
+    const { err, res } = await settled(agent, 'q');
+    assert.equal(err, null);
+    assert.equal(res.answer, 'tool tidak ada, maaf');
+    const toolMsg = JSON.parse(ai.calls[1].ctx.messages[2].content);
+    assert.equal(toolMsg.error, 'unknown-tool');
+});
+
+test('invalid arguments: unparseable JSON is a controlled tool message', async () => {
+    const { agent, ai } = makeAgent([
+        { toolCalls: [TC('b1', 'echo', 'not-json{')] },
+        { answer: 'ok' }
+    ]);
+    const { err, res } = await settled(agent, 'q');
+    assert.equal(err, null);
+    assert.equal(res.answer, 'ok');
+    const toolMsg = JSON.parse(ai.calls[1].ctx.messages[2].content);
+    assert.equal(toolMsg.error, 'invalid-arguments');
+    assert.equal(toolMsg.reason, 'unparseable-json');
+});
+
+test('invalid arguments: schema failure (missing required) stays controlled', async () => {
+    const { agent, ai } = makeAgent([
+        { toolCalls: [TC('s1', 'echo', '{}')] },   // missing required "text"
+        { answer: 'berhasil tetap lanjut' }
+    ]);
+    const { err, res } = await settled(agent, 'q');
+    assert.equal(err, null);
+    assert.equal(res.answer, 'berhasil tetap lanjut');
+    const toolMsg = JSON.parse(ai.calls[1].ctx.messages[2].content);
+    assert.equal(toolMsg.error, 'invalid-arguments');
+    assert.equal(toolMsg.reason, 'missing-required:text');
+});
+
+test('tool failure payload -> normalized message, run survives to final', async () => {
+    const { agent, ai } = makeAgent([
+        { toolCalls: [TC('f1', 'fail_tool', '{}')] },
+        { answer: 'gagal tapi aman' }
+    ]);
+    const { err, res } = await settled(agent, 'q');
+    assert.equal(err, null);
+    assert.equal(res.answer, 'gagal tapi aman');
+    const toolMsg = JSON.parse(ai.calls[1].ctx.messages[2].content);
+    assert.equal(toolMsg.error, 'boom-code');
+});
+
+test('throwing tool cannot crash the agent (registry normalizes)', async () => {
+    const { agent, ai } = makeAgent([
+        { toolCalls: [TC('x1', 'throw_tool', '{}')] },
+        { answer: 'tetap hidup' }
+    ]);
+    const { err, res } = await settled(agent, 'q');
+    assert.equal(err, null);
+    assert.equal(res.answer, 'tetap hidup');
+    const toolMsg = JSON.parse(ai.calls[1].ctx.messages[2].content);
+    assert.equal(toolMsg.error, 'tool-failed');
+    assert.equal(toolMsg.message, 'kaboom-sync');
+});
+
+test('cancel(): whole run dies — cancellable hit, no further callbacks render', async () => {
+    let cancelledCount = 0;
+    const { agent, ai } = makeAgent([{ toolCalls: [TC('w', 'slow_echo', '{"text":"x"}')] },
+                                     { answer: 'TIDAK BOLEH SAMPAI SINI' }]);
+    // replace with a cancellable spy so we can observe the abort
+    let released = false;
+    const agentSpy = createAgentManager({
+        aiAsk: ai.aiAsk,
+        registry: makeRegistry(),
+        makeCancellable: () => ({ cancel: () => { cancelledCount++; released = true; } })
+    });
+    let cbCount = 0;
+    agentSpy.run('q', { messages: [{ role: 'user', content: 'q' }] },
+        () => { cbCount++; });   // would render stale output if ever called
+    agentSpy.cancel();           // kill mid-flight (first AI call still pending)
+    await new Promise(r => setTimeout(r, 10)); // let late timers fire
+    assert.ok(released, 'run cancellable was cancelled');
+    assert.equal(cbCount, 0, 'stale callbacks never render');
+    assert.equal(ai.calls.length, 1, 'loop stopped after cancel');
+});
+
+test('late completion after cancel is dropped silently', async () => {
+    const { agent, ai } = makeAgent([{ answer: 'late' }]);
+    let cbCount = 0;
+    agent.run('q', { messages: [{ role: 'user', content: 'q' }] }, () => { cbCount++; });
+    agent.cancel();
+    await new Promise(r => setTimeout(r, 10));
+    assert.equal(cbCount, 0);
+    assert.equal(ai.calls.length, 1);
+    // agent usable again after cancel
+    const { err, res } = await settled(agent, 'lagi');
+    assert.equal(err, null);
+    assert.equal(res.answer, 'late');
+});
+
+test('stale run: starting a newer run supersedes the older one', async () => {
+    const { agent, ai } = makeAgent([{ answer: 'B' }]);
+    let oldCalls = 0, newResult = null;
+    agent.run('lama', { messages: [{ role: 'user', content: 'lama' }] }, () => { oldCalls++; });
+    const { err, res } = await settled(agent, 'baru');
+    newResult = res;
+    await new Promise(r => setTimeout(r, 10));
+    assert.equal(oldCalls, 0, 'superseded run never renders');
+    assert.equal(err, null);
+    assert.deepEqual(newResult, { answer: 'B' });
+});
