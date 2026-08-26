@@ -23,6 +23,7 @@ const conversationMod = require('./providers/conversationManager.js');
 const toolRegistryMod = require('./providers/toolRegistry.js');
 const toolsMod = require('./providers/tools/index.js');
 const agentManagerMod = require('./providers/agentManager.js');
+const screenCaptureMod = require('./providers/screenCapture.js');
 
 const UUID = "quicksearch@yoji";
 
@@ -251,6 +252,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.open_shortcut = "<Super>f";
         this.enable_web = true;
         this.enable_files = true;
+        this.ai_vision_supported = false; // Phase 10: opt-in, privacy-safe default
         this.search_engine = "ddgo";
         this.file_locations = [];
         this.max_apps = 5;
@@ -277,6 +279,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.settings.bind("debounce-ms", "debounce_ms", () => this._rebuildEngine());
         this.settings.bind("show-recent", "show_recent");
         this.settings.bind("recent-queries", "recent_queries_json");
+        this.settings.bind("ai-vision-supported", "ai_vision_supported"); // Phase 10
 
         this._applySearchEngineSetting(); // normalize stored/legacy values once
 
@@ -348,7 +351,8 @@ class QuickSearchApplet extends Applet.IconApplet {
             appProvider: providers.appProvider,
             detectUrl: urlProviderMod.detectUrl,
             tryCalculate: calculatorProviderMod.tryCalculate,
-            openPath: fileProviderMod.openPath
+            openPath: fileProviderMod.openPath,
+            screenCapture: screenCaptureMod.createScreenCapture() // Phase 10
         })) this._toolRegistry.register(t);
         try { global.log("[quicksearch@yoji] tool registry ready: " +
                          this._toolRegistry.list().map(t => t.id).join(", ")); } catch (e) {}
@@ -358,7 +362,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         // tools always match the active engine. UI stays a thin renderer.
         this._agent = agentManagerMod.createAgentManager({
             aiAsk: (q, ctx, cb) => this._aiManager.ask(q, ctx, cb),
-            registry: this._toolRegistry
+            registry: this._toolRegistry,
+            hasVision: () => !!this.ai_vision_supported // Phase 10
         });
 
         this._engine = searchEngineMod.createSearchEngine({

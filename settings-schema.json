@@ -111,6 +111,11 @@
         "step": 128,
         "units": "tokens"
     },
+    "ai-vision-supported": {
+        "type": "switch",
+        "description": "Model supports images (enables screen analysis)",
+        "default": false
+    },
     "sec-advanced": {
         "type": "section",
         "description": "Advanced"
