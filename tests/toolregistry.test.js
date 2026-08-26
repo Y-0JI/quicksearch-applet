@@ -49,3 +49,72 @@ test('validate: unknown tool / object / unknown-key / missing-required / bad-typ
     assert.equal(reg.validate('echo', { text: 5 }).reason, 'bad-type:text');
     assert.equal(reg.validate('echo', { text: 'ok' }), null);
 });
+
+test('execute: success path normalizes result', () => {
+    const reg = createToolRegistry();
+    reg.register(makeTool());
+    reg.execute('echo', { text: 'hi' }, {}, (err, res) => {
+        assert.equal(err, null);
+        assert.deepEqual(res, { text: 'hi' });
+    });
+});
+
+test('execute: unknown tool + invalid args short-circuit BEFORE execute', () => {
+    const reg = createToolRegistry();
+    let ran = 0;
+    reg.register(makeTool({ execute: () => ran++ }));
+    reg.execute('nope', {}, {}, e1 => assert.equal(e1.error, 'unknown-tool'));
+    reg.execute('echo', {}, {}, e2 => assert.equal(e2.error, 'invalid-arguments'));       // missing required
+    reg.execute('echo', { text: 5 }, {}, e3 => assert.equal(e3.error, 'invalid-arguments')); // bad type
+    reg.execute('echo', { text: 'x', evil: 1 }, {}, e4 => assert.equal(e4.error, 'invalid-arguments')); // unknown key
+    assert.equal(ran, 0, 'tool body never ran for invalid requests');
+});
+
+test('execute: thrown tool error normalized, never escapes registry', () => {
+    const reg = createToolRegistry();
+    reg.register(makeTool({ execute: () => { throw new Error('boom'); } }));
+    reg.execute('echo', { text: 'x' }, {}, err => {
+        assert.equal(err.error, 'tool-failed');
+        assert.equal(err.message, 'boom');
+    });
+});
+
+test('cancel(): stale async callback dropped, cancellable cancelled', () => {
+    const reg = createToolRegistry();
+    let cancelled = 0;
+    const cancellable = { cancel: () => cancelled++ };
+    let finish;
+    reg.register(makeTool({ execute: (a, ctx, cb) => { finish = () => cb(null, { ok: 1 }); } }));
+    let called = 0;
+    reg.execute('echo', { text: 'x' }, { cancellable }, () => called++);
+    reg.cancel();
+    assert.equal(cancelled, 1, 'active run cancellable invoked');
+    finish(); // late completion AFTER cancel
+    assert.equal(called, 0, 'stale callback must never render');
+    // new executions still work after cancel
+    reg.execute('echo', { text: 'y' }, {}, (err, res) => assert.deepEqual(res, { text: 'y' }));
+});
+
+test('result normalization: list truncation + size cap', () => {
+    const reg = createToolRegistry();
+    reg.register(makeTool({ execute: (a, c, cb) => cb(null, { items: Array.from({ length: 25 }, (_, i) => i) }) }));
+    reg.execute('echo', { text: 'x' }, {}, (err, res) => {
+        assert.equal(res.items.length, 11); // 10 + {truncated,total}
+        assert.deepEqual(res.items[10], { truncated: true, total: 25 });
+    });
+    const big = createToolRegistry();
+    // single long string is truncated to maxValueChars (500), not the total cap
+    big.register(makeTool({ execute: (a, c, cb) => cb(null, { blob: 'x'.repeat(9999) }) }));
+    big.execute('echo', { text: 'x' }, {}, (err, res) => {
+        assert.equal(res.blob.length, LIMITS.maxValueChars);
+    });
+    // total-serialized cap (> 4000 chars) triggers preview form
+    const huge = createToolRegistry();
+    const many = {};
+    for (let i = 0; i < 20; i++) many['k' + i] = 'x'.repeat(LIMITS.maxValueChars);
+    huge.register(makeTool({ execute: (a, c, cb) => cb(null, many) }));
+    huge.execute('echo', { text: 'x' }, {}, (err, res) => {
+        assert.equal(res.truncated, true);
+        assert.ok(res.preview.length <= LIMITS.maxResultChars);
+    });
+});

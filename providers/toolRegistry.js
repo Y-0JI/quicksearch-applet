@@ -93,7 +93,64 @@ function createToolRegistry(opts) {
         return null;
     }
 
-    return { register, get, list, validate, LIMITS, RISK_LEVELS };
+    let gen = 0;        // monotonic run generation: stale-callback guard
+    let active = [];    // [{gen, cancellable}]
+
+    function _trimValue(v) {
+        if (v == null || typeof v === 'number' || typeof v === 'boolean') return v;
+        if (typeof v === 'string') return v.length > LIMITS.maxValueChars ? v.slice(0, LIMITS.maxValueChars) : v;
+        if (Array.isArray(v)) {
+            const items = v.slice(0, LIMITS.maxListItems).map(_trimValue);
+            if (v.length > LIMITS.maxListItems) items.push({ truncated: true, total: v.length });
+            return items;
+        }
+        if (typeof v === 'object') {
+            const o = {};
+            for (const k of Object.keys(v)) o[k] = _trimValue(v[k]);
+            return o;
+        }
+        return String(v);
+    }
+
+    function normalizeResult(value) {
+        const trimmed = _trimValue(value === undefined ? null : value);
+        let s;
+        try { s = JSON.stringify(trimmed); } catch (e) { return { value: '[unserializable-result]' }; }
+        if (s === undefined) return { value: '[unserializable-result]' };
+        if (s.length <= LIMITS.maxResultChars) return trimmed;
+        return { truncated: true, preview: s.slice(0, LIMITS.maxResultChars) };
+    }
+
+    function execute(id, args, context, cb) {
+        const vErr = validate(id, args);
+        if (vErr) { cb(vErr, null); return; }
+        const tool = toolsById[id];
+        const myGen = ++gen;
+        const cancellable = (context && context.cancellable) || null;
+        if (cancellable) active.push({ gen: myGen, cancellable });
+
+        const done = (err, result) => {
+            active = active.filter(r => r.gen !== myGen);
+            if (myGen !== gen) return; // stale: cancelled/superseded -> NEVER render
+            if (err) { cb(err, null); return; }
+            cb(null, normalizeResult(result));
+        };
+        try {
+            tool.execute(args, { cancellable: cancellable }, done);
+        } catch (e) {
+            done({ error: 'tool-failed', message: String((e && e.message) || e) });
+        }
+    }
+
+    function cancel() {
+        gen++; // invalidate every pending callback at once
+        for (const r of active) { try { r.cancellable.cancel(); } catch (e) {} }
+        active = [];
+    }
+
+    function destroy() { cancel(); }
+
+    return { register, get, list, validate, execute, cancel, destroy, LIMITS, RISK_LEVELS };
 }
 
 module.exports = { createToolRegistry, LIMITS, RISK_LEVELS };
