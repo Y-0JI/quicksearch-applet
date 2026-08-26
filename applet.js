@@ -890,13 +890,26 @@ class QuickSearchApplet extends Applet.IconApplet {
     // (stale approvals are dropped by the agent's generation guard).
     _confirmTool(req, cb) {
         try {
-            const argsPreview = (() => {
-                try { return JSON.stringify(req.args || {}).slice(0, 160); }
-                catch (e) { return ""; }
-            })();
+            // Phase 13: human-readable action only — never the raw tool id or
+            // raw JSON args (which could leak coordinates). The agent already
+            // decided the verdict; this dialog just asks the human to confirm.
+            const actionLabel = utilsMod.toolLabel(req.tool) || _("This action");
+            let detail = "";
+            try {
+                const a = req.args || {};
+                const parts = [];
+                for (const k of Object.keys(a)) {
+                    if (k === "x" || k === "y" || k === "cancellable" || k === "capabilities") continue;
+                    const v = a[k];
+                    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+                        parts.push(String(v));
+                    }
+                }
+                if (parts.length) detail = parts.slice(0, 3).join(", ");
+            } catch (e) {}
             const risk = String(req.risk || "").toUpperCase();
             const title = _("Agent meminta izin") + " [" + risk + "]";
-            const body = req.tool + (argsPreview ? "\n" + argsPreview : "");
+            const body = actionLabel + (detail ? "\n" + detail : "");
 
             this._closeConfirmDialog(); // one dialog at a time
             this._agentStatus("custom", null, _("Preparing action...")); // Phase 13
