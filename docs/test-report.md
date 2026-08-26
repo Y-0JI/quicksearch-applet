@@ -169,3 +169,54 @@ result pipeline (classify/normalize/dedupe/rank/limits).
   ini (mempengaruhi semua tombol termasuk lightbox), sehingga handler
   diverifikasi via emit + direct method call; mekanisme klik identik dengan
   tombol lain yang sudah dipakai user.
+
+## Phase 8 — Tool System / ToolRegistry
+
+Fondasi tool system (registry generik + 6 tool adapter) tanpa menyentuh
+SEARCH/AI yang stabil. ToolRegistry HANYA abstraction + validation +
+execution (nol logic AI); 6 tool adalah adapter tipis atas provider existing.
+
+### Arsitektur
+- `providers/toolRegistry.js` — register/get/list/validate/execute/cancel.
+  validator flat strict (unknown-key ditolak), result/error normalisasi,
+  stale-callback guard via generation counter, cancellation batalkan seluruh
+  run (bump gen + cancel cancellable aktif).
+- `providers/tools/index.js` — 6 tool: calculator, search_files, search_web,
+  open_url, open_file, launch_app. Semua platform-effect di-inject (providers,
+  openUri, openPath, timers) -> pure-testable.
+- `providers/fileProvider.js` — export `openPath(path)->bool` (native
+  launch_default_for_uri_async setelah existence check), backward compatible.
+- `applet.js::_createEngine()` — wiring ADD-ONLY: registry dibangun berbagi
+  instance provider live, di-destroy saat rebuild. SEARCH & ASK AI tidak
+  diubah satu byte.
+
+### Batas (didefinisikan sejak awal, LIMITS)
+- maxAgentSteps: 8 (dipakai Phase 9)
+- maxListItems: 10, maxValueChars: 500, maxResultChars: 4000, webGraceMs: 2500
+
+### Hasil test (node --test)
+- toolregistry.test.js: 9/9 (register shape, list sorted, validate
+  unknown/object/unknown-key/missing-required/bad-type, execute success,
+  short-circuit invalid BEFORE run, thrown-error normalisasi, cancel stale
+  drop + cancellable cancel, result truncation + size cap).
+- tools.test.js: 9/9 (6 tool teregister + risk levels, calculator,
+  search_files map+cancellable, search_web upgrade-early + grace-fallback,
+  open_url scheme gate javascript:/file: rejected, open_file exist/missing,
+  launch_app reuse action + no raw executable, SECURITY no shell/exec).
+- FULL suite: 105/105 PASS (termasuk regression SEARCH/AI Phase 1-7).
+
+### Guardrail terpenuhi
+- Reuse murni provider existing (zero duplicated logic).
+- ToolRegistry tanpa logic AI.
+- Schema flat explicit, validator ~40 baris.
+- Persis 6 tool, tanpa screen/computer-control.
+- Cancellation + stale callback protection aktif.
+- Tanpa shell/arbitrary command (audit grep CLEAN).
+- SEARCH mode tidak berubah; AIProvider/AIManager/ConversationManager
+  tidak disentuh.
+
+### Runtime verification
+- node --check: applet.js + 3 module baru OK.
+- Reload Cinnamon: log "tool registry ready: calculator, launch_app,
+  open_file, open_url, search_files, search_web". SEARCH & ASK AI identik.
+- BERHENTI setelah Phase 8; menuju Phase 9 (Agent Loop) setelah review.
