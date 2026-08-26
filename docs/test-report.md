@@ -319,3 +319,45 @@ ConversationManager nol perubahan.
   deterministic & privacy-safe; provider metadata bisa menyusul bila
   dibutuhkan (Phase lanjutan).
 - BERHENTI setelah Phase 10; menuju Phase 11 (Computer Control) setelah review.
+
+## Phase 11 — Structured Computer Control
+
+5 tool UI-control terstruktur baru; computer-use loop muncul natural dari
+loop generik (get_screen → action → get_screen → final). TANPA permission
+system besar (Phase 12), tanpa high-risk action, SEARCH nol perubahan.
+
+### Tool baru (semua async + cancellable + validasi TOTAL pra-eksekusi)
+| Tool | Risk | Validasi |
+|---|---|---|
+| focus_app | LOW | AppSystem lookup (id→nama); raise window existing → fallback app.activate |
+| click | MEDIUM | int ketat, dalam bounds layar live (`global.screen_width/height`); button ∈ left/right/middle |
+| type_text | MEDIUM | cap 500 char, control-char di-strip; kosong → invalid-text |
+| press_key | MEDIUM | whitelist eksplisit (Return/Esc/Tab/Bksp/Del/panah/Home/End/PgUp/PgDn/Space/F1-F12); TANPA modifier combo |
+| scroll | MEDIUM | direction up\|down; amount int 1..10 (default 3) |
+
+### Backend injeksi (deteksi sekali, pola pickFileBackend)
+1. `clutter` — Clutter.Seat virtual device in-process (native, tanpa binary)
+2. `xdotool` — fallback fixed-argv via Gio.Subprocess (pola fileProvider;
+   BUKAN shell — argv array, teks user selalu setelah `--`)
+3. tidak ada keduanya → `input-unavailable` untuk semua op (fail-closed)
+
+### Hasil test (node --test)
+- computerControl.test.js 6/6: whitelist, bounds ketat, sanitize,
+  scroll-validate, argv builders (fixed shape), backend picker.
+- tools.test.js 26/26: 12 tool teregister; klik valid diteruskan
+  (button+cancellable); koordinat invalid ditolak SEBELUM backend
+  (4 kasus); bounds dari host; type sanitize/invalid-text; key whitelist
+  (ctrl+s & Foo ditolak, tak pernah dispatch); scroll default+invalid;
+  focus found/not-found; cancellable mencapai 5 op; input-unavailable
+  dinormalisasi.
+- agentmanager: computer-use loop end-to-end ✅ (screen→click→screen→final,
+  2 screenshot sampai ke model, tepat 1 klik).
+- FULL suite: **160/160 PASS** · node --check ALL OK · grep shell CLEAN ·
+  SEARCH/result/appProvider tak berubah.
+
+### Runtime verification (Cinnamon)
+- Reload → log registry 12 tool. Vision ON + "klik tombol X di layar" →
+  shot → klik terasa → shot verifikasi → jawaban.
+- Tanpa xdotool pun tetap jalan bila clutter path tersedia; jika keduanya
+  absen → `input-unavailable` rapi (tidak crash).
+- BERHENTI setelah Phase 11; menuju Phase 12 (Permission/Safety) setelah review.
