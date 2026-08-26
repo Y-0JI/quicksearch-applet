@@ -118,3 +118,38 @@ test('result normalization: list truncation + size cap', () => {
         assert.ok(res.preview.length <= LIMITS.maxResultChars);
     });
 });
+
+// ---- Phase 10: data-URL images bypass the 500-char text cap ----
+
+test('image data URL survives per-string and total caps intact', () => {
+    const img = 'data:image/png;base64,' + 'A'.repeat(LIMITS.maxImageDataUrlChars - 30);
+    const reg = createToolRegistry();
+    reg.register(makeTool({ execute: (a, c, cb) => cb(null, { image: img }) }));
+    reg.execute('echo', { text: 'x' }, {}, (err, res) => {
+        assert.equal(err, null);
+        assert.equal(res.image, img, 'data URL must not be truncated');
+    });
+});
+
+test('oversized data URL is capped at maxImageDataUrlChars (not previewed away)', () => {
+    const img = 'data:image/png;base64,' + 'A'.repeat(LIMITS.maxImageDataUrlChars);
+    const reg = createToolRegistry();
+    reg.register(makeTool({ execute: (a, c, cb) => cb(null, { image: img }) }));
+    reg.execute('echo', { text: 'x' }, {}, (err, res) => {
+        assert.equal(err, null);
+        assert.ok(res.image.startsWith('data:image/png;base64,'));
+        assert.ok(res.image.length <= LIMITS.maxImageDataUrlChars);
+    });
+});
+
+test('normal strings stay capped even when a data URL exists elsewhere', () => {
+    const reg = createToolRegistry();
+    reg.register(makeTool({ execute: (a, c, cb) => cb(null, {
+        note: 'y'.repeat(999),
+        image: 'data:image/jpeg;base64,Zm9v'
+    }) }));
+    reg.execute('echo', { text: 'x' }, {}, (err, res) => {
+        assert.equal(res.note.length, LIMITS.maxValueChars);
+        assert.equal(res.image, 'data:image/jpeg;base64,Zm9v');
+    });
+});

@@ -11,7 +11,10 @@ const LIMITS = {
     maxListItems: 10,     // per-array truncation in normalized results
     maxValueChars: 500,   // per-string truncation
     maxResultChars: 4000, // total serialized result cap
-    webGraceMs: 2500      // wait window for webProvider upgrade delivery
+    webGraceMs: 2500,     // wait window for webProvider upgrade delivery
+    // Phase 10: transient vision payloads (data URLs) need their own ceiling;
+    // ~6M chars ~= 4.5MB binary PNG. Applies ONLY to data:image/* strings.
+    maxImageDataUrlChars: 6000000
 };
 
 const RISK_LEVELS = ['LOW', 'MEDIUM', 'HIGH'];
@@ -96,9 +99,18 @@ function createToolRegistry(opts) {
     let gen = 0;        // monotonic run generation: stale-callback guard
     let active = [];    // [{gen, cancellable}]
 
+    const isDataImage = v => typeof v === 'string' &&
+        v.lastIndexOf('data:image/', 0) === 0;
+
     function _trimValue(v) {
         if (v == null || typeof v === 'number' || typeof v === 'boolean') return v;
-        if (typeof v === 'string') return v.length > LIMITS.maxValueChars ? v.slice(0, LIMITS.maxValueChars) : v;
+        if (typeof v === 'string') {
+            // Phase 10: vision payloads are the one legitimate huge string;
+            // cap them at the dedicated image ceiling instead of 500 chars.
+            if (isDataImage(v)) return v.length > LIMITS.maxImageDataUrlChars
+                ? v.slice(0, LIMITS.maxImageDataUrlChars) : v;
+            return v.length > LIMITS.maxValueChars ? v.slice(0, LIMITS.maxValueChars) : v;
+        }
         if (Array.isArray(v)) {
             const items = v.slice(0, LIMITS.maxListItems).map(_trimValue);
             if (v.length > LIMITS.maxListItems) items.push({ truncated: true, total: v.length });
@@ -117,7 +129,11 @@ function createToolRegistry(opts) {
         let s;
         try { s = JSON.stringify(trimmed); } catch (e) { return { value: '[unserializable-result]' }; }
         if (s === undefined) return { value: '[unserializable-result]' };
-        if (s.length <= LIMITS.maxResultChars) return trimmed;
+        // results carrying an image use the image ceiling for the total too,
+        // so a valid screenshot never collapses into a preview stub
+        const cap = (s.indexOf('"data:image/') !== -1)
+            ? LIMITS.maxImageDataUrlChars + 64 : LIMITS.maxResultChars;
+        if (s.length <= cap) return trimmed;
         return { truncated: true, preview: s.slice(0, LIMITS.maxResultChars) };
     }
 
