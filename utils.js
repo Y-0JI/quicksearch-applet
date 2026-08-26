@@ -13,9 +13,11 @@ function sanitizeGlob(query) {
 }
 
 // local history/suggestion rows for the typed query.
-// history: stored queries with case-insensitive prefix match, excluding the
-// exact active query. suggestions: app-name completions not already shown
-// as history. Empty query -> nothing (empty state must stay strict).
+// matching: case-insensitive substring anywhere (exact > prefix > substring,
+// earlier match position wins); ranking preserves source order within a tier.
+// history: stored queries, excluding the exact active query.
+// suggestions: app-name completions not already shown as history.
+// Empty query -> nothing (empty state must stay strict).
 function buildLocalRows(query, recent, appNames, caps) {
     caps = caps || { history: 3, suggestion: 3 };
     const q = String(query || '').toLowerCase().trim();
@@ -23,20 +25,35 @@ function buildLocalRows(query, recent, appNames, caps) {
     if (!q) return out;
 
     const seen = {};
-    for (const h of (recent || [])) {
-        const hl = String(h).toLowerCase().trim();
-        if (!hl || hl === q || seen[hl]) continue;
-        if (!hl.startsWith(q)) continue;
-        out.history.push(String(h));
-        seen[hl] = true;
+    // rank candidates once: [tier, matchIndex, sourceOrder] ascending wins;
+    // tiers: -1 = exact, 0 = prefix, 1 = substring
+    const collect = (items, isHistory) => {
+        const scored = [];
+        (items || []).forEach((item, order) => {
+            const raw = String(item);
+            const v = raw.toLowerCase().trim();
+            if (!v || seen[v]) return;
+            const i = v.indexOf(q);
+            if (i < 0) return;
+            if (isHistory && i === 0 && v.length === q.length) return; // active query hidden
+            const tier = i === 0 ? (v.length === q.length ? -1 : 0) : 1;
+            scored.push({ value: raw.trim(), tier: tier, i: i, order: order });
+        });
+        scored.sort((a, b) => a.tier - b.tier || a.i - b.i || a.order - b.order);
+        return scored;
+    };
+
+    for (const s of collect(recent, true)) {
         if (out.history.length >= caps.history) break;
+        out.history.push(s.value);
+        seen[s.value.toLowerCase()] = true;
     }
-    for (const a of (appNames || [])) {
-        const al = String(a).toLowerCase().trim();
-        if (!al || seen[al] || !al.startsWith(q)) continue;
-        out.suggestion.push(String(a));
-        seen[al] = true;
+    for (const s of collect(appNames, false)) {
+        const k = s.value.toLowerCase();
+        if (seen[k]) continue;
         if (out.suggestion.length >= caps.suggestion) break;
+        out.suggestion.push(s.value);
+        seen[k] = true;
     }
     return out;
 }
@@ -69,4 +86,28 @@ function extractUrls(text) {
     return out;
 }
 
-module.exports = { pickFileBackend, sanitizeGlob, buildLocalRows, normalizeSearchEngine, extractUrls };
+// split AI text into an ordered text/url segment sequence so the renderer can
+// place clickable links at the URL's original position (no duplicate append):
+// [{type:'text'|'url', value}] — scheme-whitelisted http/https only, trailing
+// punctuation stays attached to the surrounding text, newlines kept in runs
+function splitTextAndUrls(text) {
+    const out = [];
+    const re = /https?:\/\/[^\s<>"'`]+/gi;
+    const s = String(text || '');
+    let last = 0;
+    let m;
+    while ((m = re.exec(s)) !== null) {
+        const url = m[0].replace(/[.,;:!?)\]}'"]+$/, '');
+        if (url.length <= 8) continue; // degenerate match: stays plain text
+        if (m.index > last) out.push({ type: 'text', value: s.slice(last, m.index) });
+        out.push({ type: 'url', value: url });
+        last = m.index + url.length;
+    }
+    if (out.length === 0) {
+        return s ? [{ type: 'text', value: s }] : [];
+    }
+    if (last < s.length) out.push({ type: 'text', value: s.slice(last) });
+    return out;
+}
+
+module.exports = { pickFileBackend, sanitizeGlob, buildLocalRows, normalizeSearchEngine, extractUrls, splitTextAndUrls };

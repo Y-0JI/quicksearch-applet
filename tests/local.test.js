@@ -40,6 +40,51 @@ test('caps respected (3 + 3)', () => {
     assert.equal(r.suggestion.length, 3);
 });
 
+// ---- substring matching (query found anywhere, case-insensitive) ----
+
+test('middle match found in suggestions', () => {
+    const r = buildLocalRows('re', [], ['Software Manager']);
+    assert.ok(r.suggestion.includes('Software Manager'));
+});
+
+test('suffix match found in suggestions', () => {
+    const r = buildLocalRows('re', [], ['Wire']);
+    assert.deepEqual(r.suggestion, ['Wire']);
+});
+
+test('match is case-insensitive anywhere', () => {
+    const r = buildLocalRows('RE', [], ['Software Manager']);
+    assert.ok(r.suggestion.includes('Software Manager'));
+});
+
+test('middle match found in history', () => {
+    const r = buildLocalRows('pa', ['gempa hari ini'], []);
+    assert.ok(r.history.includes('gempa hari ini'));
+});
+
+test('non-matching candidates stay excluded', () => {
+    const r = buildLocalRows('re', [], ['Files', 'Text Editor']);
+    assert.deepEqual(r.suggestion, []);
+});
+
+// ---- ranking: exact > prefix > substring (closer to start wins) ----
+
+test('exact match outranks prefix and substring', () => {
+    const r = buildLocalRows('files', [], ['Files', 'File Manager', 'My Files']);
+    assert.equal(r.suggestion[0], 'Files');
+});
+
+test('prefix match outranks substring match', () => {
+    const r = buildLocalRows('re', [], ['Software Manager', 'Remote Desktop']);
+    assert.equal(r.suggestion[0], 'Remote Desktop');
+    assert.ok(r.suggestion.includes('Software Manager'));
+});
+
+test('earlier substring position outranks later one', () => {
+    const r = buildLocalRows('re', [], ['Software Manager', 'Core']);
+    assert.equal(r.suggestion[0], 'Core'); // 're' at index 2 vs 6
+});
+
 test('local rows rank above calculator in merged results', () => {
     const hist = makeResult({ type: 'history', title: 'gesture', description: '', icon: '', score: SCORES.history });
     const calc = makeResult({ type: 'calc', title: '8', description: '', icon: '', score: SCORES.calc });

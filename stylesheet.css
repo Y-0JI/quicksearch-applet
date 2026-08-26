@@ -105,6 +105,17 @@
     color: rgba(255, 255, 255, 0.92);
 }
 
+/* AI answers as inline flow: one horizontal line row per source line,
+   mixing plain text runs with clickable URL buttons in original order */
+.quicksearch-ai-line {
+    spacing: 3px;
+}
+
+.quicksearch-ai-run {
+    font-size: 10.5pt;
+    color: rgba(255, 255, 255, 0.92);
+}
+
 .quicksearch-ai-error {
     color: rgba(255, 160, 160, 0.95);
 }
@@ -136,9 +147,9 @@
     background-color: rgba(255, 255, 255, 0.16);
 }
 
-/* Phase 4.6: dedicated follow-up input below the AI conversation panel */
+/* Phase 4.6: dedicated follow-up input below the AI conversation panel;
+   attached flush to the panel bottom by _syncRegionGeometry (no CSS margin) */
 .quicksearch-followup-row {
-    margin-top: 6px;
     spacing: 8px;
 }
 
@@ -160,11 +171,11 @@
     padding: 0 4px;
 }
 
-/* clickable links inside AI answers */
+/* clickable links inside AI answers (inline, sized to match text runs) */
 .quicksearch-link-btn {
-    padding: 2px 10px;
+    padding: 0 2px;
     border-radius: 6px;
-    font-size: 9.5pt;
+    font-size: 10.5pt;
     color: rgba(138, 180, 255, 0.95);
     text-decoration: underline;
 }

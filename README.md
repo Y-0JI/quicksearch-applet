@@ -43,7 +43,7 @@ Input → debounce 150ms → Query Classifier
 ## Pengujian
 
 ```bash
-node --test tests/*.js   # unit test modul pure (16 tests)
+node --test tests/*.js   # unit test modul pure
 ```
 
 Matrix pengujian live (race, cancellation, provider failure, dll):

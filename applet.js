@@ -5,7 +5,9 @@ const Settings = require('ui.settings');
 const St = require('gi.St');
 const Clutter = require('gi.Clutter');
 const Gio = require('gi.Gio');
+const GLib = require('gi.GLib');
 const GObject = require('gi.GObject');
+const Pango = require('gi.Pango');
 
 const resultMod = require('./result.js');
 const utilsMod = require('./utils.js');
@@ -82,18 +84,22 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
 
         this.autoCompleteBox = new St.BoxLayout({ vertical: true });
         // autocomplete is capped by buildLocalRows caps -> never scrollable;
-        // main results remain the only scrolling area
+        // main results remain the only scrolling area. clip_to_allocation
+        // guarantees nothing paints outside the popup border.
         this._autoScroll = new St.BoxLayout({
             vertical: true,
             style_class: "quicksearch-results quicksearch-autocomplete",
+            clip_to_allocation: true,
             visible: false
         });
         this._autoScroll.add_actor(this.autoCompleteBox);
         this.resultsRegion.add_actor(this._autoScroll);
 
         // Phase 4.6: dedicated follow-up input BELOW the conversation panel.
-        // Lives outside the scroll area so it never scrolls with history,
-        // and never triggers the SearchEngine.
+        // Lives inside resultsRegion (positioned manually in
+        // _syncRegionGeometry) so it sits flush against the panel bottom,
+        // shares the panel's actual width, never scrolls with history, and
+        // never triggers the SearchEngine.
         this.followUpRow = new St.BoxLayout({
             style_class: "quicksearch-followup-row",
             visible: false
@@ -121,26 +127,21 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this.followUpEntry.connect("secondary-icon-clicked",
             () => this._applet._submitAIFromFollowUp());
         this.followUpRow.add(this.followUpEntry);
-        // backgroundStack (BinLayout, full-screen): child is centered, so we
-        // shift it to the bottom via translation_y — deterministic, never
-        // scrolls with history, and always on screen
-        this.backgroundStack.add_actor(this.followUpRow);
-        this.followUpRow.set_width(690);
-        this._fuTy = 0;
-        this._syncFollowUpPosition = () => {
-            if (!this.followUpRow.visible) return;
-            const h = this.followUpRow.get_transformed_size()[1] || 40;
-            const desiredY = global.screen_height - h - 10;
-            const curY = this.followUpRow.get_transformed_position()[1];
-            const centeredY = curY - this._fuTy;      // strip previous shift
-            const ty = Math.round(desiredY - centeredY);
-            if (Math.abs(ty - this._fuTy) > 0.5) {
-                this._fuTy = ty;
-                this.followUpRow.translation_y = ty;
-            }
-        };
-        this.followUpRow.connect("notify::allocation", () => this._syncFollowUpPosition());
-        this.followUpRow.connect("notify::visible", () => this._syncFollowUpPosition());
+        this.resultsRegion.add_actor(this.followUpRow); // child 2: below panel, on top
+
+        // combined hover region for the autocomplete popup: entry + popup act
+        // as one area — moving between them keeps the popup, leaving both
+        // hides it (debounced so the gap between surfaces cannot flicker it).
+        // reactive:true is required for crossing (enter/leave) events.
+        this._entryRow.reactive = true;
+        this._autoScroll.reactive = true;
+        for (const [actor, key] of [
+            [this._entryRow, "_ptrInEntry"],
+            [this._autoScroll, "_ptrInPopup"]
+        ]) {
+            actor.connect("enter-event", () => this._applet._notePointer(key, true));
+            actor.connect("leave-event", () => this._applet._notePointer(key, false));
+        }
 
         this._entry.clutter_text.connect("text-changed", (actor) => {
             this._applet.onTextChanged(actor.get_text());
@@ -236,6 +237,11 @@ class QuickSearchApplet extends Applet.IconApplet {
         });
         this._autoRows = [];
         this._mainRows = [];
+        // hover state for the combined entry+popup region
+        this._ptrInEntry = false;
+        this._ptrInPopup = false;
+        this._popupHideId = 0;
+        this._lastPanelWidth = 0;
 
         // ---- settings ----
         this.settings = new Settings.AppletSettings(this, UUID, instance_id);
@@ -418,6 +424,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (this._engine) this._engine.cancel();
         if (this._aiManager && this._aiManager.cancel) this._aiManager.cancel(); // Phase 5
         this._aiSeq++;
+        this._cancelPopupHide();
+        this._ptrInEntry = false;
+        this._ptrInPopup = false;
         // sweep pending Thinking bubbles so reopen never shows a stuck state
         for (const e of this._aiChat) {
             if (e.pending) { e.text = _("— dibatalkan —"); e.pending = false; }
@@ -460,13 +469,26 @@ class QuickSearchApplet extends Applet.IconApplet {
     _syncRegionGeometry() {
         const ov = this._overlay;
         if (!ov || !ov.resultsRegion) return;
-        const pillSize = ov._entryRow.get_transformed_size();
-        const w = Math.round(pillSize[0]) || 690;
-        // physical fit: panel must stay on screen below the searchbox
+        // width follows the actual searchbox pill; when the pill is hidden
+        // (AI conversation mode) reuse the last measured width so the panel,
+        // autocomplete popup and follow-up input all stay the same responsive
+        // size instead of a hard-coded one.
+        const pw = Math.round(ov._entryRow.get_transformed_size()[0]) || 0;
+        if (pw > 0) this._lastPanelWidth = pw;
+        const w = pw || this._lastPanelWidth || 690;
+        // physical fit: everything (panel + attached follow-up) stays on screen
         const pillTf = ov._entryRow.get_transformed_position();
         const pillBottom = (pillTf[1] || 146) + (ov._entryRow.get_transformed_size()[1] || 54);
-        const fuH = (ov.followUpRow && ov.followUpRow.visible)
-            ? Math.max(40, Math.round(ov.followUpRow.get_transformed_size()[1]) || 44) + 6 : 0;
+        const fuVisible = !!(ov.followUpRow && ov.followUpRow.visible && ov._scroll.visible);
+        let fuH = 0;
+        if (fuVisible) {
+            ov.followUpRow.set_width(w); // responsive: follows actual panel width
+            try {
+                const [, fnat] = ov.followUpRow.get_preferred_height(w);
+                fuH = Number(fnat) || 0;
+            } catch (e) { fuH = 0; }
+            if (fuH <= 0) fuH = 44;
+        }
         const roomCap = Math.max(320, global.screen_height - pillBottom - 6 - fuH - 12);
         let h = 0;
         if (ov._scroll.visible) {
@@ -487,7 +509,13 @@ class QuickSearchApplet extends Applet.IconApplet {
             const mainH = Math.min(natH, 664, roomCap);
             ov._scroll.set_position(0, 0);
             ov._scroll.set_size(w, mainH);
-            h = Math.max(h, mainH);
+            h = mainH;
+            // follow-up sits flush against the conversation panel bottom,
+            // outside the ScrollView so it never scrolls with history
+            if (fuVisible) {
+                ov.followUpRow.set_position(0, mainH + 6);
+                h = mainH + 6 + fuH;
+            }
         }
         if (ov._autoScroll.visible) {
             // measure the actual rows container: the scroll widget's own
@@ -516,6 +544,37 @@ class QuickSearchApplet extends Applet.IconApplet {
         try {
             Gio.AppInfo.launch_default_for_uri_async(url, null, null, null);
         } catch (e) { /* never crash */ }
+    }
+
+    // ---- autocomplete popup hover lifecycle ----
+    // entry + popup form one combined hover region: the popup only hides when
+    // the pointer leaves BOTH; moving between them never closes it (debounce
+    // covers the small gap between the two surfaces).
+    _notePointer(key, inside) {
+        this[key] = inside;
+        if (inside) this._cancelPopupHide();
+        else this._schedulePopupHide();
+    }
+
+    _cancelPopupHide() {
+        if (this._popupHideId) {
+            GLib.source_remove(this._popupHideId);
+            this._popupHideId = 0;
+        }
+    }
+
+    _schedulePopupHide() {
+        if (this._popupHideId) return;
+        this._popupHideId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 140, () => {
+            this._popupHideId = 0;
+            const auto = this._overlay ? this._overlay._autoScroll : null;
+            if (!this._ptrInEntry && !this._ptrInPopup && auto && auto.visible) {
+                auto.visible = false;
+                this._syncSelection();
+                this._syncRegionGeometry(); // reclaim the popup's region space
+            }
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     // ---- Phase 4.6: main pill hide/show (animated, non-blocking) ----
@@ -652,30 +711,67 @@ class QuickSearchApplet extends Applet.IconApplet {
                 style_class: "quicksearch-chat-header " +
                     (e.who === "you" ? "quicksearch-chat-you" : "quicksearch-chat-ai")
             }));
-            const lbl = new St.Label({
-                text: String(e.text),
-                style_class: "quicksearch-ai-text" + (e.isError ? " quicksearch-ai-error" : "")
-            });
-            lbl.get_clutter_text().set_line_wrap(true);
-            box.add_child(lbl);
-
-            // clickable links: only for AI answers, http/https only
-            if (e.who === "ai" && !e.pending) {
-                for (const url of utilsMod.extractUrls(e.text)) {
-                    const link = new St.Button({
-                        label: url,
-                        style_class: "quicksearch-link-btn"
-                    });
-                    const lbl2 = link.get_child();
-                    if (lbl2 && lbl2.get_clutter_text) {
-                        lbl2.get_clutter_text().set_line_wrap(true);
-                    }
-                    link.connect("clicked", () => this._openExternalUrl(url));
-                    box.add_child(link);
-                }
+            // plain text bubble: user input and transient states carry no links
+            if (e.who !== "ai" || e.pending) {
+                const lbl = new St.Label({
+                    text: String(e.text),
+                    style_class: "quicksearch-ai-text" + (e.isError ? " quicksearch-ai-error" : "")
+                });
+                lbl.get_clutter_text().set_line_wrap(true);
+                box.add_child(lbl);
+                continue;
             }
+            box.add_child(this._buildAITextFlow(e.text, e.isError));
         }
         this._syncRegionGeometry();
+    }
+
+    // AI answers render as one inline flow: text runs interleaved with
+    // clickable URL buttons at their original positions (text -> URL -> text).
+    // No duplicate link list is appended after the response.
+    _buildAITextFlow(text, isError) {
+        const flow = new St.BoxLayout({
+            vertical: true,
+            style_class: "quicksearch-ai-text" + (isError ? " quicksearch-ai-error" : "")
+        });
+        let line = null;
+        const newLine = () => {
+            line = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-line" });
+            flow.add_child(line);
+        };
+        const addRun = (txt) => {
+            const lbl = new St.Label({
+                text: txt,
+                style_class: "quicksearch-ai-run" + (isError ? " quicksearch-ai-error" : "")
+            });
+            lbl.get_clutter_text().set_line_wrap(true);
+            line.add_child(lbl);
+        };
+        newLine();
+        for (const seg of utilsMod.splitTextAndUrls(text)) {
+            if (seg.type === "text") {
+                const parts = String(seg.value).split("\n");
+                for (let i = 0; i < parts.length; i++) {
+                    if (i > 0) {
+                        newLine();
+                        if (!parts[i]) addRun(" "); // blank line stays visible
+                    }
+                    if (parts[i]) addRun(parts[i]);
+                }
+            } else {
+                const url = seg.value;
+                const link = new St.Button({
+                    label: url,
+                    style_class: "quicksearch-link-btn"
+                });
+                const cl = link.get_child();
+                if (cl && cl.get_clutter_text) cl.get_clutter_text().set_line_wrap(true);
+                link.set_y_align(Clutter.ActorAlign.CENTER);
+                link.connect("clicked", () => this._openExternalUrl(url)); // http/https only
+                line.add_child(link);
+            }
+        }
+        return flow;
     }
 
     _aiErrorText(code, detail) {
@@ -916,9 +1012,12 @@ class QuickSearchApplet extends Applet.IconApplet {
 
         const titleLbl = new St.Label({ text: String(r.title || ""), style_class: "quicksearch-title" });
         titleLbl.get_clutter_text().set_line_wrap(false);
+        // single-line rows must never overflow the popup: ellipsize instead
+        titleLbl.get_clutter_text().set_ellipsize(Pango.EllipsizeMode.END);
         const descText = isRecent ? _("Recent") : String(r.description || "");
         const descLbl = new St.Label({ text: descText, style_class: "quicksearch-desc" });
         descLbl.get_clutter_text().set_line_wrap(false);
+        descLbl.get_clutter_text().set_ellipsize(Pango.EllipsizeMode.END);
 
         const labels = new St.BoxLayout({ vertical: true, y_align: St.Align.MIDDLE });
         labels.add(titleLbl);
@@ -952,6 +1051,7 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     on_applet_removed_from_panel(reload) {
         Main.keybindingManager.removeHotKey(this._hotkeyName);
+        this._cancelPopupHide();
         if (this._engine) {
             this._engine.destroy();
             this._engine = null;
