@@ -250,3 +250,65 @@ test('stale run: starting a newer run supersedes the older one', async () => {
     assert.equal(err, null);
     assert.deepEqual(newResult, { answer: 'B' });
 });
+
+// ---- Phase 10: vision capability + image handling ----
+
+test('capabilities.vision flows from hasVision() into tool execution context', async () => {
+    let seenCtx = null;
+    const reg = createToolRegistry();
+    reg.register({ id: 'spy', name: 'Spy', description: 'captures ctx', riskLevel: 'LOW',
+        inputSchema: { type: 'object', properties: {}, required: [] },
+        execute: (a, ctx, cb) => { seenCtx = ctx; cb(null, { ok: 1 }); } });
+    const ai = scriptedAI([{ toolCalls: [TC('v1', 'spy', '{}')] }, { answer: 'ya' }]);
+    const agent = createAgentManager({ aiAsk: ai.aiAsk, registry: reg,
+        hasVision: () => true });
+    await settled(agent, 'q');
+    assert.ok(seenCtx && seenCtx.capabilities && seenCtx.capabilities.vision === true);
+});
+
+test('image-bearing tool result becomes compact tool msg + user multimodal turn', async () => {
+    const IMG = 'data:image/png;base64,iVBORw0KGgo=';
+    const reg = createToolRegistry();
+    reg.register({ id: 'shot', name: 'Shot', description: 'returns screen', riskLevel: 'LOW',
+        inputSchema: { type: 'object', properties: {}, required: [] },
+        execute: (a, ctx, cb) => cb(null, { image: IMG }) });
+    const ai = scriptedAI([{ toolCalls: [TC('s1', 'shot', '{}')] }, { answer: 'layar terlihat' }]);
+    const agent = createAgentManager({ aiAsk: ai.aiAsk, registry: reg,
+        hasVision: () => true });
+    await settled(agent, 'lihat layar');
+    assert.equal(ai.calls.length, 2);
+    const msgs = ai.calls[1].ctx.messages;
+    // tool message stays SMALL (no base64 duplicated into history)
+    assert.deepEqual(JSON.parse(msgs[2].content), { image_received: true });
+    // the pixels ride in the following user turn as multimodal content
+    const um = msgs[3];
+    assert.equal(um.role, 'user');
+    assert.ok(Array.isArray(um.content));
+    assert.equal(um.content[0].type, 'text');
+    assert.equal(um.content[1].type, 'image_url');
+    assert.equal(um.content[1].image_url.url, IMG);
+});
+
+test('oversized image -> controlled image-too-large, no giant payload sent', async () => {
+    const BIG = 'data:image/png;base64,' + 'A'.repeat(LIMITS.maxImageDataUrlChars + 10);
+    const reg = createToolRegistry();
+    reg.register({ id: 'shot_big', name: 'BigShot', description: 'huge', riskLevel: 'LOW',
+        inputSchema: { type: 'object', properties: {}, required: [] },
+        execute: (a, ctx, cb) => cb(null, { image: BIG }) });
+    const ai = scriptedAI([{ toolCalls: [TC('z1', 'shot_big', '{}')] }, { answer: 'oke' }]);
+    const agent = createAgentManager({ aiAsk: ai.aiAsk, registry: reg,
+        hasVision: () => true });
+    await settled(agent, 'q');
+    const msgs = ai.calls[1].ctx.messages;
+    const toolMsg = JSON.parse(msgs[2].content);
+    assert.equal(toolMsg.error, 'image-too-large');
+    // no user turn carrying the oversized image was appended
+    assert.equal(msgs.length, 3);
+});
+
+test('agent without screen tool still answers normally (vision off by default)', async () => {
+    const { agent, ai } = makeAgent([{ answer: 'plain' }]);
+    const { err, res } = await settled(agent, 'halo');
+    assert.equal(err, null);
+    assert.equal(res.answer, 'plain');
+});

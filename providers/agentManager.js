@@ -18,6 +18,7 @@ let Gio = null;
 try { Gio = require('gi.Gio'); } catch (e) { /* plain node: no cancellable */ }
 
 const { LIMITS } = require('./toolRegistry.js');
+const { imageWithinLimits } = require('./screenCapture.js');
 
 function createAgentManager(opts) {
     opts = opts || {};
@@ -26,6 +27,9 @@ function createAgentManager(opts) {
     const registry = opts.registry || null;
     const maxSteps = Number(opts.maxSteps) || LIMITS.maxAgentSteps;
     const maxToolChars = LIMITS.maxResultChars;
+    // Phase 10: vision capability is determined by the HOST (settings +
+    // provider metadata); default OFF so screenshots never happen by accident
+    const hasVision = opts.hasVision || (() => false);
     // injectable for node tests; real Gio.Cancellable inside Cinnamon
     const makeCancellable = opts.makeCancellable ||
         (() => ((Gio && Gio.Cancellable) ? new Gio.Cancellable() : null));
@@ -63,6 +67,8 @@ function createAgentManager(opts) {
         const base = Array.isArray(ctx && ctx.messages) ? ctx.messages.slice() : [];
         if (!base.length) base.push({ role: 'user', content: String(question == null ? '' : question) });
         let steps = 0;
+        // capability snapshot per run (Phase 10): tools read it via ctx
+        const capabilities = { vision: !!hasVision() };
 
         function finish(err, data) {
             if (activeCancellable === cancellable) activeCancellable = null;
@@ -77,6 +83,29 @@ function createAgentManager(opts) {
             try { s = JSON.stringify(payload); } catch (e) { s = '{"error":"unserializable"}'; }
             base.push({ role: 'tool', tool_call_id: String(callId || ''),
                         content: s.slice(0, maxToolChars) });
+        }
+
+        // Phase 10: an image payload never rides inside the tool message —
+        // strict providers reject array content on role:'tool'. The pixels
+        // become ONE user turn (OpenAI multimodal shape) right after a small
+        // tool ack, so history stays lean and protocol-clean.
+        function _handleImageResult(call, result) {
+            const url = result && result.image;
+            if (typeof url !== 'string') return false;
+            if (!imageWithinLimits(url, LIMITS.maxImageDataUrlChars)) {
+                pushToolMessage(call.id, { error: 'image-too-large' });
+                return true;
+            }
+            base.push({ role: 'tool', tool_call_id: String(call.id || ''),
+                        content: JSON.stringify({ image_received: true }) });
+            base.push({
+                role: 'user',
+                content: [
+                    { type: 'text', text: '(screenshot layar terlampir — analisis gambar ini)' },
+                    { type: 'image_url', image_url: { url: url } }
+                ]
+            });
+            return true;
         }
 
         function executeCalls(calls, i) {
@@ -96,9 +125,11 @@ function createAgentManager(opts) {
             }
 
             try {
-                registry.execute(String(c.name || ''), parsed, { cancellable: cancellable },
+                registry.execute(String(c.name || ''), parsed,
+                    { cancellable: cancellable, capabilities: capabilities },
                     (err, result) => {
                         if (myGen !== gen) return;
+                        if (!err && _handleImageResult(c, result)) { executeCalls(calls, i + 1); return; }
                         pushToolMessage(c.id,
                             err ? Object.assign({ error: err.error || 'tool-error' }, err) : result);
                         executeCalls(calls, i + 1);

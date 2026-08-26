@@ -131,14 +131,13 @@ test('image data URL survives per-string and total caps intact', () => {
     });
 });
 
-test('oversized data URL is capped at maxImageDataUrlChars (not previewed away)', () => {
+test('oversized data URL passes through intact (size gate lives in AgentManager)', () => {
     const img = 'data:image/png;base64,' + 'A'.repeat(LIMITS.maxImageDataUrlChars);
     const reg = createToolRegistry();
     reg.register(makeTool({ execute: (a, c, cb) => cb(null, { image: img }) }));
     reg.execute('echo', { text: 'x' }, {}, (err, res) => {
         assert.equal(err, null);
-        assert.ok(res.image.startsWith('data:image/png;base64,'));
-        assert.ok(res.image.length <= LIMITS.maxImageDataUrlChars);
+        assert.equal(res.image, img, 'registry must NOT corrupt images by truncating');
     });
 });
 

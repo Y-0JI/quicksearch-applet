@@ -106,9 +106,10 @@ function createToolRegistry(opts) {
         if (v == null || typeof v === 'number' || typeof v === 'boolean') return v;
         if (typeof v === 'string') {
             // Phase 10: vision payloads are the one legitimate huge string;
-            // cap them at the dedicated image ceiling instead of 500 chars.
-            if (isDataImage(v)) return v.length > LIMITS.maxImageDataUrlChars
-                ? v.slice(0, LIMITS.maxImageDataUrlChars) : v;
+            // they pass through INTACT here — truncation would ship a corrupt
+            // image downstream. The single size gate lives in AgentManager
+            // (image-too-large), using LIMITS.maxImageDataUrlChars.
+            if (isDataImage(v)) return v;
             return v.length > LIMITS.maxValueChars ? v.slice(0, LIMITS.maxValueChars) : v;
         }
         if (Array.isArray(v)) {
@@ -152,7 +153,10 @@ function createToolRegistry(opts) {
             cb(null, normalizeResult(result));
         };
         try {
-            tool.execute(args, { cancellable: cancellable }, done);
+            // forward the CALLER'S context (capabilities etc.) with a
+            // guaranteed cancellable slot — the registry owns cancellation
+            const execCtx = Object.assign({}, context || {}, { cancellable: cancellable });
+            tool.execute(args, execCtx, done);
         } catch (e) {
             done({ error: 'tool-failed', message: String((e && e.message) || e) });
         }
