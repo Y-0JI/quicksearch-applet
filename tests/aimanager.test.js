@@ -107,3 +107,19 @@ test('phase 5: manager.cancel() delegates to the active provider', () => {
     assert.equal(providerCancelled, 1, 'active provider cancel() invoked');
     assert.equal(called, 0, 'suppressed completion stays suppressed');
 });
+
+test('phase 9: ctx.tools passed through to the engine context', () => {
+    let seenCtx = null;
+    const mgr = createAIManager({
+        getProviderId: () => '9router',
+        getConfig: () => ({}),
+        registry: { '9router': { defaultEndpoint: 'http://x/v1', defaultModel: '', needsKey: false } },
+        createProviderEngine: () => ({
+            ask: (q, ctx, cb) => { seenCtx = ctx; },
+            cancel: () => {}
+        })
+    });
+    const tools = [{ type: 'function', function: { name: 't', description: 'd', parameters: {} } }];
+    mgr.ask('q', { tools }, () => {});
+    assert.deepEqual(seenCtx.tools, tools);
+});
