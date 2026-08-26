@@ -110,4 +110,26 @@ function splitTextAndUrls(text) {
     return out;
 }
 
-module.exports = { pickFileBackend, sanitizeGlob, buildLocalRows, normalizeSearchEngine, extractUrls, splitTextAndUrls };
+// Phase 13: centralized human-readable tool activity labels for the agent
+// status line. UI renders these verbatim; raw tool ids never reach users.
+const TOOL_LABELS = {
+    search_files: 'Searching files...',
+    search_web: 'Searching the web...',
+    calculator: 'Calculating...',
+    open_url: 'Opening link...',
+    launch_app: 'Opening application...',
+    open_file: 'Opening file...',
+    get_screen: 'Looking at your screen...',
+    focus_app: 'Focusing application...',
+    click: 'Clicking...',
+    type_text: 'Typing...',
+    press_key: 'Pressing key...',
+    scroll: 'Scrolling...'
+};
+
+function toolLabel(id) {
+    return Object.prototype.hasOwnProperty.call(TOOL_LABELS, String(id || ''))
+        ? TOOL_LABELS[String(id)] : null;
+}
+
+module.exports = { pickFileBackend, sanitizeGlob, buildLocalRows, normalizeSearchEngine, extractUrls, splitTextAndUrls, TOOL_LABELS, toolLabel };

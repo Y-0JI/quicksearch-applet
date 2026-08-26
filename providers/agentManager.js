@@ -56,6 +56,17 @@ function createAgentManager(opts) {
     const policy = opts.policy || null;
     const requestConfirmation = typeof opts.requestConfirmation === 'function'
         ? opts.requestConfirmation : null;
+    // Phase 13: lightweight activity events for the UI status line.
+    // Optional; UI errors must never break the agent loop, so every emit is
+    // guarded. Payloads carry tool IDS only — never args/results.
+    const onPhase = typeof opts.onPhase === 'function' ? opts.onPhase : null;
+    const onToolStart = typeof opts.onToolStart === 'function' ? opts.onToolStart : null;
+    const onToolComplete = typeof opts.onToolComplete === 'function' ? opts.onToolComplete : null;
+    const onToolError = typeof opts.onToolError === 'function' ? opts.onToolError : null;
+    const safeEmit = (fn, ...args) => {
+        if (!fn) return;
+        try { fn.apply(null, args); } catch (e) {}
+    };
     // injectable for node tests; real Gio.Cancellable inside Cinnamon
     const makeCancellable = opts.makeCancellable ||
         (() => ((Gio && Gio.Cancellable) ? new Gio.Cancellable() : null));
@@ -166,18 +177,32 @@ function createAgentManager(opts) {
                 : 'allow';
 
             const proceed = () => {
+                safeEmit(onToolStart, String(c.name || ''));
                 try {
                     registry.execute(String(c.name || ''), parsed,
                         { cancellable: cancellable, capabilities: capabilities },
                         (err, result) => {
                             if (myGen !== gen) return;
-                            if (!err && _handleImageResult(c, result)) { executeCalls(calls, i + 1); return; }
-                            pushToolMessage(c.id,
-                                err ? Object.assign({ error: err.error || 'tool-error' }, err) : result);
+                            if (err) {
+                                safeEmit(onToolError, String(c.name || ''), err);
+                                pushToolMessage(c.id,
+                                    Object.assign({ error: err.error || 'tool-error' }, err));
+                                executeCalls(calls, i + 1);
+                                return;
+                            }
+                            if (_handleImageResult(c, result)) {
+                                safeEmit(onToolComplete, String(c.name || ''));
+                                executeCalls(calls, i + 1);
+                                return;
+                            }
+                            safeEmit(onToolComplete, String(c.name || ''));
+                            pushToolMessage(c.id, result);
                             executeCalls(calls, i + 1);
                         });
                 } catch (e) {
                     // defense in depth: registry already guards, this can't leak
+                    safeEmit(onToolError, String(c.name || ''),
+                        { error: 'tool-failed', message: String((e && e.message) || e) });
                     pushToolMessage(c.id, { error: 'tool-failed',
                                             message: String((e && e.message) || e) });
                     executeCalls(calls, i + 1);
@@ -185,12 +210,14 @@ function createAgentManager(opts) {
             };
 
             if (verdict === 'deny') {
+                safeEmit(onToolError, String(c.name || ''), { error: 'permission-denied' });
                 pushToolMessage(c.id, { error: 'permission-denied' });
                 executeCalls(calls, i + 1);
                 return;
             }
             if (verdict === 'confirm') {
                 if (!requestConfirmation) {
+                    safeEmit(onToolError, String(c.name || ''), { error: 'permission-denied' });
                     pushToolMessage(c.id, { error: 'permission-denied' }); // no dialog wired: fail-closed
                     executeCalls(calls, i + 1);
                     return;
@@ -217,6 +244,7 @@ function createAgentManager(opts) {
             if (myGen !== gen) return;
             if (steps >= maxSteps) { finish({ error: 'max-steps', steps: steps }); return; }
             steps++;
+            safeEmit(onPhase, 'thinking');
             aiAsk(String(question == null ? '' : question), {
                 messages: base,
                 tools: toolDefs(),

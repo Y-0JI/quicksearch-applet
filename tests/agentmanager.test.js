@@ -479,3 +479,82 @@ test('system prompt injected once per run when tools are offered', async () => {
     assert.ok(/tool/i.test(msgs[0].content));
     // exactly one system message even after more AI rounds
 });
+
+// ---- Phase 13: activity events for the UI status line ----
+
+test('events: thinking -> start -> complete -> thinking sequence (one tool)', async () => {
+    const reg = makeRegistry();
+    const ai = scriptedAI([
+        { toolCalls: [TC('e1', 'echo', '{"text":"x"}')] },
+        { answer: 'selesai' }
+    ]);
+    const events = [];
+    const agent = createAgentManager({
+        aiAsk: ai.aiAsk,
+        registry: reg,
+        onPhase: ph => events.push(['phase', ph]),
+        onToolStart: id => events.push(['start', id]),
+        onToolComplete: id => events.push(['complete', id]),
+        onToolError: (id, e) => events.push(['error', id, e && e.error])
+    });
+    await settled(agent, 'q');
+    assert.deepEqual(events.filter(e => e[0] !== 'phase' || true), [
+        ['phase', 'thinking'],
+        ['start', 'echo'],
+        ['complete', 'echo'],
+        ['phase', 'thinking']
+    ]);
+});
+
+test('events: denied tool fires error(permission-denied), NO start/complete', async () => {
+    const reg = createToolRegistry();
+    let ran = 0;
+    reg.register({ id: 'echo', name: 'E', description: 'e', riskLevel: 'LOW',
+        inputSchema: { type: 'object',
+            properties: { text: { type: 'string' } }, required: ['text'] },
+        execute: (a, c, cb) => { ran++; cb(null, {}); } });
+    const ai = scriptedAI([{ toolCalls: [TC('p1', 'echo', '{"text":"x"}')] }, { answer: 'ok' }]);
+    const events = [];
+    const agent = createAgentManager({
+        aiAsk: ai.aiAsk,
+        registry: reg,
+        policy: createPermissionPolicy({ matrix: { LOW: 'deny', MEDIUM: 'deny', HIGH: 'deny' } }),
+        onToolStart: id => events.push(['start', id]),
+        onToolComplete: id => events.push(['complete', id]),
+        onToolError: (id, e) => events.push(['error', id, e.error])
+    });
+    await settled(agent, 'q');
+    assert.equal(ran, 0);
+    assert.deepEqual(events, [['error', 'echo', 'permission-denied']]);
+});
+
+test('events: failing tool emits onToolError with normalized code, run survives', async () => {
+    const reg = makeRegistry();
+    const ai = scriptedAI([
+        { toolCalls: [TC('f9', 'fail_tool', '{}')] },
+        { answer: 'gagal tapi selesai' }
+    ]);
+    let errEvt = null;
+    const agent = createAgentManager({
+        aiAsk: ai.aiAsk,
+        registry: reg,
+        onToolError: (id, e) => { errEvt = [id, e.error]; }
+    });
+    const { res } = await settled(agent, 'q');
+    assert.equal(res.answer, 'gagal tapi selesai');
+    assert.deepEqual(errEvt, ['fail_tool', 'boom-code']);
+});
+
+test('events: throwing UI callback cannot break the agent loop', async () => {
+    const reg = makeRegistry();
+    const ai = scriptedAI([{ answer: 'tetap jalan' }]);
+    const agent = createAgentManager({
+        aiAsk: ai.aiAsk,
+        registry: reg,
+        onPhase: () => { throw new Error('ui bug'); },
+        onToolStart: () => { throw new Error('ui bug'); }
+    });
+    const { err, res } = await settled(agent, 'q');
+    assert.equal(err, null);
+    assert.equal(res.answer, 'tetap jalan');
+});
