@@ -221,3 +221,69 @@ test('phase 5: non-cancelled stale completion is still dropped', () => {
     finish(); // OLD completion arrives late
     assert.equal(called, 1); // only the newer ask resolved
 });
+
+// ---- Phase 9: agent-loop tool support (additive) ----
+
+test('phase 9: ctx.tools included in request body', () => {
+    let captured = null;
+    const t = makeMockTransport((o, cb) => { captured = o; cb(null, { status: 200, text: OK_BODY }); });
+    const p = makeProvider(t);
+    const tools = [{ type: 'function', function: {
+        name: 'calculator', description: 'd', parameters: { type: 'object', properties: {} } } }];
+    p.ask('q', { tools }, () => {});
+    assert.deepEqual(JSON.parse(captured.body).tools, tools);
+});
+
+test('phase 9: no ctx.tools -> body has NO tools key (legacy shape intact)', () => {
+    let captured = null;
+    const t = makeMockTransport((o, cb) => { captured = o; cb(null, { status: 200, text: OK_BODY }); });
+    makeProvider(t).ask('q', {}, () => {});
+    assert.equal('tools' in JSON.parse(captured.body), false);
+});
+
+test('phase 9: role tool + assistant tool_calls pass through to body', () => {
+    let captured = null;
+    const t = makeMockTransport((o, cb) => { captured = o; cb(null, { status: 200, text: OK_BODY }); });
+    const p = makeProvider(t);
+    const rawCalls = [{ id: 'c1', type: 'function',
+        function: { name: 'calculator', arguments: '{"expression":"2+2"}' } }];
+    p.ask('lanjut', { messages: [
+        { role: 'user', content: 'q' },
+        { role: 'assistant', content: '', tool_calls: rawCalls },
+        { role: 'tool', tool_call_id: 'c1', content: '{"value":"4"}' }
+    ] }, () => {});
+    const msgs = JSON.parse(captured.body).messages;
+    assert.equal(msgs[1].role, 'assistant');
+    assert.deepEqual(msgs[1].tool_calls, rawCalls);
+    assert.equal(msgs[2].role, 'tool');
+    assert.equal(msgs[2].tool_call_id, 'c1');
+    assert.equal(msgs[2].content, '{"value":"4"}');
+});
+
+test('phase 9: tool_calls response normalized BEFORE empty-content check', () => {
+    const body = JSON.stringify({ model: 'm', choices: [{ message: {
+        role: 'assistant', content: '',
+        tool_calls: [{ id: 'call_1', type: 'function',
+            function: { name: 'search_files', arguments: '{"query":"laporan"}' } }] } }] });
+    const t = makeMockTransport((o, cb) => cb(null, { status: 200, text: body }));
+    makeProvider(t).ask('q', {}, (err, res) => {
+        assert.equal(err, null);
+        assert.equal(res.answer, '');
+        assert.deepEqual(res.toolCalls, [
+            { id: 'call_1', name: 'search_files', argsJson: '{"query":"laporan"}' }]);
+    });
+});
+
+test('phase 9: content + tool_calls together keeps both fields', () => {
+    const body = JSON.stringify({ model: 'm', choices: [{ message: {
+        role: 'assistant', content: 'sedang mencari...',
+        tool_calls: [{ id: 't9', type: 'function',
+            function: { name: 'search_web', arguments: '{"query":"cuaca"}' } }] } }] });
+    const t = makeMockTransport((o, cb) => cb(null, { status: 200, text: body }));
+    makeProvider(t).ask('q', {}, (err, res) => {
+        assert.equal(err, null);
+        assert.equal(res.answer, 'sedang mencari...');
+        assert.equal(res.toolCalls.length, 1);
+        assert.equal(res.toolCalls[0].name, 'search_web');
+    });
+});

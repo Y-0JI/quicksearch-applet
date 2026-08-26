@@ -121,22 +121,42 @@ function createAIProvider(opts) {
         // needsKey; local/keyless providers may send an empty Bearer.
 
         // multi-turn (Phase 4.5): a valid ctx.messages array replaces the
-        // single-message body; its last user message IS the question
+        // single-message body; its last user message IS the question.
+        // Phase 9 (additive): agent-loop shapes pass through untouched —
+        // assistant turns carrying tool_calls and role:'tool' results —
+        // while legacy user/assistant coercion stays exactly as before.
         let messages = null;
         if (Array.isArray(ctx.messages) && ctx.messages.length) {
-            messages = ctx.messages.map(m => ({
-                role: (m && m.role === 'assistant') ? 'assistant' : 'user',
-                content: String((m && m.content) != null ? m.content : '')
-            }));
+            messages = ctx.messages.map(m => {
+                if (m && m.role === 'tool') {
+                    const t = { role: 'tool', content: String((m && m.content) != null ? m.content : '') };
+                    if (m.tool_call_id) t.tool_call_id = String(m.tool_call_id);
+                    return t;
+                }
+                if (m && m.role === 'assistant' && Array.isArray(m.tool_calls)) {
+                    return { role: 'assistant', content: (m.content != null) ? String(m.content) : null,
+                             tool_calls: m.tool_calls };
+                }
+                return {
+                    role: (m && m.role === 'assistant') ? 'assistant' : 'user',
+                    content: String((m && m.content) != null ? m.content : '')
+                };
+            });
         }
         if (!messages) messages = [{ role: 'user', content: q }];
 
-        const body = JSON.stringify({
+        // Phase 9: optional tool definitions (AgentManager supplies them,
+        // already in OpenAI wire format); omitted entirely when absent so
+        // legacy requests keep their proven shape.
+        let tools = null;
+        if (Array.isArray(ctx.tools) && ctx.tools.length) tools = ctx.tools;
+
+        const body = JSON.stringify(Object.assign({
             model: model,
             messages: messages,
             stream: false,
             max_tokens: maxTokens
-        });
+        }, tools ? { tools: tools } : {}));
 
         http({
             url: endpoint,
@@ -168,7 +188,25 @@ function createAIProvider(opts) {
             try {
                 const json = JSON.parse(res.text);
                 const choice = json.choices && json.choices[0];
-                const content = choice && choice.message && choice.message.content;
+                const msg = choice && choice.message;
+                // Phase 9: tool-call requests resolve BEFORE the empty-content
+                // check — a tool_calls turn may legitimately have empty content.
+                if (msg && Array.isArray(msg.tool_calls) && msg.tool_calls.length) {
+                    const tcs = [];
+                    for (let i = 0; i < msg.tool_calls.length; i++) {
+                        const tc = msg.tool_calls[i];
+                        tcs.push({
+                            id: String((tc && tc.id) || ''),
+                            name: (tc && tc.function) ? String(tc.function.name || '') : '',
+                            argsJson: (tc && tc.function && tc.function.arguments != null)
+                                ? String(tc.function.arguments) : '{}'
+                        });
+                    }
+                    done(null, { answer: String(msg.content || '').trim(), toolCalls: tcs,
+                                 model: json.model || model });
+                    return;
+                }
+                const content = msg && msg.content;
                 if (content == null || !String(content).trim()) {
                     const why = choice && choice.finish_reason ? ('finish_reason=' + choice.finish_reason) : '';
                     done({ error: 'bad-response', detail: why });
