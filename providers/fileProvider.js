@@ -152,12 +152,15 @@ function _iconForPath(path, isDir) {
     return isDir ? 'folder' : 'text-x-generic';
 }
 
+// shared with the open_file tool (Phase 8): true when the path existed and a
+// launch was attempted, false otherwise. Kept native — no shell.
 function _openPath(path) {
     try {
         const clean = path.replace(/\/+$/, '') || '/';
-        if (!Gio.File.new_for_path(clean).query_exists(null)) return; // spec 24-G
+        if (!Gio.File.new_for_path(clean).query_exists(null)) return false; // spec 24-G
         Gio.AppInfo.launch_default_for_uri_async(Gio.File.new_for_path(clean).get_uri(), null, null, null);
-    } catch (e) { /* never crash applet (spec §18/24-K) */ }
+        return true;
+    } catch (e) { return false; } // never crash applet (spec §18/24-K)
 }
 
-module.exports = { createFileProvider };
+module.exports = { createFileProvider, openPath: _openPath };
