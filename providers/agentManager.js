@@ -17,8 +17,15 @@
 let Gio = null;
 try { Gio = require('gi.Gio'); } catch (e) { /* plain node: no cancellable */ }
 
-const { LIMITS } = require('./toolRegistry.js');
-const { imageWithinLimits } = require('./screenCapture.js');
+// LOADER INVARIANT: no project-relative requires here — Cinnamon resolves
+// EVERY relative require against the APPLET ROOT (zena strips './' sequences
+// anywhere), so cross-file constants arrive via injection (opts.limits).
+// Fallbacks mirror toolRegistry.LIMITS so pure loop tests need no wiring.
+const FALLBACK_LIMITS = {
+    maxAgentSteps: 8,
+    maxResultChars: 4000,
+    maxImageDataUrlChars: 6000000
+};
 
 // Phase 12: keeps the model honest about tool use — intent narration is NOT
 // execution. Short by design (token cost); policy enforcement lives in code,
@@ -37,8 +44,9 @@ function createAgentManager(opts) {
     if (typeof opts.aiAsk !== 'function') throw new Error('agent-manager-requires-aiAsk');
     const aiAsk = opts.aiAsk;
     const registry = opts.registry || null;
-    const maxSteps = Number(opts.maxSteps) || LIMITS.maxAgentSteps;
-    const maxToolChars = LIMITS.maxResultChars;
+    const L = Object.assign({}, FALLBACK_LIMITS, opts.limits || {});
+    const maxSteps = Number(opts.maxSteps) || L.maxAgentSteps;
+    const maxToolChars = L.maxResultChars;
     // Phase 10: vision capability is determined by the HOST (settings +
     // provider metadata); default OFF so screenshots never happen by accident
     const hasVision = opts.hasVision || (() => false);
@@ -116,7 +124,10 @@ function createAgentManager(opts) {
         function _handleImageResult(call, result) {
             const url = result && result.image;
             if (typeof url !== 'string') return false;
-            if (!imageWithinLimits(url, LIMITS.maxImageDataUrlChars)) {
+            // inline gate (loader-safe): prefix + shared image ceiling
+            const ok = url.lastIndexOf('data:image/', 0) === 0 &&
+                url.length <= L.maxImageDataUrlChars;
+            if (!ok) {
                 pushToolMessage(call.id, { error: 'image-too-large' });
                 return true;
             }

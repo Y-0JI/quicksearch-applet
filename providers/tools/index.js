@@ -2,15 +2,20 @@
 // duplicated provider logic (roadmap Phase 8 guardrail #1). Pure CJS:
 // every platform effect (providers, openUri, openPath, timers) is injected,
 // so node --test runs with plain JS fakes. No screen/computer-control here
-// (Phase 10/11). No shell anywhere (hard security rule).
-const { LIMITS } = require('../toolRegistry.js');
-const {
-    validatePoint, validateKey, sanitizeText, validateScroll
-} = require('../computerControl.js');
+// beyond get_screen's adapter (Phase 10/11). No shell anywhere.
+//
+// LOADER INVARIANT: files under providers/ must NEVER use '../' requires —
+// Cinnamon's zena loader strips './' sequences anywhere in a path
+// (fileUtils.js), turning '../x.js' into '.x.js' and killing the whole
+// applet import. Cross-file constants/helpers arrive via injection instead
+// (same pattern as every other provider module).
+const FALLBACK_LIMITS = { webGraceMs: 2500, maxListItems: 10 };
 
 function createDefaultTools(deps) {
     const d = deps || {};
     const timers = d.timers || { after: () => 0, clear: () => {} };
+    const LIMITS = d.LIMITS || FALLBACK_LIMITS;
+    const V = d.validators || {};
 
     return [
         {   // CalculatorProvider.tryCalculate (sync, whitelist parser, no eval)
@@ -156,7 +161,7 @@ function createDefaultTools(deps) {
                 if (['left', 'right', 'middle'].indexOf(button) === -1) {
                     cb({ error: 'invalid-button' }); return;
                 }
-                const err = validatePoint(args.x, args.y,
+                const err = V.validatePoint(args.x, args.y,
                     d.getScreenBounds ? d.getScreenBounds() : [0, 0]);
                 if (err) { cb(err); return; }
                 if (!d.computerControl) { cb({ error: 'unavailable' }); return; }
@@ -170,7 +175,7 @@ function createDefaultTools(deps) {
             inputSchema: { type: 'object',
                 properties: { text: { type: 'string' } }, required: ['text'] },
             execute(args, ctx, cb) {
-                const text = sanitizeText(String(args.text == null ? '' : args.text));
+                const text = V.sanitizeText(String(args.text == null ? '' : args.text));
                 if (!text) { cb({ error: 'invalid-text' }); return; }
                 if (!d.computerControl) { cb({ error: 'unavailable' }); return; }
                 d.computerControl.typeText(text, ctx.cancellable || null,
@@ -184,7 +189,7 @@ function createDefaultTools(deps) {
                 properties: { key: { type: 'string' } }, required: ['key'] },
             execute(args, ctx, cb) {
                 const key = String(args.key == null ? '' : args.key);
-                const kErr = validateKey(key);
+                const kErr = V.validateKey(key);
                 if (kErr) { cb({ error: kErr }); return; }
                 if (!d.computerControl) { cb({ error: 'unavailable' }); return; }
                 d.computerControl.pressKey(key, ctx.cancellable || null,
@@ -198,7 +203,7 @@ function createDefaultTools(deps) {
                 properties: { direction: { type: 'string' }, amount: { type: 'number' } },
                 required: ['direction'] },
             execute(args, ctx, cb) {
-                const v = validateScroll(args);
+                const v = V.validateScroll(args);
                 if (v.error) { cb(v); return; }
                 if (!d.computerControl) { cb({ error: 'unavailable' }); return; }
                 d.computerControl.scroll(v.direction, v.amount, ctx.cancellable || null,

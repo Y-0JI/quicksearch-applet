@@ -2,7 +2,16 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const { createDefaultTools } = require('../providers/tools/index.js');
-const { createToolRegistry } = require('../providers/toolRegistry.js');
+const { createToolRegistry, LIMITS } = require('../providers/toolRegistry.js');
+const cc = require('../providers/computerControl.js');
+
+// Phase 12 hotfix: cross-file constants/helpers are injected (loader safety)
+const VALIDATORS = {
+    validatePoint: cc.validatePoint,
+    validateKey: cc.validateKey,
+    sanitizeText: cc.sanitizeText,
+    validateScroll: cc.validateScroll
+};
 
 function makeDeps(over) {
     const d = {
@@ -23,7 +32,10 @@ function makeDeps(over) {
             after: (ms, fn) => { d._graceFn = fn; return 1; },
             clear: () => { d._graceFn = null; } }; })()
     };
-    return Object.assign(d, over || {});
+    return Object.assign(d, {
+        LIMITS: LIMITS,
+        validators: VALIDATORS
+    }, over || {});
 }
 
 function registryWith(deps) {
@@ -114,6 +126,37 @@ test('SECURITY: tool sources contain no shell/exec primitives', () => {
         const src = fs.readFileSync(require.resolve(f), 'utf8');
         assert.ok(!/child_process|spawnSync|spawn\(|\bexec(Sync)?\(|\/bin\/sh|system\(/.test(src), 'no shell in ' + f);
     }
+});
+
+// Regression (Phase 12 hotfix): Cinnamon's zena loader strips './' sequences
+// ANYWHERE in a require path, then resolves against the APPLET ROOT for every
+// module. Simulate that exactly for all runtime files: every project-relative
+// require must land on an existing file after the transform.
+test('LOADER SAFETY: every runtime require resolves under zena semantics', () => {
+    const path = require('path');
+    const ROOT = path.resolve(__dirname, '..');
+    const files = ['applet.js',
+        ...fs.readdirSync(ROOT).filter(f => f.endsWith('.js')),
+        ...fs.readdirSync(path.join(ROOT, 'providers')).filter(f => f.endsWith('.js')).map(f => 'providers/' + f),
+        ...fs.readdirSync(path.join(ROOT, 'providers/tools')).filter(f => f.endsWith('.js')).map(f => 'providers/tools/' + f)
+    ];
+    const broken = [];
+    let checked = 0;
+    for (const rel of [...new Set(files)]) {
+        const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+        for (const m of src.matchAll(/require\('([^']+)'\)/g)) {
+            const p = m[1];
+            if (!p.startsWith('.') && !p.startsWith('/')) continue; // gi./ui./misc handled natively
+            if (/^(gettext|mainloop|format)/.test(p)) continue;
+            const zena = p.replace(/\.\//g, ''); // EXACT loader transform
+            checked++;
+            if (!fs.existsSync(path.join(ROOT, zena))) {
+                broken.push(`${rel}: require('${p}') -> ${zena}`);
+            }
+        }
+    }
+    assert.ok(checked > 15, 'sanity: transforms actually ran over requires');
+    assert.deepEqual(broken, [], 'loader-breaking requires found:\n' + broken.join('\n'));
 });
 
 // ---- Phase 10: get_screen ----

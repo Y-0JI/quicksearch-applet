@@ -368,7 +368,15 @@ class QuickSearchApplet extends Applet.IconApplet {
                     return [w, h];
                 } catch (e) { return [0, 0]; }
             },
-            computerControl: computerControlMod.createComputerControl()
+            computerControl: computerControlMod.createComputerControl(),
+            // Phase 12 hotfix: loader-safe injection (zena strips '../' paths)
+            LIMITS: toolRegistryMod.LIMITS,
+            validators: {
+                validatePoint: computerControlMod.validatePoint,
+                validateKey: computerControlMod.validateKey,
+                sanitizeText: computerControlMod.sanitizeText,
+                validateScroll: computerControlMod.validateScroll
+            }
         })) this._toolRegistry.register(t);
         try { global.log("[quicksearch@yoji] tool registry ready: " +
                          this._toolRegistry.list().map(t => t.id).join(", ")); } catch (e) {}
@@ -380,6 +388,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             aiAsk: (q, ctx, cb) => this._aiManager.ask(q, ctx, cb),
             registry: this._toolRegistry,
             hasVision: () => !!this.ai_vision_supported, // Phase 10
+            limits: toolRegistryMod.LIMITS, // Phase 12 hotfix: loader-safe inject
             // Phase 12: single permission entry point for every tool call
             policy: permissionPolicyMod.createPermissionPolicy({
                 isAgentEnabled: () => !!this.ai_agent_enabled,
