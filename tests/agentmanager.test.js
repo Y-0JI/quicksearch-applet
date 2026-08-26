@@ -58,6 +58,17 @@ function makeAgent(script, extra) {
 
 const TC = (id, name, argsJson) => ({ id: id, name: name, argsJson: argsJson });
 
+// Phase 12: a system message now leads every run with tools offered;
+// assertions locate turns by role/id instead of raw indexes
+function firstOfRole(msgs, role) {
+    return msgs.filter(m => m.role === role);
+}
+function toolContent(aiCall, callId) {
+    const m = aiCall.ctx.messages.find(
+        x => x.role === 'tool' && x.tool_call_id === callId);
+    return m ? JSON.parse(m.content) : null;
+}
+
 // promise wrapper so assertions can run AFTER the async loop settles
 function settled(agent, question, ctx) {
     return new Promise(resolve => agent.run(question, ctx || { messages: [
@@ -89,12 +100,11 @@ test('one-tool task: tool call -> tool message -> final answer', async () => {
     assert.equal(res.answer, 'selesai');
     assert.equal(ai.calls.length, 2);
     const msgs = ai.calls[1].ctx.messages;
-    assert.equal(msgs[1].role, 'assistant');
-    assert.deepEqual(msgs[1].tool_calls, [
+    const assistantTurns = firstOfRole(msgs, 'assistant');
+    assert.equal(assistantTurns.length, 1);
+    assert.deepEqual(assistantTurns[0].tool_calls, [
         { id: 't1', type: 'function', function: { name: 'echo', arguments: '{"text":"hi"}' } }]);
-    assert.equal(msgs[2].role, 'tool');
-    assert.equal(msgs[2].tool_call_id, 't1');
-    assert.equal(msgs[2].content, '{"echo":"hi"}');
+    assert.deepEqual(toolContent(ai.calls[1], 't1'), { echo: 'hi' });
 });
 
 test('multi-round: several tool rounds then final', async () => {
@@ -119,9 +129,10 @@ test('multiple tool_calls in ONE response execute in order before next AI call',
     assert.equal(res.answer, 'done');
     assert.equal(ai.calls.length, 2);
     const msgs = ai.calls[1].ctx.messages;
-    assert.equal(msgs[1].role, 'assistant');                      // ONE assistant turn...
+    assert.equal(firstOfRole(msgs, 'assistant').length, 1);       // ONE assistant turn...
     assert.equal(msgs.filter(m => m.role === 'tool').length, 3); // ...THREE tool results
-    assert.deepEqual(msgs.slice(2).map(m => m.tool_call_id), ['c1', 'c2', 'c3']);
+    assert.deepEqual(msgs.filter(m => m.role === 'tool').map(m => m.tool_call_id),
+        ['c1', 'c2', 'c3']);
 });
 
 test('max-steps: stops at LIMITS.maxAgentSteps AI calls with clear status', async () => {
@@ -149,8 +160,7 @@ test('unknown tool -> controlled payload, loop continues to final answer', async
     const { err, res } = await settled(agent, 'q');
     assert.equal(err, null);
     assert.equal(res.answer, 'tool tidak ada, maaf');
-    const toolMsg = JSON.parse(ai.calls[1].ctx.messages[2].content);
-    assert.equal(toolMsg.error, 'unknown-tool');
+    assert.equal(toolContent(ai.calls[1], 'u1').error, 'unknown-tool');
 });
 
 test('invalid arguments: unparseable JSON is a controlled tool message', async () => {
@@ -161,7 +171,7 @@ test('invalid arguments: unparseable JSON is a controlled tool message', async (
     const { err, res } = await settled(agent, 'q');
     assert.equal(err, null);
     assert.equal(res.answer, 'ok');
-    const toolMsg = JSON.parse(ai.calls[1].ctx.messages[2].content);
+    const toolMsg = toolContent(ai.calls[1], 'b1');
     assert.equal(toolMsg.error, 'invalid-arguments');
     assert.equal(toolMsg.reason, 'unparseable-json');
 });
@@ -174,7 +184,7 @@ test('invalid arguments: schema failure (missing required) stays controlled', as
     const { err, res } = await settled(agent, 'q');
     assert.equal(err, null);
     assert.equal(res.answer, 'berhasil tetap lanjut');
-    const toolMsg = JSON.parse(ai.calls[1].ctx.messages[2].content);
+    const toolMsg = toolContent(ai.calls[1], 's1');
     assert.equal(toolMsg.error, 'invalid-arguments');
     assert.equal(toolMsg.reason, 'missing-required:text');
 });
@@ -187,8 +197,7 @@ test('tool failure payload -> normalized message, run survives to final', async 
     const { err, res } = await settled(agent, 'q');
     assert.equal(err, null);
     assert.equal(res.answer, 'gagal tapi aman');
-    const toolMsg = JSON.parse(ai.calls[1].ctx.messages[2].content);
-    assert.equal(toolMsg.error, 'boom-code');
+    assert.equal(toolContent(ai.calls[1], 'f1').error, 'boom-code');
 });
 
 test('throwing tool cannot crash the agent (registry normalizes)', async () => {
@@ -199,7 +208,7 @@ test('throwing tool cannot crash the agent (registry normalizes)', async () => {
     const { err, res } = await settled(agent, 'q');
     assert.equal(err, null);
     assert.equal(res.answer, 'tetap hidup');
-    const toolMsg = JSON.parse(ai.calls[1].ctx.messages[2].content);
+    const toolMsg = toolContent(ai.calls[1], 'x1');
     assert.equal(toolMsg.error, 'tool-failed');
     assert.equal(toolMsg.message, 'kaboom-sync');
 });
@@ -277,11 +286,12 @@ test('image-bearing tool result becomes compact tool msg + user multimodal turn'
         hasVision: () => true });
     await settled(agent, 'lihat layar');
     assert.equal(ai.calls.length, 2);
-    const msgs = ai.calls[1].ctx.messages;
     // tool message stays SMALL (no base64 duplicated into history)
-    assert.deepEqual(JSON.parse(msgs[2].content), { image_received: true });
-    // the pixels ride in the following user turn as multimodal content
-    const um = msgs[3];
+    assert.deepEqual(toolContent(ai.calls[1], 's1'), { image_received: true });
+    // the pixels ride in the user turn IMMEDIATELY AFTER the tool ack
+    const msgs = ai.calls[1].ctx.messages;
+    const ackIdx = msgs.findIndex(m => m.role === 'tool' && m.tool_call_id === 's1');
+    const um = msgs[ackIdx + 1];
     assert.equal(um.role, 'user');
     assert.ok(Array.isArray(um.content));
     assert.equal(um.content[0].type, 'text');
@@ -300,10 +310,9 @@ test('oversized image -> controlled image-too-large, no giant payload sent', asy
         hasVision: () => true });
     await settled(agent, 'q');
     const msgs = ai.calls[1].ctx.messages;
-    const toolMsg = JSON.parse(msgs[2].content);
-    assert.equal(toolMsg.error, 'image-too-large');
-    // no user turn carrying the oversized image was appended
-    assert.equal(msgs.length, 3);
+    assert.equal(toolContent(ai.calls[1], 'z1').error, 'image-too-large');
+    // only system+user+tool present: NO image user turn appended
+    assert.equal(firstOfRole(msgs, 'user').length, 1);
 });
 
 test('agent without screen tool still answers normally (vision off by default)', async () => {
@@ -351,4 +360,122 @@ test('computer-use loop: get_screen, click, verify screen, then final', async ()
     const imgs = lastMsgs.filter(m => Array.isArray(m.content) &&
         m.content.some(p => p.type === 'image_url'));
     assert.equal(imgs.length, 2);
+});
+
+// ---- Phase 12: permission policy integration ----
+
+const { createPermissionPolicy } = require('../providers/permissionPolicy.js');
+
+test('policy deny -> permission-denied tool message, loop continues to final', async () => {
+    const reg = makeRegistry();
+    const ai = scriptedAI([
+        { toolCalls: [TC('d1', 'fail_tool', '{}')] },
+        { answer: 'tidak diizinkan oleh pengguna' }
+    ]);
+    const agent = createAgentManager({
+        aiAsk: ai.aiAsk,
+        registry: reg,
+        policy: createPermissionPolicy({
+            matrix: { LOW: 'deny', MEDIUM: 'deny', HIGH: 'deny' }
+        })
+    });
+    const { err, res } = await settled(agent, 'q');
+    assert.equal(err, null);                       // run survives a denial
+    assert.equal(res.answer, 'tidak diizinkan oleh pengguna');
+    assert.equal(toolContent(ai.calls[1], 'd1').error, 'permission-denied');
+});
+
+test('confirmation required -> executed ONLY after user allows', async () => {
+    let asked = null;
+    const reg = makeRegistry();
+    const ai = scriptedAI([
+        { toolCalls: [TC('c9', 'echo', '{"text":"x"}')] },
+        { answer: 'sudah dieksekusi' }
+    ]);
+    const agent = createAgentManager({
+        aiAsk: ai.aiAsk,
+        registry: reg,
+        policy: createPermissionPolicy({ matrix: { LOW: 'confirm', MEDIUM: 'confirm', HIGH: 'confirm' } }),
+        requestConfirmation: (req, cb) => { asked = req; cb(true); }
+    });
+    const { err, res } = await settled(agent, 'q');
+    assert.equal(err, null);
+    assert.equal(res.answer, 'sudah dieksekusi');
+    assert.ok(asked && asked.tool === 'echo' && asked.risk === 'LOW');
+    // tool actually ran (result message present)
+    assert.equal(toolContent(ai.calls[1], 'c9').echo, 'x');
+});
+
+test('confirmation denied -> permission-denied, tool NEVER executes', async () => {
+    let ran = 0;
+    const reg = createToolRegistry();
+    reg.register({ id: 'echo', name: 'Echo', description: 'e', riskLevel: 'LOW',
+        inputSchema: { type: 'object',
+            properties: { text: { type: 'string' } }, required: ['text'] },
+        execute: (a, c, cb) => { ran++; cb(null, { echo: a.text }); } });
+    const ai = scriptedAI([
+        { toolCalls: [TC('n1', 'echo', '{"text":"x"}')] },
+        { answer: 'baik, tidak jadi' }
+    ]);
+    const agent = createAgentManager({
+        aiAsk: ai.aiAsk,
+        registry: reg,
+        policy: createPermissionPolicy({ matrix: { LOW: 'confirm', MEDIUM: 'confirm', HIGH: 'confirm' } }),
+        requestConfirmation: (req, cb) => cb(false)
+    });
+    const { err, res } = await settled(agent, 'q');
+    assert.equal(err, null);
+    assert.equal(res.answer, 'baik, tidak jadi');
+    assert.equal(ran, 0, 'tool body must not run without approval');
+    assert.equal(toolContent(ai.calls[1], 'n1').error, 'permission-denied');
+});
+
+test('confirmation pending + cancel -> late approval never executes', async () => {
+    let ran = 0, approveCb = null;
+    const reg = createToolRegistry();
+    reg.register({ id: 'echo', name: 'Echo', description: 'e', riskLevel: 'MEDIUM',
+        inputSchema: { type: 'object',
+            properties: { text: { type: 'string' } }, required: ['text'] },
+        execute: (a, c, cb) => { ran++; cb(null, {}); } });
+    const agent = createAgentManager({
+        aiAsk: (q, ctx, cb) => setTimeout(() =>
+            cb(null, { toolCalls: [TC('w1', 'echo', '{"text":"x"}')] }), 0),
+        registry: reg,
+        policy: createPermissionPolicy({ matrix: { MEDIUM: 'confirm', LOW: 'allow', HIGH: 'allow' } }),
+        requestConfirmation: (req, cb) => { approveCb = cb; } // never resolves on its own
+    });
+    let done = 0;
+    agent.run('q', { messages: [{ role: 'user', content: 'q' }] }, () => done++);
+    await new Promise(r => setTimeout(r, 10));
+    agent.cancel();          // user cancels while dialog is open
+    approveCb(true);         // dialog answer arrives AFTER cancel
+    await new Promise(r => setTimeout(r, 10));
+    assert.equal(ran, 0, 'stale approval must not execute anything');
+    assert.equal(done, 0);
+});
+
+test('no confirmer wired + confirm verdict -> treated as denial', async () => {
+    let ran = 0;
+    const reg = createToolRegistry();
+    reg.register({ id: 'echo', name: 'Echo', description: 'e', riskLevel: 'HIGH',
+        inputSchema: { type: 'object', properties: {}, required: [] },
+        execute: (a, c, cb) => { ran++; cb(null, {}); } });
+    const ai = scriptedAI([{ toolCalls: [TC('h1', 'echo', '{}')] }, { answer: 'ok' }]);
+    const agent = createAgentManager({
+        aiAsk: ai.aiAsk,
+        registry: reg,
+        policy: createPermissionPolicy() // default: HIGH confirm, no confirmer passed
+    });
+    const { res } = await settled(agent, 'q');
+    assert.equal(res.answer, 'ok');
+    assert.equal(ran, 0);
+});
+
+test('system prompt injected once per run when tools are offered', async () => {
+    const { agent, ai } = makeAgent([{ answer: 'siap' }]);
+    await settled(agent, 'buka firefox');
+    const msgs = ai.calls[0].ctx.messages;
+    assert.equal(msgs[0].role, 'system');
+    assert.ok(/tool/i.test(msgs[0].content));
+    // exactly one system message even after more AI rounds
 });

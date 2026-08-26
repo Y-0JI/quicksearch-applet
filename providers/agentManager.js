@@ -20,6 +20,18 @@ try { Gio = require('gi.Gio'); } catch (e) { /* plain node: no cancellable */ }
 const { LIMITS } = require('./toolRegistry.js');
 const { imageWithinLimits } = require('./screenCapture.js');
 
+// Phase 12: keeps the model honest about tool use — intent narration is NOT
+// execution. Short by design (token cost); policy enforcement lives in code,
+// never in the prompt.
+const AGENT_SYSTEM_PROMPT =
+    'You are Quick Search, an agent with tools. ' +
+    'When the user asks you to open/launch/focus an app, open a URL or file, ' +
+    'search files or the web, calculate, look at the screen, or control the ' +
+    'mouse/keyboard, you MUST call the matching tool instead of replying with text alone. ' +
+    'Never claim an action succeeded unless its tool result reports success. ' +
+    'If a tool returns an error (for example permission-denied or app-not-found), ' +
+    'say so honestly.';
+
 function createAgentManager(opts) {
     opts = opts || {};
     if (typeof opts.aiAsk !== 'function') throw new Error('agent-manager-requires-aiAsk');
@@ -30,6 +42,12 @@ function createAgentManager(opts) {
     // Phase 10: vision capability is determined by the HOST (settings +
     // provider metadata); default OFF so screenshots never happen by accident
     const hasVision = opts.hasVision || (() => false);
+    // Phase 12: single permission entry point. Absent policy = legacy
+    // allow-all behavior (kept for pure-loop tests); the applet ALWAYS wires
+    // a real policy.
+    const policy = opts.policy || null;
+    const requestConfirmation = typeof opts.requestConfirmation === 'function'
+        ? opts.requestConfirmation : null;
     // injectable for node tests; real Gio.Cancellable inside Cinnamon
     const makeCancellable = opts.makeCancellable ||
         (() => ((Gio && Gio.Cancellable) ? new Gio.Cancellable() : null));
@@ -66,6 +84,12 @@ function createAgentManager(opts) {
 
         const base = Array.isArray(ctx && ctx.messages) ? ctx.messages.slice() : [];
         if (!base.length) base.push({ role: 'user', content: String(question == null ? '' : question) });
+        // Phase 12: one system message per run so the model USES the tools
+        // instead of narrating intent — it may only claim success after a
+        // successful tool result. Never a substitute for policy enforcement.
+        if (toolDefs() && !base.some(m => m && m.role === 'system')) {
+            base.unshift({ role: 'system', content: AGENT_SYSTEM_PROMPT });
+        }
         let steps = 0;
         // capability snapshot per run (Phase 10): tools read it via ctx
         const capabilities = { vision: !!hasVision() };
@@ -124,22 +148,58 @@ function createAgentManager(opts) {
                 return;
             }
 
-            try {
-                registry.execute(String(c.name || ''), parsed,
-                    { cancellable: cancellable, capabilities: capabilities },
-                    (err, result) => {
-                        if (myGen !== gen) return;
-                        if (!err && _handleImageResult(c, result)) { executeCalls(calls, i + 1); return; }
-                        pushToolMessage(c.id,
-                            err ? Object.assign({ error: err.error || 'tool-error' }, err) : result);
-                        executeCalls(calls, i + 1);
-                    });
-            } catch (e) {
-                // defense in depth: registry already guards, this can't leak
-                pushToolMessage(c.id, { error: 'tool-failed',
-                                        message: String((e && e.message) || e) });
+            // Phase 12: single policy entry point BEFORE any execution
+            const toolMeta = registry ? registry.get(String(c.name || '')) : null;
+            const verdict = policy
+                ? policy.decide(String(c.name || ''), toolMeta ? toolMeta.riskLevel : undefined)
+                : 'allow';
+
+            const proceed = () => {
+                try {
+                    registry.execute(String(c.name || ''), parsed,
+                        { cancellable: cancellable, capabilities: capabilities },
+                        (err, result) => {
+                            if (myGen !== gen) return;
+                            if (!err && _handleImageResult(c, result)) { executeCalls(calls, i + 1); return; }
+                            pushToolMessage(c.id,
+                                err ? Object.assign({ error: err.error || 'tool-error' }, err) : result);
+                            executeCalls(calls, i + 1);
+                        });
+                } catch (e) {
+                    // defense in depth: registry already guards, this can't leak
+                    pushToolMessage(c.id, { error: 'tool-failed',
+                                            message: String((e && e.message) || e) });
+                    executeCalls(calls, i + 1);
+                }
+            };
+
+            if (verdict === 'deny') {
+                pushToolMessage(c.id, { error: 'permission-denied' });
                 executeCalls(calls, i + 1);
+                return;
             }
+            if (verdict === 'confirm') {
+                if (!requestConfirmation) {
+                    pushToolMessage(c.id, { error: 'permission-denied' }); // no dialog wired: fail-closed
+                    executeCalls(calls, i + 1);
+                    return;
+                }
+                requestConfirmation({
+                    tool: String(c.name || ''),
+                    args: parsed,
+                    risk: toolMeta ? toolMeta.riskLevel : undefined
+                }, approved => {
+                    if (myGen !== gen) return; // cancelled/superseded while dialog open
+                    if (!approved) {
+                        pushToolMessage(c.id, { error: 'permission-denied' });
+                        executeCalls(calls, i + 1);
+                        return;
+                    }
+                    proceed();
+                });
+                return;
+            }
+            proceed();
         }
 
         function step() {
@@ -188,4 +248,4 @@ function createAgentManager(opts) {
     return { run: run, cancel: cancel, destroy: destroy };
 }
 
-module.exports = { createAgentManager };
+module.exports = { createAgentManager, AGENT_SYSTEM_PROMPT };
