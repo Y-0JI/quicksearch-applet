@@ -17,7 +17,7 @@ function makeDeps(over) {
     const d = {
         tryCalculate: q => q === '2+2' ? { expression: '2+2', value: '4' } : null,
         detectUrl: q => /^https?:\/\/\S+$|^[\w-]+(\.[a-z]{2,})\S*$/i.test(q) ? q : null,
-        openUri: url => { d._opened = d._opened || []; d._opened.push(url); },
+        openUri: url => { d._opened = d._opened || []; d._opened.push(url); return true; },
         openPath: p => p === '/tmp/exists.txt',
         fileProvider: { search: (q, c, cb) => cb([{ title: 'a.txt', path: '/home/a.txt' }]) },
         webProvider: { search: (q, c, cb) => {
@@ -102,6 +102,21 @@ test('open_url: http(s) opens via injected openUri; javascript:/file: REJECTED',
     });
     ou.execute({ url: 'javascript:alert(1)' }, {}, e2 => assert.equal(e2.error, 'invalid-url'));
     ou.execute({ url: 'file:///etc/passwd' }, {}, e3 => assert.equal(e3.error, 'invalid-url'));
+});
+
+test('open_url: missing openUri dep -> open-url-unavailable (normalized)', () => {
+    const deps = makeDeps({ openUri: undefined });
+    const [ou] = createDefaultTools(deps).filter(t => t.id === 'open_url');
+    ou.execute({ url: 'https://example.com' }, {}, e => assert.equal(e.error, 'open-url-unavailable'));
+});
+
+test('open_url: native launcher returns false -> open-url-failed (normalized)', () => {
+    const deps = makeDeps({ openUri: () => false });
+    const [ou] = createDefaultTools(deps).filter(t => t.id === 'open_url');
+    ou.execute({ url: 'https://example.com' }, {}, e => {
+        assert.equal(e.error, 'open-url-failed');
+        assert.equal(e.url, 'https://example.com');
+    });
 });
 
 test('open_file: existing path opens; missing -> file-not-found', () => {

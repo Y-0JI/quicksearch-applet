@@ -359,6 +359,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             detectUrl: urlProviderMod.detectUrl,
             tryCalculate: calculatorProviderMod.tryCalculate,
             openPath: fileProviderMod.openPath,
+            openUri: this._openUriNative.bind(this), // BUG 1: native URL launcher (was missing)
             screenCapture: screenCaptureMod.createScreenCapture(), // Phase 10
             // Phase 11: live screen bounds so click validation is exact;
             // fail-closed [0,0] until the stage reports real dimensions
@@ -634,6 +635,16 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) { /* never crash */ }
     }
 
+    // Native URL launcher shared by link clicks AND the open_url tool (BUG 1):
+    // the SAME Gio default-handler mechanism, never a shell/browser command.
+    // Synchronous so the tool can report a normalized failure when nothing
+    // handles the scheme. Returns true on success, false otherwise.
+    _openUriNative(url) {
+        try {
+            return !!Gio.AppInfo.launch_default_for_uri(String(url), null);
+        } catch (e) { return false; }
+    }
+
     // ---- autocomplete popup hover lifecycle ----
     // entry + popup form one combined hover region: the popup only hides when
     // the pointer leaves BOTH; moving between them never closes it (debounce
@@ -857,6 +868,15 @@ class QuickSearchApplet extends Applet.IconApplet {
             box.add_child(this._buildAITextFlow(e.text, e.isError));
         }
         this._syncRegionGeometry();
+        // BUG 3: keep the live agent status (the pending bubble, always the
+        // last row) in view so "Opening Brave… / Typing… / Opening link…"
+        // never hides below the panel fold while the agent runs.
+        if (this._aiChat.some(e => e.pending) && this._overlay && this._overlay._scroll) {
+            try {
+                const adj = this._overlay._scroll.get_vscroll_bar().get_adjustment();
+                if (adj) adj.set_value(adj.upper - adj.page_size);
+            } catch (e) {}
+        }
     }
 
     // AI answers render as one inline flow: text runs interleaved with

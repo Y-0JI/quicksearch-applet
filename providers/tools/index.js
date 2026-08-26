@@ -80,7 +80,9 @@ function createDefaultTools(deps) {
             execute(args, ctx, cb) {
                 const url = d.detectUrl ? d.detectUrl(String(args.url)) : null;
                 if (!url) { cb({ error: 'invalid-url' }); return; }
-                d.openUri(url);
+                if (typeof d.openUri !== 'function') { cb({ error: 'open-url-unavailable' }); return; }
+                const ok = d.openUri(url);
+                if (!ok) { cb({ error: 'open-url-failed', url: url }); return; }
                 cb(null, { opened: url });
             }
         },
