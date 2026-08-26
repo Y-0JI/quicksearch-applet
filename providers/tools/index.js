@@ -130,7 +130,7 @@ function createDefaultTools(deps) {
             // total pre-validation (bounds / whitelist / caps) BEFORE any
             // system effect; the backend injects events natively or via a
             // fixed-argv helper — never a shell, never model-chosen commands.
-            id: 'focus_app', name: 'Focus App', riskLevel: 'LOW',
+            id: 'focus_app', name: 'Focus App', riskLevel: 'MEDIUM',
             description: 'Bring an installed application window to the front (or start it if closed).',
             inputSchema: { type: 'object',
                 properties: { app: { type: 'string' } }, required: ['app'] },

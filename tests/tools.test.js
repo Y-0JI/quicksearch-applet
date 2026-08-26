@@ -200,7 +200,7 @@ test('phase 11: five control tools registered with expected risk levels', () => 
     for (const id of ['click', 'type_text', 'press_key', 'scroll']) {
         assert.equal(reg.get(id).riskLevel, 'MEDIUM', id);
     }
-    assert.equal(reg.get('focus_app').riskLevel, 'LOW');
+    assert.equal(reg.get('focus_app').riskLevel, 'MEDIUM'); // Phase 12: was LOW
 });
 
 test('phase 11 click: valid coords forwarded with button+cancellable', () => {
