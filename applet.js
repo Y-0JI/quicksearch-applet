@@ -530,7 +530,10 @@ class QuickSearchApplet extends Applet.IconApplet {
                 natH = Number(fb) || 0;
             }
             natH += 16; // panel padding + border allowance
-            const autoH = Math.min(natH, 200, roomCap);
+            // no fixed px cap here: the clamp went stale when row sizes
+            // changed and clipped rows outside the popup; roomCap alone
+            // keeps the popup fully on screen
+            const autoH = Math.min(natH, roomCap);
             ov._autoScroll.set_position(0, 0);
             ov._autoScroll.set_size(w, autoH);
             h = Math.max(h, autoH);
