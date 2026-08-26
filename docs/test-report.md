@@ -418,3 +418,36 @@ HIGH: tidak ada implementasi baru (policy siap: confirm)
 5. Cancel saat dialog konfirmasi → tak ada eksekusi
 6. SEARCH regression tetap hijau
 - BERHENTI setelah Phase 12; menuju Phase 13 (Agent UX/UI) setelah review.
+
+## Phase 13 — Agent UX / UI
+
+Status aktivitas agent yang natural tanpa mengubah arsitektur. SEARCH nol
+perubahan; follow-up input Phase 4.6 utuh.
+
+### Desain
+- AgentManager: hook opsional `onPhase('thinking')` / `onToolStart(id)` /
+  `onToolComplete(id)` / `onToolError(id, err)` — semua guarded (UI error
+  tak bisa mematikan loop), payload ID saja, TANPA args/result mentah.
+- `utils.js`: mapping terpusat `TOOL_LABELS` + `toolLabel(id)` (12 tool,
+  verbatim spec; unknown -> null).
+- applet: SATU bubble pending aktif per run (`_agentPend`) berubah teks:
+  Thinking... <-> label tool; konfirmasi -> "Preparing action..." sebelum
+  modal [Batal][Izinkan]; reset di semua titik cancel/supersede/new-
+  conversation/run-end (tidak ada "Working..." menggantung).
+- Error UX tetap lewat final answer AI (honest); run-level errors via
+  _aiErrorText existing (+permission-denied dari Phase 12).
+
+### Hasil test (node --test)
+- toollabels.test.js 2/2 (12 mapping + unknown->null).
+- agentmanager +4: urutan event thinking/start/complete/thinking;
+  deny -> error(permission-denied) TANPA start/complete; fail_tool ->
+  onToolError(boom-code) dan run selesai; UI callback throw tak mematikan
+  agent.
+- FULL suite: **180/180 PASS** · node --check ALL OK · loader-safety test
+  (simulasi zena atas seluruh require runtime) PASS · tanpa '../' require.
+
+### E2E model nyata (9router/coba9router)
+- "Buka Firefox": events [phase,start launch_app,complete,phase] +
+  toolLabel -> "Opening application..." + launched ✓ + jawaban final.
+- control OFF: 0 start events, typed [], jawaban jujur permission-denied.
+- BERHENTI setelah Phase 13; menuju Phase 14 setelah review.

@@ -229,6 +229,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         // about concrete providers (Phase 4)
         // Phase 4.5: in-memory conversation (session-only, NOT reset by open())
         this._aiChat = [];   // UI entries: {who:'you'|'ai', text, pending?, isError?}
+        this._agentPend = null; // Phase 13: live agent status target bubble
         this._conversation = conversationMod.createConversationManager({ maxTurns: 8 });
         this._aiManager = aiManagerMod.createAIManager({
             createProviderEngine: (cfg) => aiProviderMod.createAIProvider(cfg),
@@ -389,6 +390,12 @@ class QuickSearchApplet extends Applet.IconApplet {
             registry: this._toolRegistry,
             hasVision: () => !!this.ai_vision_supported, // Phase 10
             limits: toolRegistryMod.LIMITS, // Phase 12 hotfix: loader-safe inject
+            // Phase 13: live activity status on the CURRENT pending bubble.
+            // One activity at a time; raw ids/results never reach the UI.
+            onPhase: () => this._agentStatus("thinking"),
+            onToolStart: id => this._agentStatus("working", id),
+            onToolComplete: () => {}, // next phase/tool updates the status
+            onToolError: () => {},    // final AI answer explains honestly
             // Phase 12: single permission entry point for every tool call
             policy: permissionPolicyMod.createPermissionPolicy({
                 isAgentEnabled: () => !!this.ai_agent_enabled,
@@ -701,8 +708,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         // Phase 5: abort the previous in-flight request for real
         if (this._aiManager && this._aiManager.cancel) this._aiManager.cancel();
         if (this._agent && this._agent.cancel) this._agent.cancel(); // Phase 9
-this._closeConfirmDialog();
-                // a newer submit supersedes older pending ones (single-flight):
+        this._closeConfirmDialog();
+        this._agentPend = null; // Phase 13: no stale status target
+        // a newer submit supersedes older pending ones (single-flight):
         // mark stale Thinking bubbles instead of leaving them stuck
         for (const e of this._aiChat) {
             if (e.pending) { e.text = _("— dibatalkan —"); e.pending = false; }
@@ -714,6 +722,7 @@ this._closeConfirmDialog();
         this._aiChat.push({ who: "you", text: question });
         const pend = { who: "ai", text: _("Thinking..."), pending: true, token: token };
         this._aiChat.push(pend);
+        this._agentPend = pend; // Phase 13: live status target
         if (firstQuestion) this._hidePillAnimated(); // pill gives way to the panel
         this._renderAIChat();
 
@@ -736,8 +745,23 @@ this._closeConfirmDialog();
                 pend.text = (res && res.answer) ? res.answer : _("(empty response)");
                 pend.pending = false;
             }
+            this._agentPend = null; // Phase 13: run ended
             this._renderAIChat();
         });
+    }
+
+    // Phase 13: render agent activity on the current pending bubble only.
+    // kind: 'thinking' | 'working'; customText overrides both (confirmation).
+    _agentStatus(kind, toolId, customText) {
+        const pend = this._agentPend;
+        if (!pend || !pend.pending || pend.token !== this._aiSeq) return;
+        if (customText) pend.text = customText;
+        else if (kind === "working") {
+            pend.text = utilsMod.toolLabel(toolId) || _("Working...");
+        } else {
+            pend.text = _("Thinking...");
+        }
+        this._renderAIChat();
     }
 
     _submitAIFromFollowUp() {
@@ -875,6 +899,7 @@ this._closeConfirmDialog();
             const body = req.tool + (argsPreview ? "\n" + argsPreview : "");
 
             this._closeConfirmDialog(); // one dialog at a time
+            this._agentStatus("custom", null, _("Preparing action...")); // Phase 13
             const dlg = new ModalDialog.ModalDialog({ destroyOnClose: false });
             this._confirmDialog = dlg;
 
