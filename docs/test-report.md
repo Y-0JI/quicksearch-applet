@@ -361,3 +361,60 @@ system besar (Phase 12), tanpa high-risk action, SEARCH nol perubahan.
 - Tanpa xdotool pun tetap jalan bila clutter path tersedia; jika keduanya
   absen → `input-unavailable` rapi (tidak crash).
 - BERHENTI setelah Phase 11; menuju Phase 12 (Permission/Safety) setelah review.
+
+## Phase 12 — Permission / Safety Model
+
+Satu entry point keputusan untuk semua tool call. Tanpa framework besar,
+tanpa shell. SEARCH nol perubahan.
+
+### Policy (`providers/permissionPolicy.js` — pure, metadata-only)
+```
+decide(toolId, riskLevel) -> allow | confirm | deny
+  agent OFF                        -> deny semua (defense in depth)
+  computer tool + control setting off -> deny
+  LOW -> allow | MEDIUM -> allow | HIGH -> confirm
+  risk tak dikenal                 -> deny (fail-closed)
+```
+- computerTools = click, type_text, press_key, scroll, focus_app
+- AgentManager: gate SEBELUM registry.execute; deny → role:'tool'
+  `{error:'permission-denied'}` lalu loop LANJUT (AI merespons natural);
+  confirm → pause sampai dialog user; approval setelah cancel dibuang
+  gen-guard; tanpa confirmer → fail-closed denial.
+- System prompt 1x/run: model WAJIB memanggil tool utk aksi, dilarang
+  mengklaim sukses tanpa tool success (requirement #5); provider
+  pass-through role 'system'.
+- `focus_app` LOW→MEDIUM (instruksi Phase 12).
+
+### Settings (AI section)
+- "Enable AI Agent" default ON — OFF = ASK AI kembali one-shot pra-Phase-9
+- "Allow computer control" default OFF — ON membuka click/type/key/scroll/focus
+
+### Confirmation UX
+ModalDialog [Batal][Izinkan] menampilkan tool+args preview (160 char).
+Tidak ada eksekusi sebelum Izinkan; Batal/close/mode-switch/new-conversation
+→ agent cancel + dialog tertutup; deny → AI menerima permission-denied.
+LOW/MEDIUM allowed TIDAK menampilkan dialog (tanpa friksi).
+
+### Risk matrix final (verifikasi runtime)
+LOW: calculator, search_files, search_web, open_url, get_screen
+MEDIUM: launch_app, focus_app, open_file, click, type_text, press_key, scroll
+HIGH: tidak ada implementasi baru (policy siap: confirm)
+
+### Hasil test (node --test)
+- permissionpolicy.test.js 6/6 (matriks, gating, disabled, override,
+  fail-closed)
+- agentmanager +6: deny→permission-denied lanjut-final; confirm→allow
+  eksekusi; confirm→deny tak pernah run; pending-cancel→late approval
+  dibuang; no-confirmer→denial; system prompt 1x/run
+- provider +1: role system verbatim · tools: focus_app MEDIUM
+- FULL suite: **173/173 PASS** · node --check ALL OK · grep shell/sudo CLEAN
+- SEARCH/AI-layer non-AI files untouched; ConversationManager nol perubahan
+
+### Live verification checklist (di sisi user)
+1. "Buka Firefox" → launch_app → Firefox terbuka
+2. "Buka aplikasi zzz" → app-not-found dinaturalisasi AI
+3. Computer control OFF + "klik di layar" → permission-denied
+4. MEDIUM allowed → eksekusi tanpa dialog
+5. Cancel saat dialog konfirmasi → tak ada eksekusi
+6. SEARCH regression tetap hijau
+- BERHENTI setelah Phase 12; menuju Phase 13 (Agent UX/UI) setelah review.
