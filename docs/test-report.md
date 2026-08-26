@@ -220,3 +220,52 @@ execution (nol logic AI); 6 tool adalah adapter tipis atas provider existing.
 - Reload Cinnamon: log "tool registry ready: calculator, launch_app,
   open_file, open_url, search_files, search_web". SEARCH & ASK AI identik.
 - BERHENTI setelah Phase 8; menuju Phase 9 (Agent Loop) setelah review.
+
+## Phase 9 — Agent Loop / AgentManager
+
+ASK AI berubah dari one-shot menjadi tool-capable agent loop memakai
+ToolRegistry Phase 8 (registry existing, tidak dibuat ulang).
+
+### Arsitektur
+```
+ConversationManager.send -> askFn = AgentManager.run
+  loop (max LIMITS.maxAgentSteps = 8):
+    AIManager.ask(question, {messages, tools, cancellable})
+      <- final answer -> selesai
+      <- tool_calls -> ToolRegistry.execute per call (berurutan)
+      <- hasil = role:'tool' message -> AI lagi
+```
+- `providers/agentManager.js` BARU (~160 baris): gen-guard stale run,
+  satu cancellable per run dibagikan ke AI HTTP + tool subprocess
+  (cancel = seluruh run mati), assistant tool_calls turn direkam utuh,
+  sequential multi-tool execution, TANPA retry otomatis.
+- `providers/aiProvider.js` ADDITIVE (+54/-8): body `tools` bila ada;
+  pass-through message shape agent (role 'tool' + assistant tool_calls);
+  parse response tool_calls SEBELUM cek empty-content. Legacy shape utuh.
+- `providers/aiManager.js` +1 baris passthrough tools.
+- `applet.js` add-only: buat `_agent` berbagi registry live di
+  `_createEngine`; askFn lewat agent; cancel hooks di mode-switch/close/
+  new-conversation/submit; `_aiErrorText` + case max-steps.
+- ConversationManager / result.js / searchEngine.js: NOL perubahan.
+
+### Normalisasi error dalam loop (semua jadi role:'tool', tidak crash)
+- unknown-tool · invalid-arguments (unparseable-json / schema fail) ·
+  tool-failed (throw) · error payload tool · result di-cap 4000 chars.
+
+### Hasil test (node --test) — target roadmap Phase 9
+1. no-tool final answer ✅ 2. one-tool ✅ 3. multi-tool (multi-round +
+   3 calls satu response urut) ✅ 4. unknown tool ✅ 5. invalid arguments
+   ✅ 6. tool failure (payload + throw) ✅ 7. cancellation (cancellable
+   terpanggil, cb nol render) ✅ 8. max steps (tepat 8 panggilan AI) ✅
+   9. stale response (run baru supersede; late completion drop) ✅
+   tanpa retry ✅
+- agentmanager.test.js 14/14; aiprovider +5; aimanager +1.
+- FULL suite: 125/125 PASS (regression Phase 1-8 aman).
+- node --check semua .js OK; grep shell/exec CLEAN; API key tak tersentuh.
+
+### Runtime verification
+- Reload Cinnamon: ASK AI pertanyaan biasa -> jawaban final seperti biasa
+  (tanpa tools); pertanyaan tool ("cari file X", "hitung ...") -> loop
+  jalan sampai final; tombol/mode switch saat Thinking -> run mati tanpa
+  stale bubble.
+- BERHENTI setelah Phase 9; menuju Phase 10 (Screen Awareness) setelah review.
