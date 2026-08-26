@@ -128,6 +128,14 @@ function createAIProvider(opts) {
         let messages = null;
         if (Array.isArray(ctx.messages) && ctx.messages.length) {
             messages = ctx.messages.map(m => {
+                // Phase 10: multimodal content ARRAYS pass through verbatim
+                // (text + image_url parts); role coercion still applies.
+                if (m && Array.isArray(m.content)) {
+                    return {
+                        role: (m && m.role === 'assistant') ? 'assistant' : 'user',
+                        content: m.content
+                    };
+                }
                 if (m && m.role === 'tool') {
                     const t = { role: 'tool', content: String((m && m.content) != null ? m.content : '') };
                     if (m.tool_call_id) t.tool_call_id = String(m.tool_call_id);

@@ -287,3 +287,27 @@ test('phase 9: content + tool_calls together keeps both fields', () => {
         assert.equal(res.toolCalls[0].name, 'search_web');
     });
 });
+
+// ---- Phase 10: multimodal content pass-through ----
+
+test('phase 10: array (multimodal) content passes through untouched', () => {
+    let captured = null;
+    const t = makeMockTransport((o, cb) => { captured = o; cb(null, { status: 200, text: OK_BODY }); });
+    const p = makeProvider(t);
+    const IMG = 'data:image/png;base64,iVBORw0KGgo=';
+    const content = [
+        { type: 'text', text: '(screenshot layar terlampir)' },
+        { type: 'image_url', image_url: { url: IMG } }
+    ];
+    p.ask('q', { messages: [{ role: 'user', content: content }] }, () => {});
+    const msgs = JSON.parse(captured.body).messages;
+    assert.equal(msgs[0].role, 'user');
+    assert.deepEqual(msgs[0].content, content, 'multimodal shape must survive verbatim');
+});
+
+test('phase 10: string content still coerced exactly as before', () => {
+    let captured = null;
+    const t = makeMockTransport((o, cb) => { captured = o; cb(null, { status: 200, text: OK_BODY }); });
+    makeProvider(t).ask('q', { messages: [{ role: 'user', content: 12345 }] }, () => {});
+    assert.equal(JSON.parse(captured.body).messages[0].content, '12345');
+});
