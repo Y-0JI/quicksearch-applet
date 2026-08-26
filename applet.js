@@ -24,6 +24,7 @@ const toolRegistryMod = require('./providers/toolRegistry.js');
 const toolsMod = require('./providers/tools/index.js');
 const agentManagerMod = require('./providers/agentManager.js');
 const screenCaptureMod = require('./providers/screenCapture.js');
+const computerControlMod = require('./providers/computerControl.js');
 
 const UUID = "quicksearch@yoji";
 
@@ -352,7 +353,17 @@ class QuickSearchApplet extends Applet.IconApplet {
             detectUrl: urlProviderMod.detectUrl,
             tryCalculate: calculatorProviderMod.tryCalculate,
             openPath: fileProviderMod.openPath,
-            screenCapture: screenCaptureMod.createScreenCapture() // Phase 10
+            screenCapture: screenCaptureMod.createScreenCapture(), // Phase 10
+            // Phase 11: live screen bounds so click validation is exact;
+            // fail-closed [0,0] until the stage reports real dimensions
+            getScreenBounds: () => {
+                try {
+                    const w = global.screen_width || global.display.get_width();
+                    const h = global.screen_height || global.display.get_height();
+                    return [w, h];
+                } catch (e) { return [0, 0]; }
+            },
+            computerControl: computerControlMod.createComputerControl()
         })) this._toolRegistry.register(t);
         try { global.log("[quicksearch@yoji] tool registry ready: " +
                          this._toolRegistry.list().map(t => t.id).join(", ")); } catch (e) {}
