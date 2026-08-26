@@ -269,3 +269,53 @@ ConversationManager.send -> askFn = AgentManager.run
   jalan sampai final; tombol/mode switch saat Thinking -> run mati tanpa
   stale bubble.
 - BERHENTI setelah Phase 9; menuju Phase 10 (Screen Awareness) setelah review.
+
+## Phase 10 — Screen Awareness / Vision Tool (get_screen)
+
+Tool `get_screen` — screenshot on-demand via D-Bus native, transient,
+vision-gated. TANPA computer control (Phase 11). SEARCH tak tersentuh;
+ConversationManager nol perubahan.
+
+### Arsitektur & keputusan
+- `providers/screenCapture.js` BARU: session-bus `org.gnome.Shell.Screenshot`
+  (fallback `org.Cinnamon.Screenshot`) → PNG ke file tmp unik → baca →
+  base64 → **file dihapus segera** (transien, tak pernah persist).
+  Tanpa shell; tanpa timer/listener = tidak ada continuous capture.
+- Vision gate PROAKTIF SEBELUM capture: setting `ai-vision-supported`
+  (default FALSE, privacy-safe opt-in) → AgentManager.hasVision() →
+  ctx.capabilities.vision → tool return `vision-not-supported` tanpa
+  mengambil piksel.
+- Gambar→model: hasil tool berisi dataURL DIUBAH AgentManager menjadi
+  tool-msg kecil `{image_received:true}` + user turn multimodal
+  `[text, image_url]` — protokol aman utk provider strict, base64 tak
+  terduplikasi di history. Provider pass-through content array verbatim.
+- Registry: string `data:image/` lolos UTUH (truncate = gambar korup);
+  satu gerbang ukuran di agent: `image-too-large`
+  (> LIMITS.maxImageDataUrlChars = 6M chars ≈ 4.5MB PNG).
+
+### Hasil test (node --test) — target user Phase 10
+1. get_screen sukses ✅ (data URL + cancellable forwarded)
+2. no display/session/iface ✅ (`screenshot-unavailable`, kode fixed,
+   path tak pernah dilog)
+3. vision unsupported ✅ (`vision-not-supported`, NOL capture)
+4. image size ✅ (registry pass-through + agent `image-too-large`)
+5. cancellation ✅ (cancellable dibagikan DBus+read; 'cancelled')
+6. stale callback ✅ (gen-guard agent+registry, run baru supersede)
+7. agent final tanpa screen tool ✅ (no-tool regression tetap hijau)
+8. full node --test: **142/142 PASS** (17 test baru)
+9. node --check semua .js OK · grep shell/exec CLEAN ·
+   NOL pemanggilan log di jalur capture (path/base64 tak mungkin bocor)
+
+### Runtime verification (Cinnamon)
+- Reload applet → log "tool registry ready: ...get_screen..." (7 tool).
+- Vision OFF (default): "lihat layar saya" → agent menerima
+  vision-not-supported sebagai tool result → jawaban natural, tanpa flash.
+- Aktifkan "Model supports images" di Settings AI → tanya lagi → flash
+  screenshot sesaat → model menganalisis isi layar.
+- Cek ~/.xsession-errors: tidak ada base64/path tmp.
+
+### Catatan desain
+- Capability ditentukan host (settings), bukan tebakan metadata provider —
+  deterministic & privacy-safe; provider metadata bisa menyusul bila
+  dibutuhkan (Phase lanjutan).
+- BERHENTI setelah Phase 10; menuju Phase 11 (Computer Control) setelah review.
