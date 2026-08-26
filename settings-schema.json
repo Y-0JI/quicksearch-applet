@@ -116,6 +116,16 @@
         "description": "Model supports images (enables screen analysis)",
         "default": false
     },
+    "ai-agent-enabled": {
+        "type": "switch",
+        "description": "Enable AI Agent (tools: apps, files, web, screen, control)",
+        "default": true
+    },
+    "ai-computer-control": {
+        "type": "switch",
+        "description": "Allow computer control (click, type, keys, scroll, focus)",
+        "default": false
+    },
     "sec-advanced": {
         "type": "section",
         "description": "Advanced"

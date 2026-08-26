@@ -25,6 +25,7 @@ const toolsMod = require('./providers/tools/index.js');
 const agentManagerMod = require('./providers/agentManager.js');
 const screenCaptureMod = require('./providers/screenCapture.js');
 const computerControlMod = require('./providers/computerControl.js');
+const permissionPolicyMod = require('./providers/permissionPolicy.js');
 
 const UUID = "quicksearch@yoji";
 
@@ -254,6 +255,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.enable_web = true;
         this.enable_files = true;
         this.ai_vision_supported = false; // Phase 10: opt-in, privacy-safe default
+        this.ai_agent_enabled = true;     // Phase 12: agent loop on by default
+        this.ai_computer_control = false; // Phase 12: pointer/keyboard opt-in
         this.search_engine = "ddgo";
         this.file_locations = [];
         this.max_apps = 5;
@@ -281,6 +284,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.settings.bind("show-recent", "show_recent");
         this.settings.bind("recent-queries", "recent_queries_json");
         this.settings.bind("ai-vision-supported", "ai_vision_supported"); // Phase 10
+        this.settings.bind("ai-agent-enabled", "ai_agent_enabled");       // Phase 12
+        this.settings.bind("ai-computer-control", "ai_computer_control"); // Phase 12
 
         this._applySearchEngineSetting(); // normalize stored/legacy values once
 
@@ -374,7 +379,13 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._agent = agentManagerMod.createAgentManager({
             aiAsk: (q, ctx, cb) => this._aiManager.ask(q, ctx, cb),
             registry: this._toolRegistry,
-            hasVision: () => !!this.ai_vision_supported // Phase 10
+            hasVision: () => !!this.ai_vision_supported, // Phase 10
+            // Phase 12: single permission entry point for every tool call
+            policy: permissionPolicyMod.createPermissionPolicy({
+                isAgentEnabled: () => !!this.ai_agent_enabled,
+                isComputerControlAllowed: () => !!this.ai_computer_control
+            }),
+            requestConfirmation: (req, cb) => this._confirmTool(req, cb)
         });
 
         this._engine = searchEngineMod.createSearchEngine({
@@ -456,6 +467,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiSeq++; // invalidate any pending AI response across modes
         if (this._aiManager && this._aiManager.cancel) this._aiManager.cancel(); // Phase 5
         if (this._agent && this._agent.cancel) this._agent.cancel(); // Phase 9: kill whole run
+        this._closeConfirmDialog();
         this._mode = mode;
         // switching cancels active search and clears results; query text is kept
         if (this._engine) this._engine.cancel();
@@ -476,6 +488,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (this._engine) this._engine.cancel();
         if (this._aiManager && this._aiManager.cancel) this._aiManager.cancel(); // Phase 5
         if (this._agent && this._agent.cancel) this._agent.cancel(); // Phase 9: kill whole run
+        this._closeConfirmDialog();
         this._aiSeq++;
         this._cancelPopupHide();
         this._ptrInEntry = false;
@@ -656,6 +669,8 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     _newConversation() {
         this._aiSeq++; // drop pending AI callbacks
+        if (this._agent && this._agent.cancel) this._agent.cancel(); // Phase 12
+        this._closeConfirmDialog();
         this._conversation.clear();
         this._aiChat = [];
         this._showPill();
@@ -677,7 +692,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         // Phase 5: abort the previous in-flight request for real
         if (this._aiManager && this._aiManager.cancel) this._aiManager.cancel();
         if (this._agent && this._agent.cancel) this._agent.cancel(); // Phase 9
-        // a newer submit supersedes older pending ones (single-flight):
+this._closeConfirmDialog();
+                // a newer submit supersedes older pending ones (single-flight):
         // mark stale Thinking bubbles instead of leaving them stuck
         for (const e of this._aiChat) {
             if (e.pending) { e.text = _("— dibatalkan —"); e.pending = false; }
@@ -692,9 +708,11 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (firstQuestion) this._hidePillAnimated(); // pill gives way to the panel
         this._renderAIChat();
 
-        // Phase 9: ASK AI is now agent-capable; no-tool questions still end
-        // with a plain final answer (identical UX), tool questions loop.
-        const askFn = (q, ctx, cb) => this._agent.run(q, ctx, cb);
+        // Phase 9/12: ASK AI is agent-capable; "Enable AI Agent" OFF falls
+        // back to the plain one-shot AI path (pre-Phase-9 behavior).
+        const askFn = this.ai_agent_enabled
+            ? (q, ctx, cb) => this._agent.run(q, ctx, cb)
+            : (q, ctx, cb) => this._aiManager.ask(q, ctx, cb);
         this._conversation.send(question, askFn, (err, res) => {
             if (token !== this._aiSeq) return; // stale response, drop it
             if (err) {
@@ -833,6 +851,60 @@ class QuickSearchApplet extends Applet.IconApplet {
         return flow;
     }
 
+    // Phase 12: human-in-the-loop for confirm-class tool calls. The agent
+    // pauses; nothing executes until a button is pressed. Closing the overlay
+    // / switching mode cancels the run, and the pending dialog closes with it
+    // (stale approvals are dropped by the agent's generation guard).
+    _confirmTool(req, cb) {
+        try {
+            const argsPreview = (() => {
+                try { return JSON.stringify(req.args || {}).slice(0, 160); }
+                catch (e) { return ""; }
+            })();
+            const risk = String(req.risk || "").toUpperCase();
+            const title = _("Agent meminta izin") + " [" + risk + "]";
+            const body = req.tool + (argsPreview ? "\n" + argsPreview : "");
+
+            this._closeConfirmDialog(); // one dialog at a time
+            const dlg = new ModalDialog.ModalDialog({ destroyOnClose: false });
+            this._confirmDialog = dlg;
+
+            const label = new St.Label({ text: title + "\n\n" + body });
+            dlg.contentLayout.add(label);
+
+            const denyBtn = new St.Button({
+                label: _("Batal"),
+                style_class: "dialog-button",
+                can_focus: true
+            });
+            denyBtn.connect("clicked", () => {
+                this._closeConfirmDialog();
+                cb(false);
+            });
+            const allowBtn = new St.Button({
+                label: _("Izinkan"),
+                style_class: "dialog-button",
+                can_focus: true
+            });
+            allowBtn.connect("clicked", () => {
+                this._closeConfirmDialog();
+                cb(true);
+            });
+            dlg.setButtons([denyBtn, allowBtn]);
+            dlg.open(global.get_current_time());
+        } catch (e) {
+            // dialog unavailable -> fail-closed, never auto-approve
+            cb(false);
+        }
+    }
+
+    _closeConfirmDialog() {
+        if (this._confirmDialog) {
+            try { this._confirmDialog.destroy(); } catch (e) {}
+            this._confirmDialog = null;
+        }
+    }
+
     _aiErrorText(code, detail) {
         code = String(code || "");
         let base;
@@ -847,6 +919,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 case "network": base = _("AI tidak dapat dihubungi."); break;
                 case "bad-response": base = _("Response AI tidak valid."); break;
                 case "max-steps": base = _("Agent mencapai batas langkah."); break; // Phase 9
+                case "permission-denied": base = _("Aksi dibatalkan karena izin ditolak."); break; // Phase 12
                 default: base = _("Terjadi kesalahan pada AI.");
             }
         }
