@@ -470,6 +470,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiSeq++;
         this._mode = "search";
         this._overlay.setModeUi(this._mode);
+        this._clearFollowUpInput();
         if (this._overlay.followUpRow) this._overlay.followUpRow.visible = false;
         this._showPill();
         this.renderResults([]);
@@ -494,6 +495,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (this._overlay.followUpRow) {
             this._overlay.followUpRow.visible =
                 (mode === "ai" && this._aiChat.length > 0);
+            if (mode === "ai") this._clearFollowUpInput();
         }
         if (mode === "ai" && this._aiChat.length > 0) this._hidePillAnimated();
         else this._showPill();
@@ -507,6 +509,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._closeConfirmDialog();
         this._aiSeq++;
         this._cancelPopupHide();
+        this._clearFollowUpInput(); // reopen must never show stale follow-up text
         this._ptrInEntry = false;
         this._ptrInPopup = false;
         // sweep pending Thinking bubbles so reopen never shows a stuck state
@@ -692,10 +695,20 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._showPill();
         const fu = this._overlay ? this._overlay.followUpRow : null;
         if (fu) fu.visible = false;
+        this._clearFollowUpInput(); // no stale text leaks into the next session
         // full reset to the initial state: empty entry, no panel below
         this._overlay.setText("");
         this.renderResults([]);
         global.stage.set_key_focus(this._overlay._entry);
+    }
+
+    // Phase 13 follow-up hygiene: the follow-up entry must ONLY ever hold text
+    // the user typed themselves. It is the single authoritative reset point so
+    // main query / search result / tool output can never leak into it (the
+    // overlay persists across open/close, so without this it keeps old text).
+    _clearFollowUpInput() {
+        const fu = this._overlay && this._overlay.followUpEntry;
+        if (fu) { try { fu.set_text(""); } catch (e) {} }
     }
 
     // ---- Phase 4/4.5: ASK AI conversational inline panel ----
@@ -704,6 +717,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         const question = String(questionOverride != null ? questionOverride
             : (this._overlay ? this._overlay.getText() : "")).trim();
         if (!question) return;
+        // drop the submitted query from the main pill so it can never linger
+        // and leak into the focused input after the run (Phase 13 follow-up fix)
+        try { this._overlay.setText(""); } catch (e) {}
         const token = ++this._aiSeq;
         // Phase 5: abort the previous in-flight request for real
         if (this._aiManager && this._aiManager.cancel) this._aiManager.cancel();
@@ -747,6 +763,13 @@ class QuickSearchApplet extends Applet.IconApplet {
             }
             this._agentPend = null; // Phase 13: run ended
             this._renderAIChat();
+            // Phase 13 follow-up fix: the run is over, so the next input belongs
+            // in the (now-empty) follow-up entry — move focus there so the user's
+            // lingering main-query text can never resurface as their next prompt
+            const ov = this._overlay;
+            if (ov && ov.followUpEntry && ov.followUpRow && ov.followUpRow.visible) {
+                try { global.stage.set_key_focus(ov.followUpEntry); } catch (e) {}
+            }
         });
     }
 
