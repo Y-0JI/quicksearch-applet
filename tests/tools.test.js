@@ -32,10 +32,12 @@ function registryWith(deps) {
     return reg;
 }
 
-test('all seven tools registered with expected ids + risk levels', () => {
-    const reg = registryWith(makeDeps());
+test('all twelve tools registered with expected ids + risk levels', () => {
+    const reg = registryWith(makeControlDeps());
     const ids = reg.list().map(t => t.id).sort();
-    assert.deepEqual(ids, ['calculator', 'get_screen', 'launch_app', 'open_file', 'open_url', 'search_files', 'search_web']);
+    assert.deepEqual(ids, ['calculator', 'click', 'focus_app', 'get_screen', 'launch_app',
+                           'open_file', 'open_url', 'press_key', 'scroll', 'search_files',
+                           'search_web', 'type_text']);
     assert.equal(reg.get('launch_app').riskLevel, 'MEDIUM');
     assert.equal(reg.get('open_file').riskLevel, 'MEDIUM');
     assert.equal(reg.get('calculator').riskLevel, 'LOW');
@@ -166,4 +168,155 @@ test('get_screen: cancelled capture surfaces as cancelled error', () => {
 test('get_screen: missing screenCapture dep -> unavailable', () => {
     const [gs] = createDefaultTools(makeDeps()).filter(t => t.id === 'get_screen');
     gs.execute({}, { capabilities: { vision: true } }, e => assert.equal(e.error, 'unavailable'));
+});
+
+// ---- Phase 11: computer control tools ----
+
+function makeControlDeps(over) {
+    const calls = [];
+    const d = makeDeps(Object.assign({
+        getScreenBounds: () => [1920, 1080],
+        computerControl: {
+            click: (x, y, button, canc, cb) => { calls.push(['click', x, y, button, !!canc]); cb(null, true); },
+            typeText: (text, canc, cb) => { calls.push(['type', text]); cb(null, true); },
+            pressKey: (key, canc, cb) => { calls.push(['key', key, !!canc]); cb(null, true); },
+            scroll: (dir, amt, canc, cb) => { calls.push(['scroll', dir, amt]); cb(null, true); },
+            focusApp: (q, canc, cb) => { calls.push(['focus', q]);
+                cb(null, q === 'files' ? { focused: true, app: 'Files' } : { focused: false }); }
+        }
+    }, {}));
+    d._calls = calls;
+    return Object.assign(d, over || {});
+}
+
+const VISION_CTX = { capabilities: { vision: true }, cancellable: { c: 1 } };
+
+test('phase 11: five control tools registered with expected risk levels', () => {
+    const reg = registryWith(makeControlDeps());
+    const ids = reg.list().map(t => t.id).sort();
+    assert.deepEqual(ids, ['calculator', 'click', 'focus_app', 'get_screen', 'launch_app',
+                           'open_file', 'open_url', 'press_key', 'scroll', 'search_files',
+                           'search_web', 'type_text']);
+    for (const id of ['click', 'type_text', 'press_key', 'scroll']) {
+        assert.equal(reg.get(id).riskLevel, 'MEDIUM', id);
+    }
+    assert.equal(reg.get('focus_app').riskLevel, 'LOW');
+});
+
+test('phase 11 click: valid coords forwarded with button+cancellable', () => {
+    const deps = makeControlDeps();
+    const [t] = createDefaultTools(deps).filter(x => x.id === 'click');
+    t.execute({ x: 100, y: 200 }, VISION_CTX, (e, r) => {
+        assert.equal(e, null);
+        assert.deepEqual(r, { clicked: true, x: 100, y: 200, button: 'left' });
+    });
+    assert.deepEqual(deps._calls[0], ['click', 100, 200, 'left', true]);
+});
+
+test('phase 11 click: out-of-bounds / non-integer rejected BEFORE control', () => {
+    const deps = makeControlDeps({
+        getScreenBounds: () => [1920, 1080]
+    });
+    const [t] = createDefaultTools(deps).filter(x => x.id === 'click');
+    let n = 0;
+    for (const args of [{ x: 2000, y: 5 }, { x: -3, y: 5 }, { x: 1.5, y: 2 }, { x: 'a', y: 1 }]) {
+        t.execute(args, VISION_CTX, e => {
+            assert.equal(e.error, 'invalid-coordinates'); n++;
+        });
+    }
+    assert.equal(n, 4);
+    assert.equal(deps._calls.length, 0, 'control never touched for invalid input');
+});
+
+test('phase 11 click: bounds come from injected getScreenBounds', () => {
+    const deps = makeControlDeps({ getScreenBounds: () => [800, 600] });
+    const [t] = createDefaultTools(deps).filter(x => x.id === 'click');
+    t.execute({ x: 900, y: 10 }, VISION_CTX, e => assert.equal(e.error, 'invalid-coordinates'));
+    t.execute({ x: 799, y: 599 }, VISION_CTX, (e) => assert.equal(e, null));
+});
+
+test('phase 11 type_text: sanitized text sent; control chars stripped', () => {
+    const deps = makeControlDeps();
+    const [t] = createDefaultTools(deps).filter(x => x.id === 'type_text');
+    t.execute({ text: 'halo\tdunia' }, VISION_CTX, (e, r) => {
+        assert.equal(e, null);
+        assert.equal(r.typed, 'halodunia');
+    });
+    assert.deepEqual(deps._calls[0], ['type', 'halodunia']);
+});
+
+test('phase 11 type_text: empty after sanitize -> invalid-text', () => {
+    const deps = makeControlDeps();
+    const [t] = createDefaultTools(deps).filter(x => x.id === 'type_text');
+    t.execute({ text: '\n\t\x01' }, VISION_CTX, e => assert.equal(e.error, 'invalid-text'));
+    assert.equal(deps._calls.length, 0);
+});
+
+test('phase 11 press_key: whitelist enforced; invalid key never dispatched', () => {
+    const deps = makeControlDeps();
+    const [t] = createDefaultTools(deps).filter(x => x.id === 'press_key');
+    t.execute({ key: 'Return' }, VISION_CTX, (e, r) => {
+        assert.equal(e, null); assert.deepEqual(r, { pressed: 'Return' });
+    });
+    t.execute({ key: 'ctrl+s' }, VISION_CTX, e => assert.equal(e.error, 'invalid-key'));
+    t.execute({ key: 'Foo' }, VISION_CTX, e2 => assert.equal(e2.error, 'invalid-key'));
+    assert.equal(deps._calls.length, 1);
+    assert.deepEqual(deps._calls[0], ['key', 'Return', true]);
+});
+
+test('phase 11 scroll: direction+amount validated; defaults applied', () => {
+    const deps = makeControlDeps();
+    const [t] = createDefaultTools(deps).filter(x => x.id === 'scroll');
+    t.execute({ direction: 'down' }, VISION_CTX, (e, r) => {
+        assert.equal(e, null); assert.deepEqual(r, { scrolled: 'down', amount: 3 });
+    });
+    t.execute({ direction: 'up', amount: 12 }, VISION_CTX, e => assert.equal(e.error, 'invalid-amount'));
+    t.execute({ direction: 'left' }, VISION_CTX, e2 => assert.equal(e2.error, 'invalid-direction'));
+    assert.equal(deps._calls.length, 1);
+});
+
+test('phase 11 focus_app: found -> focused:true; unknown -> app-not-found', () => {
+    const deps = makeControlDeps();
+    const [t] = createDefaultTools(deps).filter(x => x.id === 'focus_app');
+    t.execute({ app: 'files' }, VISION_CTX, (e, r) => {
+        assert.equal(e, null); assert.deepEqual(r, { focused: true, app: 'Files' });
+    });
+    t.execute({ app: 'no-such-app-xyz' }, VISION_CTX, e2 => assert.equal(e2.error, 'app-not-found'));
+});
+
+test('phase 11 cancellation: cancellable reaches every control op', () => {
+    let gotCanc = 0;
+    const deps = makeDeps({ getScreenBounds: () => [1920, 1080], computerControl: {
+        click: (x, y, b, c, cb) => { if (c) gotCanc++; cb(null, true); },
+        typeText: (t2, c, cb) => { if (c) gotCanc++; cb(null, true); },
+        pressKey: (k, c, cb) => { if (c) gotCanc++; cb(null, true); },
+        scroll: (d2, a, c, cb) => { if (c) gotCanc++; cb(null, true); },
+        focusApp: (q, c, cb) => { if (c) gotCanc++; cb(null, { focused: true }); }
+    } });
+    for (const id of ['click', 'type_text', 'press_key', 'scroll']) {
+        const [t] = createDefaultTools(deps).filter(x => x.id === id);
+        const args = id === 'click' ? { x: 1, y: 1 } : id === 'type_text' ? { text: 'a' }
+            : id === 'press_key' ? { key: 'Tab' } : { direction: 'down' };
+        t.execute(args, { capabilities: { vision: true }, cancellable: { z: 1 } }, () => {});
+    }
+    const [f] = createDefaultTools(deps).filter(x => x.id === 'focus_app');
+    f.execute({ app: 'x' }, { cancellable: { z: 1 } }, () => {});
+    assert.equal(gotCanc, 5);
+});
+
+test('phase 11 control backend unavailable -> normalized error from ops', () => {
+    const deps = makeDeps({ getScreenBounds: () => [1920, 1080], computerControl: {
+        click: (x, y, b, c, cb) => cb({ error: 'input-unavailable' }),
+        typeText: (t2, c, cb) => cb({ error: 'input-unavailable' }),
+        pressKey: (k, c, cb) => cb({ error: 'input-unavailable' }),
+        scroll: (d2, a, c, cb) => cb({ error: 'input-unavailable' }),
+        focusApp: (q, c, cb) => cb({ error: 'input-unavailable' })
+    } });
+    const tools = {};
+    for (const t of createDefaultTools(deps)) tools[t.id] = t;
+    tools.click.execute({ x: 1, y: 1 }, VISION_CTX, e1 => assert.equal(e1.error, 'input-unavailable'));
+    tools.type_text.execute({ text: 'a' }, VISION_CTX, e2 => assert.equal(e2.error, 'input-unavailable'));
+    tools.press_key.execute({ key: 'Tab' }, VISION_CTX, e3 => assert.equal(e3.error, 'input-unavailable'));
+    tools.scroll.execute({ direction: 'down' }, VISION_CTX, e4 => assert.equal(e4.error, 'input-unavailable'));
+    tools.focus_app.execute({ app: 'x' }, {}, e5 => assert.equal(e5.error, 'input-unavailable'));
 });

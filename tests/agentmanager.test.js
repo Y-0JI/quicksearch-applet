@@ -312,3 +312,43 @@ test('agent without screen tool still answers normally (vision off by default)',
     assert.equal(err, null);
     assert.equal(res.answer, 'plain');
 });
+
+// ---- Phase 11: computer-use loop (screen -> action -> screen -> final) ----
+
+test('computer-use loop: get_screen, click, verify screen, then final', async () => {
+    const IMG = 'data:image/png;base64,iVBORw0KGgo=';
+    const reg = createToolRegistry();
+    let clicks = [];
+    reg.register({ id: 'get_screen', name: 'Get Screen', description: 'shot', riskLevel: 'LOW',
+        inputSchema: { type: 'object', properties: {}, required: [] },
+        execute: (a, ctx, cb) => cb(null, { image: IMG }) });
+    reg.register({ id: 'click', name: 'Click', description: 'click', riskLevel: 'MEDIUM',
+        inputSchema: { type: 'object',
+            properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] },
+        execute: (a, ctx, cb) => { clicks.push([a.x, a.y]); cb(null, { clicked: true }); } });
+
+    const ai = scriptedAI([
+        // 1st AI call: look at the screen first
+        { toolCalls: [TC('g1', 'get_screen', '{}')] },
+        // 2nd call (sees image in context): act on it
+        { toolCalls: [TC('c1', 'click', '{"x":120,"y":240}')] },
+        // 3rd call: verify the result with another screenshot
+        { toolCalls: [TC('g2', 'get_screen', '{}')] },
+        // 4th: satisfied -> final answer
+        { answer: 'tombol sudah diklik' }
+    ]);
+    const agent = createAgentManager({ aiAsk: ai.aiAsk, registry: reg,
+        hasVision: () => true });
+
+    const { err, res } = await settled(agent, 'klik tombol login');
+    assert.equal(err, null);
+    assert.equal(res.answer, 'tombol sudah diklik');
+    assert.equal(ai.calls.length, 4);
+    assert.deepEqual(clicks, [[120, 240]]);
+    // the FINAL evaluation context carries BOTH screenshots as image turns;
+    // the intermediate click turn added none
+    const lastMsgs = ai.calls[ai.calls.length - 1].ctx.messages;
+    const imgs = lastMsgs.filter(m => Array.isArray(m.content) &&
+        m.content.some(p => p.type === 'image_url'));
+    assert.equal(imgs.length, 2);
+});

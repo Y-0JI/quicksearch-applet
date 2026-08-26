@@ -4,6 +4,9 @@
 // so node --test runs with plain JS fakes. No screen/computer-control here
 // (Phase 10/11). No shell anywhere (hard security rule).
 const { LIMITS } = require('../toolRegistry.js');
+const {
+    validatePoint, validateKey, sanitizeText, validateScroll
+} = require('../computerControl.js');
 
 function createDefaultTools(deps) {
     const d = deps || {};
@@ -121,6 +124,85 @@ function createDefaultTools(deps) {
                 d.screenCapture.capture(ctx.cancellable || null, (err, dataUrl) => {
                     cb(err || null, err ? null : { image: dataUrl });
                 });
+            }
+        },
+        {   // Phase 11 computer control. Every action is an explicit tool with
+            // total pre-validation (bounds / whitelist / caps) BEFORE any
+            // system effect; the backend injects events natively or via a
+            // fixed-argv helper — never a shell, never model-chosen commands.
+            id: 'focus_app', name: 'Focus App', riskLevel: 'LOW',
+            description: 'Bring an installed application window to the front (or start it if closed).',
+            inputSchema: { type: 'object',
+                properties: { app: { type: 'string' } }, required: ['app'] },
+            execute(args, ctx, cb) {
+                if (!d.computerControl) { cb({ error: 'unavailable' }); return; }
+                d.computerControl.focusApp(String(args.app), ctx.cancellable || null,
+                    (err, res) => {
+                        if (err) { cb(err); return; }
+                        if (!res || !res.focused) { cb({ error: 'app-not-found', app: String(args.app) }); return; }
+                        cb(null, { focused: true, app: res.app });
+                    });
+            }
+        },
+        {
+            id: 'click', name: 'Click', riskLevel: 'MEDIUM',
+            description: 'Click at screen coordinates. Coordinates must be integers inside the current screen bounds.',
+            inputSchema: { type: 'object',
+                properties: { x: { type: 'number' }, y: { type: 'number' },
+                              button: { type: 'string' } },
+                required: ['x', 'y'] },
+            execute(args, ctx, cb) {
+                const button = args.button === undefined ? 'left' : String(args.button);
+                if (['left', 'right', 'middle'].indexOf(button) === -1) {
+                    cb({ error: 'invalid-button' }); return;
+                }
+                const err = validatePoint(args.x, args.y,
+                    d.getScreenBounds ? d.getScreenBounds() : [0, 0]);
+                if (err) { cb(err); return; }
+                if (!d.computerControl) { cb({ error: 'unavailable' }); return; }
+                d.computerControl.click(args.x, args.y, button, ctx.cancellable || null,
+                    e => cb(e || null, e ? null : { clicked: true, x: args.x, y: args.y, button: button }));
+            }
+        },
+        {
+            id: 'type_text', name: 'Type Text', riskLevel: 'MEDIUM',
+            description: 'Type literal text into the focused window (max 500 chars).',
+            inputSchema: { type: 'object',
+                properties: { text: { type: 'string' } }, required: ['text'] },
+            execute(args, ctx, cb) {
+                const text = sanitizeText(String(args.text == null ? '' : args.text));
+                if (!text) { cb({ error: 'invalid-text' }); return; }
+                if (!d.computerControl) { cb({ error: 'unavailable' }); return; }
+                d.computerControl.typeText(text, ctx.cancellable || null,
+                    e => cb(e || null, e ? null : { typed: text }));
+            }
+        },
+        {
+            id: 'press_key', name: 'Press Key', riskLevel: 'MEDIUM',
+            description: 'Press one whitelisted key (Return, Escape, Tab, BackSpace, Delete, arrows, Home/End/PageUp/PageDown, Space, F1-F12). No modifier combos.',
+            inputSchema: { type: 'object',
+                properties: { key: { type: 'string' } }, required: ['key'] },
+            execute(args, ctx, cb) {
+                const key = String(args.key == null ? '' : args.key);
+                const kErr = validateKey(key);
+                if (kErr) { cb({ error: kErr }); return; }
+                if (!d.computerControl) { cb({ error: 'unavailable' }); return; }
+                d.computerControl.pressKey(key, ctx.cancellable || null,
+                    e => cb(e || null, e ? null : { pressed: key }));
+            }
+        },
+        {
+            id: 'scroll', name: 'Scroll', riskLevel: 'MEDIUM',
+            description: 'Scroll the view under the pointer: direction up|down, amount 1..10 wheel steps.',
+            inputSchema: { type: 'object',
+                properties: { direction: { type: 'string' }, amount: { type: 'number' } },
+                required: ['direction'] },
+            execute(args, ctx, cb) {
+                const v = validateScroll(args);
+                if (v.error) { cb(v); return; }
+                if (!d.computerControl) { cb({ error: 'unavailable' }); return; }
+                d.computerControl.scroll(v.direction, v.amount, ctx.cancellable || null,
+                    e => cb(e || null, e ? null : { scrolled: v.direction, amount: v.amount }));
             }
         }
     ];
