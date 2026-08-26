@@ -141,6 +141,10 @@ function createAIProvider(opts) {
                     if (m.tool_call_id) t.tool_call_id = String(m.tool_call_id);
                     return t;
                 }
+                // Phase 12: agent system message passes through verbatim
+                if (m && m.role === 'system') {
+                    return { role: 'system', content: String((m && m.content) != null ? m.content : '') };
+                }
                 if (m && m.role === 'assistant' && Array.isArray(m.tool_calls)) {
                     return { role: 'assistant', content: (m.content != null) ? String(m.content) : null,
                              tool_calls: m.tool_calls };

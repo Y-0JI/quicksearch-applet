@@ -311,3 +311,17 @@ test('phase 10: string content still coerced exactly as before', () => {
     makeProvider(t).ask('q', { messages: [{ role: 'user', content: 12345 }] }, () => {});
     assert.equal(JSON.parse(captured.body).messages[0].content, '12345');
 });
+
+test('phase 12: system role passes through verbatim', () => {
+    let captured = null;
+    const t = makeMockTransport((o, cb) => { captured = o; cb(null, { status: 200, text: OK_BODY }); });
+    const p = makeProvider(t);
+    p.ask('q', { messages: [
+        { role: 'system', content: 'You are Quick Search, an agent with tools.' },
+        { role: 'user', content: 'buka firefox' }
+    ] }, () => {});
+    const msgs = JSON.parse(captured.body).messages;
+    assert.equal(msgs[0].role, 'system');
+    assert.equal(msgs[0].content, 'You are Quick Search, an agent with tools.');
+    assert.equal(msgs[1].role, 'user');
+});
