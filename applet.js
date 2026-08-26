@@ -22,6 +22,7 @@ const aiManagerMod = require('./providers/aiManager.js');
 const conversationMod = require('./providers/conversationManager.js');
 const toolRegistryMod = require('./providers/toolRegistry.js');
 const toolsMod = require('./providers/tools/index.js');
+const agentManagerMod = require('./providers/agentManager.js');
 
 const UUID = "quicksearch@yoji";
 
@@ -307,6 +308,10 @@ class QuickSearchApplet extends Applet.IconApplet {
             try { this._toolRegistry.destroy(); } catch (e) {}
             this._toolRegistry = null;
         }
+        if (this._agent) {
+            try { this._agent.destroy(); } catch (e) {}
+            this._agent = null;
+        }
 
         this._applySearchEngineSetting(); // defense in depth
         const engineChoice = FALLBACK_URLS[this.search_engine] ? this.search_engine : "ddgo";
@@ -347,6 +352,14 @@ class QuickSearchApplet extends Applet.IconApplet {
         })) this._toolRegistry.register(t);
         try { global.log("[quicksearch@yoji] tool registry ready: " +
                          this._toolRegistry.list().map(t => t.id).join(", ")); } catch (e) {}
+
+        // Phase 9: agent loop. ASK AI now flows ConversationManager ->
+        // AgentManager -> AIManager; the agent reuses the LIVE registry so
+        // tools always match the active engine. UI stays a thin renderer.
+        this._agent = agentManagerMod.createAgentManager({
+            aiAsk: (q, ctx, cb) => this._aiManager.ask(q, ctx, cb),
+            registry: this._toolRegistry
+        });
 
         this._engine = searchEngineMod.createSearchEngine({
             makeResult: resultMod.makeResult,
@@ -426,6 +439,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (this._mode === mode) return;
         this._aiSeq++; // invalidate any pending AI response across modes
         if (this._aiManager && this._aiManager.cancel) this._aiManager.cancel(); // Phase 5
+        if (this._agent && this._agent.cancel) this._agent.cancel(); // Phase 9: kill whole run
         this._mode = mode;
         // switching cancels active search and clears results; query text is kept
         if (this._engine) this._engine.cancel();
@@ -445,6 +459,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     close() {
         if (this._engine) this._engine.cancel();
         if (this._aiManager && this._aiManager.cancel) this._aiManager.cancel(); // Phase 5
+        if (this._agent && this._agent.cancel) this._agent.cancel(); // Phase 9: kill whole run
         this._aiSeq++;
         this._cancelPopupHide();
         this._ptrInEntry = false;
@@ -645,6 +660,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         const token = ++this._aiSeq;
         // Phase 5: abort the previous in-flight request for real
         if (this._aiManager && this._aiManager.cancel) this._aiManager.cancel();
+        if (this._agent && this._agent.cancel) this._agent.cancel(); // Phase 9
         // a newer submit supersedes older pending ones (single-flight):
         // mark stale Thinking bubbles instead of leaving them stuck
         for (const e of this._aiChat) {
@@ -660,7 +676,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (firstQuestion) this._hidePillAnimated(); // pill gives way to the panel
         this._renderAIChat();
 
-        const askFn = (q, ctx, cb) => this._aiManager.ask(q, ctx, cb);
+        // Phase 9: ASK AI is now agent-capable; no-tool questions still end
+        // with a plain final answer (identical UX), tool questions loop.
+        const askFn = (q, ctx, cb) => this._agent.run(q, ctx, cb);
         this._conversation.send(question, askFn, (err, res) => {
             if (token !== this._aiSeq) return; // stale response, drop it
             if (err) {
@@ -812,6 +830,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 case "timeout":
                 case "network": base = _("AI tidak dapat dihubungi."); break;
                 case "bad-response": base = _("Response AI tidak valid."); break;
+                case "max-steps": base = _("Agent mencapai batas langkah."); break; // Phase 9
                 default: base = _("Terjadi kesalahan pada AI.");
             }
         }
