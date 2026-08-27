@@ -11,7 +11,7 @@
 //   false => Fast Path (general knowledge / explanation; no tools)
 
 const WEB = /\b(cari|carilah|search|berita|news|temukan|find|google|duckduckgo|wikipedia|bing|yahoo)\b/i;
-const APP = /\b(buka|launch|jalankan|run|bukakan|tutup|close|focus|fokus|kunjungi|bukakan)\b/i;
+const APP = /\b(buka|launch|jalankan|run|bukakan|tutup|close|focus|fokus|kunjungi)\b/i;
 const COMPUTER = /\b(ketik|ketikkan|type|klik|click|scroll|tekan|press|drag|tahan|hold|arahkan|move|geser)\b/i;
 const FILE = /\b(file|cari file|buka file|dokumen|folder|direktori)\b/i;
 const SCREEN = /\b(layar|screen|screenshot|tangkapan|capture|tampilan)\b/i;

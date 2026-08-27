@@ -1167,8 +1167,9 @@ class QuickSearchApplet extends Applet.IconApplet {
             const auto = this._overlay._autoScroll;
             if (auto) {
                 auto.visible = false;
-                this._selIdx = Math.min(this._autoRows.length,
-                                        Math.max(0, this._mainRows.length - 1));
+                // autocomplete gone: selection moves to the first main result
+                // row, which sits at index _autoRows.length in _rows
+                this._selIdx = this._autoRows.length;
                 if (this._rows[this._selIdx]) this.setSelection(this._selIdx);
             }
             return;
@@ -1307,6 +1308,14 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (this._engine) {
             this._engine.destroy();
             this._engine = null;
+        }
+        if (this._toolRegistry) {
+            this._toolRegistry.destroy();
+            this._toolRegistry = null;
+        }
+        if (this._agent) {
+            this._agent.destroy();
+            this._agent = null;
         }
         this.close();
         if (this._overlay) {

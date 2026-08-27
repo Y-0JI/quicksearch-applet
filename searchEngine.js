@@ -54,9 +54,11 @@ function createSearchEngine(helpers) {
 
     function destroy() {
         cancel();
-        try { appProvider.destroy(); } catch (e) {}
-        try { fileProvider.destroy(); } catch (e) {}
-        try { webProvider.destroy(); } catch (e) {}
+        // disabled providers are passed as null — skip them instead of
+        // calling .destroy() on null (which would throw and mask real errors)
+        if (appProvider) appProvider.destroy();
+        if (fileProvider) fileProvider.destroy();
+        if (webProvider) webProvider.destroy();
     }
 
 
