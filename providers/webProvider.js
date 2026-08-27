@@ -29,7 +29,8 @@ const WEB_ERRORS = {
     RATE_LIMITED:   'web-search-rate-limited',
     NETWORK_ERROR:  'web-search-network-error',
     BAD_RESPONSE:   'web-search-bad-response',
-    NO_RESULTS:     'web-search-no-results'
+    NO_RESULTS:     'web-search-no-results',
+    SEARXNG_UNAVAILABLE: 'searxng-unavailable'
 };
 
 // ── Robust HTML parser (BUG B fix) ────────────────────────────────────────
@@ -131,6 +132,31 @@ function parseDdgHtml(html, makeResult, scoreResult) {
     return out;
 }
 
+// ── SearXNG JSON result parser ────────────────────────────────────────────
+// SearXNG returns: { results: [{ title, url, content, engine, ... }], ... }
+// Normalized to the same result shape as parseDdgHtml.
+
+function parseSearxngJson(data, makeResult, scoreResult) {
+    const out = [];
+    const items = (data && data.results) || [];
+    const max = 5;
+    for (let i = 0; i < Math.min(items.length, max); i++) {
+        const item = items[i];
+        const url = item.url || '';
+        if (!url || !/^https?:\/\//.test(url)) continue;
+        out.push(makeResult({
+            type: 'web',
+            title: String(item.title || '').slice(0, 120),
+            description: String(item.content || ''),
+            icon: 'web-browser',
+            score: scoreResult('web-instant'),
+            url: url,
+            action: () => _openBrowser(url)
+        }));
+    }
+    return out;
+}
+
 // ── Google (Serper) JSON result parser ─────────────────────────────────────
 // Serper returns: { organic: [{ title, link, snippet, position }], ... }
 // Normalized to the same result shape as parseDdgHtml.
@@ -166,9 +192,10 @@ function createWebProvider(helpers) {
     const searchEngineLabel = helpers.searchEngineLabel || 'DuckDuckGo';
     const useInstantAnswers = helpers.useInstantAnswers !== false;
 
-    // Engine selection: 'ddgo' (default), 'google' (Serper API)
+    // Engine selection: 'ddgo' (default), 'google' (Serper API), 'searxng' (local)
     const engine = helpers.engine || 'ddgo';
     const googleApiKey = helpers.googleApiKey || '';
+    const searxngUrl = helpers.searxngUrl || 'http://127.0.0.1:8080';
 
     // Injected transports (optional; for tests and benchmarks)
     const httpGet = typeof helpers.httpGet === 'function' ? helpers.httpGet : null;
@@ -249,6 +276,40 @@ function createWebProvider(helpers) {
         if (!q) return;
 
         const isAgent = !!(opts && opts.agent);
+
+        // ── SearXNG Local backend ─────────────────────────────────────
+        if (engine === 'searxng') {
+            try {
+                const base = String(searxngUrl).replace(/\/+$/, '');
+                const apiUrl = base + '/search?q=' + encodeURIComponent(q) + '&format=json';
+                stage('http-start');
+                doGet(apiUrl, cancellable, (err, dataStr) => {
+                    if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
+                    stage('http-done');
+                    if (err) {
+                        // SearXNG unavailable — re-deliver fallback with human-readable message
+                        const errFallback = makeResult({
+                            type: 'web',
+                            title: 'SearXNG lokal tidak tersedia',
+                            description: 'Pastikan SearXNG sedang berjalan di ' + base,
+                            icon: 'dialog-warning',
+                            score: scoreResult('web-fallback'),
+                            url: searchUrl,
+                            action: () => _openBrowser(searchUrl)
+                        });
+                        deliver([errFallback]);
+                        return;
+                    }
+                    try {
+                        const data = JSON.parse(dataStr);
+                        const extra = parseSearxngJson(data, makeResult, scoreResult);
+                        stage('parse-done');
+                        if (extra.length) { deliver([fallback].concat(extra)); stage('deliver'); }
+                    } catch (e) { /* parse failure: fallback already delivered */ }
+                });
+            } catch (e) { /* SearXNG backend error: fallback stands alone */ }
+            return;
+        }
 
         // ── Google (Serper) backend ────────────────────────────────────
         if (engine === 'google' && googleApiKey) {
@@ -398,4 +459,4 @@ function _openBrowser(url) {
     } catch (e) { /* never crash (spec 24-K) */ }
 }
 
-module.exports = { createWebProvider, REQUEST_TIMEOUT_MS, parseDdgHtml, parseGoogleJson, WEB_ERRORS };
+module.exports = { createWebProvider, REQUEST_TIMEOUT_MS, parseDdgHtml, parseGoogleJson, parseSearxngJson, WEB_ERRORS };

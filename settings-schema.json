@@ -38,8 +38,14 @@
         "options": {
             "DuckDuckGo": "ddgo",
             "Google (Serper API)": "google",
-            "Bing": "bing"
+            "Bing": "bing",
+            "SearXNG (Local)": "searxng"
         }
+    },
+    "searxng-url": {
+        "type": "entry",
+        "description": "Local SearXNG instance URL (e.g. http://127.0.0.1:8080)",
+        "default": "http://127.0.0.1:8080"
     },
     "web-search-api-key": {
         "type": "entry",

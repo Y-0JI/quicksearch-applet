@@ -261,6 +261,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.ai_computer_control = false; // Phase 12: pointer/keyboard opt-in
         this.search_engine = "ddgo";
         this.web_search_api_key = "";
+        this.searxng_url = "http://127.0.0.1:8080";
         this.file_locations = [];
         this.max_apps = 5;
         this.max_files = 15;
@@ -290,6 +291,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.settings.bind("ai-agent-enabled", "ai_agent_enabled");       // Phase 12
         this.settings.bind("ai-computer-control", "ai_computer_control"); // Phase 12
         this.settings.bind("web-search-api-key", "web_search_api_key"); // Phase 13: Google backend
+        this.settings.bind("searxng-url", "searxng_url"); // Phase 13: SearXNG Local backend
 
         this._applySearchEngineSetting(); // normalize stored/legacy values once
 
@@ -347,7 +349,8 @@ class QuickSearchApplet extends Applet.IconApplet {
                 fallbackUrlFor: FALLBACK_URLS[engineChoice],
                 useInstantAnswers: engineChoice === "ddgo",
                 engine: engineChoice,
-                googleApiKey: this.web_search_api_key || ''
+                googleApiKey: this.web_search_api_key || '',
+                searxngUrl: this.searxng_url || 'http://127.0.0.1:8080'
             })) : null
         };
 
