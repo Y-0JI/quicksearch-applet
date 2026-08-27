@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { createAgentManager } = require('../providers/agentManager.js');
 const { createToolRegistry, LIMITS } = require('../providers/toolRegistry.js');
+const { createConversationManager } = require('../providers/conversationManager.js');
 
 // ---- fakes ----
 
@@ -557,4 +558,61 @@ test('events: throwing UI callback cannot break the agent loop', async () => {
     const { err, res } = await settled(agent, 'q');
     assert.equal(err, null);
     assert.equal(res.answer, 'tetap jalan');
+});
+
+// ---- Phase 14: Agent Context / Session State regression tests ----
+
+test('phase 14: new agent run gets a fresh base — no tool/assistant state from prior run', async () => {
+    const { agent, ai } = makeAgent([
+        { toolCalls: [TC('t1', 'echo', '{"text":"a"}')] },
+        { toolCalls: [TC('t2', 'echo', '{"text":"b"}')] },
+        { answer: 'done' }
+    ]);
+    await settled(agent, 'q1');
+    const lastPrior = ai.calls[ai.calls.length - 1].ctx.messages;
+    assert.ok(lastPrior.some(m => m.role === 'tool'), 'prior multi-tool run accumulated tool messages');
+
+    const n = ai.calls.length;
+    await settled(agent, 'q2', { messages: [{ role: 'user', content: 'q2' }] });
+    const secondRunFirst = ai.calls[n];
+    assert.ok(secondRunFirst, 'second run issued an AI call');
+    const roles = secondRunFirst.ctx.messages.map(m => m.role);
+    assert.deepEqual(roles, ['system', 'user'],
+        'second run base has no leftover tool/assistant turns from the prior run');
+});
+
+test('phase 14: multi-step agent context stays within the step-derived message bound', async () => {
+    // 7 tool steps + final answer exercises MAX-1 steps; context must stay bounded
+    const steps = [];
+    for (let i = 0; i < 7; i++) steps.push({ toolCalls: [TC('s' + i, 'echo', '{"text":"x"}')] });
+    steps.push({ answer: 'final' });
+    const { agent, ai } = makeAgent(steps);
+    await settled(agent, 'q');
+    const lastMsgs = ai.calls[ai.calls.length - 1].ctx.messages;
+    const expectedMax = 2 /* system + user */ + 2 * LIMITS.maxAgentSteps;
+    assert.ok(lastMsgs.length > 4, 'multi-step context actually grew across steps');
+    assert.ok(lastMsgs.length <= expectedMax,
+        'context stays within the step-derived bound (no unbounded growth)');
+});
+
+test('phase 14: conversation clear() wipes history; agent run built on it starts clean', async () => {
+    const cm = createConversationManager({ maxTurns: 8 });
+    cm.send('q1', (q, c, cb) => cb(null, { answer: 'a1' }), () => {});
+    cm.send('q2', (q, c, cb) => cb(null, { answer: 'a2' }), () => {});
+    assert.equal(cm.size(), 4, 'history has 2 pairs before clear');
+
+    cm.clear();
+    assert.equal(cm.size(), 0);
+    assert.deepEqual(cm.history(), [], 'history empty after clear');
+
+    // a fresh agent run sourced from the cleared conversation must start clean
+    const reg = makeRegistry();
+    const ai = scriptedAI([{ answer: 'fresh' }]);
+    const agent = createAgentManager({ aiAsk: ai.aiAsk, registry: reg });
+    await settled(agent, 'q3', { messages: cm.buildMessages('q3') });
+    const firstCall = ai.calls[0].ctx.messages;
+    const roles = firstCall.map(m => m.role);
+    assert.deepEqual(roles, ['system', 'user'],
+        'agent context has no leftover from the cleared conversation');
+    assert.equal(firstCall[1].content, 'q3', 'new task starts from its own question');
 });
