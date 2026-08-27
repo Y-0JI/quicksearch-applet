@@ -329,7 +329,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         }
 
         this._applySearchEngineSetting(); // defense in depth
-        const engineChoice = FALLBACK_URLS[this.search_engine] ? this.search_engine : "ddgo";
+        const engineChoice = utilsMod.normalizeSearchEngine(this.search_engine) || "ddgo";
         const searchEngineLabel = this._searchEngineLabel(engineChoice);
         this._engineForId = engineChoice;
         const helperDeps = {
@@ -346,7 +346,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             appProvider: appProviderMod.createAppProvider(helperDeps),
             fileProvider: this.enable_files ? fileProviderMod.createFileProvider(helperDeps) : null,
             webProvider: this.enable_web ? webProviderMod.createWebProvider(Object.assign({}, helperDeps, {
-                fallbackUrlFor: FALLBACK_URLS[engineChoice],
+                fallbackUrlFor: FALLBACK_URLS[engineChoice] || FALLBACK_URLS.ddgo,
                 useInstantAnswers: engineChoice === "ddgo",
                 engine: engineChoice,
                 googleApiKey: this.web_search_api_key || '',

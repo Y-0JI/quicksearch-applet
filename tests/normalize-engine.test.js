@@ -21,3 +21,9 @@ test('invalid values -> null (caller logs + applies default)', () => {
     assert.equal(normalizeSearchEngine(''), null);
     assert.equal(normalizeSearchEngine(null), null);
 });
+
+test('searxng id and legacy label normalize to searxng', () => {
+    assert.equal(normalizeSearchEngine('searxng'), 'searxng');
+    assert.equal(normalizeSearchEngine('SearXNG (Local)'), 'searxng');
+    assert.equal(normalizeSearchEngine('SEARXNG'), 'searxng');
+});
