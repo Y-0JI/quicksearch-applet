@@ -45,31 +45,51 @@ function createDefaultTools(deps) {
         {   // WebProvider.search delivers twice BY DESIGN: instant fallback, then
             // upgraded instant answers. Finish early on 2nd delivery, else after
             // LIMITS.webGraceMs grace timer (injectable for tests).
+            //
+            // Phase 14 latency fix: in agent mode, skip the instant fallback
+            // entirely — the AI synthesizes faster when it never sees the
+            // useless 'Search the web for …' placeholder.  A settle timer
+            // guarantees the tool still resolves (with fallback) if the
+            // backend is unreachable.
             id: 'search_web', name: 'Search Web', riskLevel: 'LOW',
             description: 'Web search returning result titles, URLs and summaries.',
             inputSchema: { type: 'object',
                 properties: { query: { type: 'string' } }, required: ['query'] },
             execute(args, ctx, cb) {
                 if (!d.webProvider) { cb({ error: 'unavailable', message: 'web search disabled' }); return; }
-                let settled = false, timerId = 0;
-                // Phase 13 latency fix: the agent waits only a SHORT grace for the
-                // upgrade (real results) instead of the SEARCH-mode 2500ms window.
-                // The upgrade still finishes the tool IMMEDIATELY when it arrives.
+                const isAgent = !!(ctx && ctx.agent);
+                let settled = false, timerId = 0, settleTimerId = 0;
+                // Phase 13: agent grace window (reduced to 400ms in Phase 14)
                 const graceMs = (ctx && typeof ctx.webGraceMs === 'number') ? ctx.webGraceMs : LIMITS.webGraceMs;
                 const finish = list => {
                     if (settled) return;
                     settled = true;
                     timers.clear(timerId);
+                    timers.clear(settleTimerId);
                     const results = (list || []).filter(r => r && r.url)
                         .map(r => ({ title: r.title, url: r.url, summary: r.description || '' }));
                     cb(null, { query: String(args.query), count: results.length, results: results });
                 };
+                // Phase 14: deliver the fallback list (or empty) for SEARCH mode,
+                // but skip it in agent mode so the AI never processes a useless
+                // placeholder — it goes straight to real results.
+                const deliverOrWait = list => {
+                    if (isAgent) return; // agent: wait for real results only
+                    finish(list);       // SEARCH mode: instant fallback
+                };
+                // Phase 14 settle timer: if the backend is unreachable the tool
+                // must still resolve.  In agent mode we deliver an empty result
+                // set so the AI can say 'no results found' instead of hanging.
+                // 3 500 ms covers SearXNG (fast) + Serper (1-2 s) + margin.
+                settleTimerId = timers.after(isAgent ? 3500 : LIMITS.webGraceMs, () => {
+                    if (!settled) finish(isAgent ? [] : undefined);
+                });
                 let first = true;
-                const opts = (ctx && ctx.agent) ? { agent: true } : undefined;
+                const opts = isAgent ? { agent: true } : undefined;
                 d.webProvider.search(String(args.query), ctx.cancellable || null, list => {
                     if (first) {
                         first = false;
-                        timerId = timers.after(graceMs, () => finish(list));
+                        timerId = timers.after(graceMs, () => deliverOrWait(list));
                     } else {
                         finish(list); // upgraded answers arrived: done early
                     }

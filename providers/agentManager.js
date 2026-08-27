@@ -25,7 +25,7 @@ const FALLBACK_LIMITS = {
     maxAgentSteps: 8,
     maxResultChars: 4000,
     maxImageDataUrlChars: 6000000,
-    agentWebGraceMs: 1200
+    agentWebGraceMs: 400   // Phase 14: reduced from 1200ms for faster web search
 };
 
 // Phase 12: keeps the model honest about tool use — intent narration is NOT

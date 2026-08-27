@@ -12,7 +12,7 @@ const LIMITS = {
     maxValueChars: 500,   // per-string truncation
     maxResultChars: 4000, // total serialized result cap
     webGraceMs: 2500,     // wait window for webProvider upgrade delivery (SEARCH mode)
-    agentWebGraceMs: 1200, // Phase 13: agent wait window for real web results (shorter)
+    agentWebGraceMs: 400,  // Phase 14: agent wait window for real web results (reduced from 1200ms)
     // Phase 10: transient vision payloads (data URLs) need their own ceiling;
     // ~6M chars ~= 4.5MB binary PNG. Applies ONLY to data:image/* strings.
     maxImageDataUrlChars: 6000000

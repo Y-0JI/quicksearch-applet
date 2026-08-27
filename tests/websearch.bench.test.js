@@ -85,6 +85,28 @@ test('WEB FAST: one HTML POST, real results, finishes immediately (<100ms)', asy
     assert.ok(dt < 100, 'no 2500ms/1200ms grace wait: ' + dt + 'ms');
 });
 
+test('AGENT MODE: skips instant fallback, waits for real results only', async () => {
+    const stages = [], httpCalls = [], calls = [];
+    // Simulate instant fallback delivery + delayed real results
+    let callCount = 0;
+    const httpPost = (url, body, c, onResult) => {
+        httpCalls.push(url);
+        // First call: instant fallback. Second call: real results after 50ms.
+        if (callCount++ === 0) onResult(null, FIXTURE);
+        else setTimeout(() => onResult(null, FIXTURE), 50);
+    };
+    const { reg } = makeAgent(httpPost, stages);
+    const agent = createAgentManager({ aiAsk: makeAiAsk(calls), registry: reg, routeToAgent: () => true, limits: { agentWebGraceMs: 60 } });
+    const t0 = Date.now();
+    const { r } = await settle(agent, 'Cari berita emas hari ini');
+    const dt = Date.now() - t0;
+
+    assert.equal(httpCalls.length, 1, 'exactly one HTTP call');
+    // Agent mode: tool finishes when real results arrive (50ms), not at fallback
+    assert.ok(dt < 200, 'agent skips fallback, finishes at real results: ' + dt + 'ms');
+    assert.equal(r.answer, 'final-answer');
+});
+
 test('WEB SLOW HTTP: grace caps latency, still single request, no retry', async () => {
     const stages = [], httpCalls = [], calls = [];
     const httpPost = (url, body, c, onResult) => { httpCalls.push(url); setTimeout(() => onResult(null, FIXTURE), 400); };
@@ -95,7 +117,9 @@ test('WEB SLOW HTTP: grace caps latency, still single request, no retry', async 
     const dt = Date.now() - t0;
 
     assert.equal(httpCalls.length, 1, 'no hidden retry even when network is slow');
-    assert.ok(dt >= 50 && dt < 350, 'finished at agent grace (~60ms), NOT at HTTP (400ms): ' + dt + 'ms');
+    // Phase 14: agent mode skips instant fallback; tool waits for real results.
+    // HTTP takes 400ms; settle timer (3500ms) is the safety net.
+    assert.ok(dt >= 300 && dt < 700, 'finished at HTTP response (~400ms), not at old grace: ' + dt + 'ms');
     assert.equal(r.answer, 'final-answer');
 });
 

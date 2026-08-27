@@ -455,7 +455,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     _searchEngineLabel(id) {
-        return { ddgo: "DuckDuckGo", google: "Google", bing: "Bing" }[id] || "DuckDuckGo";
+        return { ddgo: "DuckDuckGo", google: "Google", bing: "Bing", searxng: "SearXNG" }[id] || "DuckDuckGo";
     }
 
     _bindHotkey() {
