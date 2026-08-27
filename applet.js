@@ -434,6 +434,19 @@ class QuickSearchApplet extends Applet.IconApplet {
             fileProvider: providers.fileProvider,
             webProvider: providers.webProvider
         });
+
+        // Phase 14 latency: pre-flight SearXNG availability so the first
+        // search doesn't block on a 4 s HTTP timeout when the local
+        // instance is not running.  Non-blocking; errors are silenced.
+        if (providers.webProvider && typeof providers.webProvider.preflight === 'function') {
+            try {
+                providers.webProvider.preflight(err => {
+                    if (err) {
+                        try { global.log('[quicksearch@yoji] SearXNG pre-flight: unreachable'); } catch (e) {}
+                    }
+                });
+            } catch (e) {}
+        }
     }
 
     _rebuildEngine() {

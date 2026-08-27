@@ -251,6 +251,23 @@ function createWebProvider(helpers) {
     const doGet = httpGet || scopedHttpGet;
     const doPost = httpPost || scopedHttpPost;
 
+    // ── SearXNG pre-flight availability check ─────────────────────────
+    // Phase 14 latency: ping the SearXNG endpoint once at startup so the
+    // first search doesn't wait for a full HTTP timeout (4 s) when the
+    // local instance is not running.  Result is cached; unknown → null,
+    // available → true, unavailable → false.
+    let searxngAvailable = null; // null = unknown, true/false = cached
+
+    function preflight(cb) {
+        if (engine !== 'searxng') { if (cb) cb(null); return; }
+        const base = String(searxngUrl).replace(/\/+$/, '');
+        const pingUrl = base + '/search?q=test&format=json';
+        doGet(pingUrl, null, (err) => {
+            searxngAvailable = !err;
+            if (cb) cb(err ? err : null);
+        });
+    }
+
     function search(query, cancellable, onDone, opts) {
         const q = String(query || '').trim();
         const searchUrl = fallbackUrlFor(q);
@@ -279,6 +296,21 @@ function createWebProvider(helpers) {
 
         // ── SearXNG Local backend ─────────────────────────────────────
         if (engine === 'searxng') {
+            // Phase 14 latency: skip HTTP if pre-flight already proved
+            // the local instance is unreachable (< 100 ms vs 4 s timeout).
+            if (searxngAvailable === false) {
+                const errFallback = makeResult({
+                    type: 'web',
+                    title: 'SearXNG lokal tidak tersedia',
+                    description: 'Pastikan SearXNG sedang berjalan',
+                    icon: 'dialog-warning',
+                    score: scoreResult('web-fallback'),
+                    url: searchUrl,
+                    action: () => _openBrowser(searchUrl)
+                });
+                deliver([errFallback]);
+                return;
+            }
             try {
                 const base = String(searxngUrl).replace(/\/+$/, '');
                 const apiUrl = base + '/search?q=' + encodeURIComponent(q) + '&format=json';
@@ -448,9 +480,10 @@ function createWebProvider(helpers) {
 
     function destroy() {
         session = null;
+        searxngAvailable = null;
     }
 
-    return { search, destroy };
+    return { search, destroy, preflight };
 }
 
 function _openBrowser(url) {
