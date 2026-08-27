@@ -36,9 +36,9 @@
         "description": "Web search engine",
         "default": "ddgo",
         "options": {
-            "ddgo": "DuckDuckGo",
-            "google": "Google (Serper API)",
-            "bing": "Bing"
+            "DuckDuckGo": "ddgo",
+            "Google (Serper API)": "google",
+            "Bing": "bing"
         }
     },
     "web-search-api-key": {
