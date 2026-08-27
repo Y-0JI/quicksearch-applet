@@ -260,6 +260,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.ai_agent_enabled = true;     // Phase 12: agent loop on by default
         this.ai_computer_control = false; // Phase 12: pointer/keyboard opt-in
         this.search_engine = "ddgo";
+        this.web_search_api_key = "";
         this.file_locations = [];
         this.max_apps = 5;
         this.max_files = 15;
@@ -288,6 +289,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.settings.bind("ai-vision-supported", "ai_vision_supported"); // Phase 10
         this.settings.bind("ai-agent-enabled", "ai_agent_enabled");       // Phase 12
         this.settings.bind("ai-computer-control", "ai_computer_control"); // Phase 12
+        this.settings.bind("web-search-api-key", "web_search_api_key"); // Phase 13: Google backend
 
         this._applySearchEngineSetting(); // normalize stored/legacy values once
 
@@ -343,7 +345,9 @@ class QuickSearchApplet extends Applet.IconApplet {
             fileProvider: this.enable_files ? fileProviderMod.createFileProvider(helperDeps) : null,
             webProvider: this.enable_web ? webProviderMod.createWebProvider(Object.assign({}, helperDeps, {
                 fallbackUrlFor: FALLBACK_URLS[engineChoice],
-                useInstantAnswers: engineChoice === "ddgo"
+                useInstantAnswers: engineChoice === "ddgo",
+                engine: engineChoice,
+                googleApiKey: this.web_search_api_key || ''
             })) : null
         };
 

@@ -37,9 +37,14 @@
         "default": "ddgo",
         "options": {
             "ddgo": "DuckDuckGo",
-            "google": "Google",
+            "google": "Google (Serper API)",
             "bing": "Bing"
         }
+    },
+    "web-search-api-key": {
+        "type": "entry",
+        "description": "Web search API key (required for Google/Serper. Get free key at serper.dev)",
+        "default": ""
     },
     "max-apps": {
         "type": "spinbutton",

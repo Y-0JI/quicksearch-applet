@@ -63,8 +63,7 @@ function buildLocalRows(query, recent, appNames, caps) {
 // anything unrecognized so the caller can log and apply its default.
 const ENGINE_ALIASES = {
     'ddgo': 'ddgo', 'duckduckgo': 'ddgo', 'duck duck go': 'ddgo',
-    'google': 'google',
-    'bing': 'bing'
+    'google': 'google', 'google (serper api)': 'google', 'bing': 'bing'
 };
 function normalizeSearchEngine(raw) {
     const k = String(raw == null ? '' : raw).toLowerCase().trim();
