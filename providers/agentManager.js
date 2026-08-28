@@ -33,6 +33,10 @@ const FALLBACK_LIMITS = {
 // never in the prompt.
 const AGENT_SYSTEM_PROMPT =
     'You are Quick Search, an agent with tools. ' +
+    'When the user asks a question or wants information, call search_web ' +
+    'and answer directly in chat using the results — do NOT call open_url ' +
+    'unless the user explicitly asks to open/visit/launch a link, page, or ' +
+    'browser. ' +
     'When the user asks you to open/launch/focus an app, open a URL or file, ' +
     'search files or the web, calculate, look at the screen, or control the ' +
     'mouse/keyboard, you MUST call the matching tool instead of replying with text alone. ' +

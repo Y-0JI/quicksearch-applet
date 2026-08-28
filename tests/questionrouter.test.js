@@ -19,6 +19,15 @@ test('router: web intent -> agent loop (true)', () => {
     assert.equal(r('cari resep rendang'), true);
 });
 
+test('router: Indonesian affixed "cari" forms -> agent loop (true)', () => {
+    const r = createQuestionRouter({ detectUrl: () => null, appProvider: { searchApps: fakeApp }, computerControl: {}, hasScreen: () => false });
+    assert.equal(r('carikan harga BMRI hari ini'), true);
+    assert.equal(r('mencari resep rendang'), true);
+    assert.equal(r('cari di google harga emas'), true);
+    assert.equal(r('cariin cara pasang linux'), true);
+    assert.equal(r('info pencarian hotel jakarta'), true);
+});
+
 test('router: app launch with matching app -> agent loop (true)', () => {
     const r = createQuestionRouter({ detectUrl: () => null, appProvider: { searchApps: fakeApp }, computerControl: {}, hasScreen: () => false });
     assert.equal(r('Buka Firefox'), true);
