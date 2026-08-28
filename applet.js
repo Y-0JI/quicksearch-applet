@@ -364,6 +364,13 @@ class QuickSearchApplet extends Applet.IconApplet {
             fileProvider: providers.fileProvider,
             webProvider: providers.webProvider,
             appProvider: providers.appProvider,
+            timers: {
+                after: (ms, fn) => GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+                    fn();
+                    return GLib.SOURCE_REMOVE;
+                }),
+                clear: id => { if (id) GLib.source_remove(id); }
+            },
             detectUrl: urlProviderMod.detectUrl,
             tryCalculate: calculatorProviderMod.tryCalculate,
             openPath: fileProviderMod.openPath,

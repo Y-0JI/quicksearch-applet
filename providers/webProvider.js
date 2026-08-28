@@ -210,7 +210,10 @@ function createWebProvider(helpers) {
     // closures that own their session reference.
     let session = null;
     function ensureSession() {
-        if (!session && Soup) session = new Soup.Session();
+        if (!session && Soup) {
+            session = new Soup.Session();
+            session.timeout = Math.ceil(REQUEST_TIMEOUT_MS / 1000); // seconds
+        }
         return session;
     }
 
