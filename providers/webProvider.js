@@ -21,6 +21,19 @@ try { Soup = require('gi.Soup'); } catch (e) {}
 
 const REQUEST_TIMEOUT_MS = 4000;
 
+function _scheduleTimeout(ms, fn) {
+    if (GLib && typeof GLib.timeout_add === 'function') {
+        return GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => { fn(); return GLib.SOURCE_REMOVE; });
+    }
+    return setTimeout(fn, ms);
+}
+function _cancelTimeout(id) {
+    if (!id) return;
+    if (GLib && typeof GLib.source_remove === 'function') {
+        try { GLib.source_remove(id); } catch (e) { try { clearTimeout(id); } catch (e2) {} }
+    } else try { clearTimeout(id); } catch (e) {}
+}
+
 // Normalized error codes for web search (Step 4/8 of Phase 13).
 // UI must never show raw API errors — only these codes.
 const WEB_ERRORS = {
@@ -182,6 +195,50 @@ function parseGoogleJson(data, makeResult, scoreResult) {
     return out;
 }
 
+// ── Bing HTML result parser ────────────────────────────────────────────────
+// Parses Bing HTML search results (<li class="b_algo"> blocks).
+// Normalized to the same result shape as parseDdgHtml / parseGoogleJson.
+// No API key or credential needed — HTML scrape only.
+
+function parseBingHtml(html, makeResult, scoreResult) {
+    const clean = s => String(s)
+        .replace(/<[^>]+>/g, '')
+        .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&#39;/g, "'")
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
+        .replace(/&#(\d+);/g, (m, n) => String.fromCharCode(Number(n)))
+        .replace(/&[a-z]+;/gi, ' ').replace(/\s+/g, ' ').trim();
+
+    const out = [];
+    const max = 5;
+    const htmlStr = html || '';
+    const blockRe = /<li\b[^>]*class="[^"]*\bb_algo\b[^"]*"[^>]*>([\s\S]*?)<\/li>/gi;
+    let bm;
+    while ((bm = blockRe.exec(htmlStr)) !== null && out.length < max) {
+        const block = bm[1];
+        let title = '', url = '';
+        const h2a = /<h2[^>]*>\s*<a\s[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(block);
+        if (h2a) {
+            url = h2a[1];
+            title = clean(h2a[2]);
+        }
+        if (!url || !/^https?:\/\//.test(url) || !title) continue;
+        let snippet = '';
+        const p = /<p\b[^>]*>([\s\S]*?)<\/p>/i.exec(block);
+        if (p) snippet = clean(p[1]);
+        if (snippet.length > 300) snippet = snippet.slice(0, 300);
+        out.push(makeResult({
+            type: 'web',
+            title: title.slice(0, 120),
+            description: snippet,
+            icon: 'web-browser',
+            score: scoreResult('web-instant'),
+            url: url,
+            action: () => _openBrowser(url)
+        }));
+    }
+    return out;
+}
+
 // ── WebProvider factory ────────────────────────────────────────────────────
 
 function createWebProvider(helpers) {
@@ -219,12 +276,15 @@ function createWebProvider(helpers) {
 
     // Default transports: session-scoped closures (BUG A fix)
     function scopedHttpGet(url, cancellable, onResult) {
-        try {
-            const s = ensureSession();
-            if (!s) return onResult(new Error('no-soup'));
-            const msg = Soup.Message.new('GET', url);
-            if (!msg) return onResult(new Error('bad-url'));
-            s.send_and_read_async(msg, (GLib ? GLib.PRIORITY_DEFAULT : 0), cancellable, (sess, res) => {
+            try {
+                const s = ensureSession();
+                if (!s) return onResult(new Error('no-soup'));
+                const msg = Soup.Message.new('GET', url);
+                if (!msg) return onResult(new Error('bad-url'));
+                // Bing (and some endpoints) reject requests without a User-Agent;
+                // a generic browser UA keeps the no-credential HTML scrape working
+                try { msg.request_headers.append('User-Agent', 'Mozilla/5.0 (X11; Linux x86_64) QuickSearch'); } catch (e) {}
+                s.send_and_read_async(msg, (GLib ? GLib.PRIORITY_DEFAULT : 0), cancellable, (sess, res) => {
                 try {
                     const bytes = sess.send_and_read_finish(res);
                     onResult(null, new TextDecoder().decode(bytes.get_data()));
@@ -318,7 +378,27 @@ function createWebProvider(helpers) {
                 const base = String(searxngUrl).replace(/\/+$/, '');
                 const apiUrl = base + '/search?q=' + encodeURIComponent(q) + '&format=json';
                 stage('http-start');
+                let searxngDone = false;
+                let searxngTid = _scheduleTimeout(REQUEST_TIMEOUT_MS, () => {
+                    if (searxngDone) return;
+                    searxngDone = true;
+                    if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
+                    stage('http-done');
+                    const errFallback = makeResult({
+                        type: 'web',
+                        title: 'SearXNG lokal tidak tersedia',
+                        description: 'Pastikan SearXNG sedang berjalan di ' + base,
+                        icon: 'dialog-warning',
+                        score: scoreResult('web-fallback'),
+                        url: searchUrl,
+                        action: () => _openBrowser(searchUrl)
+                    });
+                    deliver([errFallback]);
+                });
                 doGet(apiUrl, cancellable, (err, dataStr) => {
+                    if (searxngDone) return;
+                    searxngDone = true;
+                    _cancelTimeout(searxngTid);
                     if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                     stage('http-done');
                     if (err) {
@@ -357,7 +437,17 @@ function createWebProvider(helpers) {
                 // otherwise use a Soup-based POST with custom headers.
                 if (httpPost) {
                     // Test mode: injected transport handles it
+                    let ggDone = false;
+                    let ggTid = _scheduleTimeout(REQUEST_TIMEOUT_MS, () => {
+                        if (ggDone) return;
+                        ggDone = true;
+                        if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
+                        stage('http-done');
+                    });
                     doPost(apiUrl, body, cancellable, (err, dataStr) => {
+                        if (ggDone) return;
+                        ggDone = true;
+                        _cancelTimeout(ggTid);
                         if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                         stage('http-done');
                         if (err) return;
@@ -380,8 +470,17 @@ function createWebProvider(helpers) {
                         msg.request_headers.append('Content-Type', 'application/json');
                         if (GLib) msg.set_request_body_from_bytes('application/json', new GLib.Bytes(Buffer.from(body)));
                         else msg.set_request_body_from_bytes('application/json', new (require('gi.GLib').Bytes)(Buffer.from(body)));
-                        stage('http-start');
+                        let serperDone = false;
+                        let serperTid = _scheduleTimeout(REQUEST_TIMEOUT_MS, () => {
+                            if (serperDone) return;
+                            serperDone = true;
+                            if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
+                            stage('http-done');
+                        });
                         s.send_and_read_async(msg, (GLib ? GLib.PRIORITY_DEFAULT : 0), cancellable, (sess, res) => {
+                            if (serperDone) return;
+                            serperDone = true;
+                            _cancelTimeout(serperTid);
                             if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                             stage('http-done');
                             try {
@@ -409,6 +508,39 @@ function createWebProvider(helpers) {
             return;
         }
 
+        // ── Bing backend ─────────────────────────────────────────────────
+        // No API key required — fetch Bing HTML search results and parse
+        // <li class="b_algo"> blocks. The fallback "Search on Bing" link
+        // is already delivered above (instant, guaranteed). This upgrade
+        // provides real results when the parse succeeds.
+        if (engine === 'bing') {
+            try {
+                const htmlUrl = 'https://www.bing.com/search?q=' + encodeURIComponent(q);
+                stage('http-start');
+                let bingDone = false;
+                let bingTid = _scheduleTimeout(REQUEST_TIMEOUT_MS, () => {
+                    if (bingDone) return;
+                    bingDone = true;
+                    if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
+                    stage('http-done');
+                });
+                doGet(htmlUrl, cancellable, (err, dataStr) => {
+                    if (bingDone) return;
+                    bingDone = true;
+                    _cancelTimeout(bingTid);
+                    if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
+                    stage('http-done');
+                    if (err) return; // network error: fallback already delivered
+                    try {
+                        const extra = parseBingHtml(dataStr, makeResult, scoreResult);
+                        stage('parse-done');
+                        if (extra.length) { deliver([fallback].concat(extra)); stage('deliver'); }
+                    } catch (e) { /* parse failure: fallback stands alone */ }
+                });
+            } catch (e) { /* transport unavailable: fallback stands alone */ }
+            return;
+        }
+
         // ── DuckDuckGo backend (default) ───────────────────────────────
         // SEARCH mode: optional DDG instant-answer upgrade (engine-gated).
         const doInstant = useInstantAnswers && !isAgent;
@@ -421,7 +553,17 @@ function createWebProvider(helpers) {
                 const apiUrl = 'https://api.duckduckgo.com/?format=json&no_html=1&skip_disambig=1&q=' +
                     encodeURIComponent(q);
                 stage('http-start');
+                let ddgInstDone = false;
+                let ddgInstTid = _scheduleTimeout(REQUEST_TIMEOUT_MS, () => {
+                    if (ddgInstDone) return;
+                    ddgInstDone = true;
+                    if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
+                    stage('http-done');
+                });
                 doGet(apiUrl, cancellable, (err, dataStr) => {
+                    if (ddgInstDone) return;
+                    ddgInstDone = true;
+                    _cancelTimeout(ddgInstTid);
                     if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                     stage('http-done');
                     if (err) return;
@@ -467,7 +609,17 @@ function createWebProvider(helpers) {
                 const htmlUrl = 'https://html.duckduckgo.com/html/';
                 const body = 'q=' + encodeURIComponent(q);
                 stage('http-start');
+                let ddgHtmlDone = false;
+                let ddgHtmlTid = _scheduleTimeout(REQUEST_TIMEOUT_MS, () => {
+                    if (ddgHtmlDone) return;
+                    ddgHtmlDone = true;
+                    if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
+                    stage('http-done');
+                });
                 doPost(htmlUrl, body, cancellable, (err, dataStr) => {
+                    if (ddgHtmlDone) return;
+                    ddgHtmlDone = true;
+                    _cancelTimeout(ddgHtmlTid);
                     if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                     stage('http-done');
                     if (err) return;
@@ -495,4 +647,4 @@ function _openBrowser(url) {
     } catch (e) { /* never crash (spec 24-K) */ }
 }
 
-module.exports = { createWebProvider, REQUEST_TIMEOUT_MS, parseDdgHtml, parseGoogleJson, parseSearxngJson, WEB_ERRORS };
+module.exports = { createWebProvider, REQUEST_TIMEOUT_MS, parseDdgHtml, parseGoogleJson, parseSearxngJson, parseBingHtml, WEB_ERRORS };

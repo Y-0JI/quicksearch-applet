@@ -94,6 +94,17 @@ function createSearchEngine(helpers) {
             const lists = [buckets.calc, buckets.url, buckets.app, buckets.file, buckets.web];
             onResultsCb(processResults(lists, limits));
         };
+        // lifecycle: track pending async providers to clear cancellable when done
+        let pending = 0;
+        let cleared = false;
+        function maybeClearCancellable() {
+            if (cleared) return;
+            if (pending !== 0) return;
+            if (myGen !== gen) return;
+            cleared = true;
+            // request finished (success/error/cancel-checked) -> release
+            cancellable = null;
+        }
 
         let cls;
         try {
@@ -134,6 +145,8 @@ function createSearchEngine(helpers) {
 
         if (!cls.apps && !cls.files && !cls.web) {
             flush();
+            // no async pending -> cleanup
+            cancellable = null;
             return;
         }
 
@@ -146,26 +159,37 @@ function createSearchEngine(helpers) {
 
         // async providers share THIS query's cancellable (guardrail 3)
         if (enabled.files && cls.files && fileProvider) {
+            pending++;
             try {
                 fileProvider.search(q, cancellable, results => {
-                    if (stale()) return;
+                    if (stale()) { pending--; maybeClearCancellable(); return; }
                     buckets.file = results || [];
                     flush(); // guardrail 2: render as soon as each provider finishes
+                    pending--;
+                    maybeClearCancellable();
                 });
-            } catch (e) { buckets.file = []; }
+            } catch (e) { buckets.file = []; pending--; }
         }
 
         if (enabled.web && cls.web && webProvider) {
+            pending++;
             try {
                 webProvider.search(q, cancellable, results => {
-                    if (stale()) return;
+                    if (stale()) { pending--; maybeClearCancellable(); return; }
                     buckets.web = results || [];
                     flush();
+                    pending--;
+                    maybeClearCancellable();
                 });
-            } catch (e) { buckets.web = []; }
+            } catch (e) { buckets.web = []; pending--; }
         }
 
         flush(); // sync results visible immediately (spec §31 first-result ASAP)
+        if (pending === 0) {
+            // no async outstanding (sync error or disabled) -> cleanup now
+            maybeClearCancellable();
+            if (pending === 0) cancellable = null;
+        }
     }
 
     function _openUrl(url) {

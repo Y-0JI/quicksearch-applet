@@ -10,7 +10,8 @@
 //   true  => needs the agent loop (a tool is likely required)
 //   false => Fast Path (general knowledge / explanation; no tools)
 
-const WEB = /\b(\w*cari\w*|search\w*|berita|news|temukan|find|google|duckduckgo|wikipedia|bing|yahoo)\b/i;
+const WEB = /\b(\w*cari\w*|search\w*|berita|news|temukan|find|google|duckduckgo|wikipedia|bing|yahoo|harga|kurs|price|saham|ihsg|idx|emas|perak|bitcoin|usd|dollar|rupiah|antam)\b/i;
+const TEMPORAL = /\b(hari\s*ini|terbaru|terkini|saat\s*ini|sekarang|update|hariini)\b/i;
 const APP = /\b(buka|launch|jalankan|run|bukakan|tutup|close|focus|fokus|kunjungi)\b/i;
 const COMPUTER = /\b(ketik|ketikkan|type|klik|click|scroll|tekan|press|drag|tahan|hold|arahkan|move|geser)\b/i;
 const FILE = /\b(file|cari file|buka file|dokumen|folder|direktori)\b/i;
@@ -33,6 +34,7 @@ function createQuestionRouter(opts) {
         if (MATH.test(q)) return true;
         // explicit web / file / screen intents
         if (WEB.test(q)) return true;
+        if (TEMPORAL.test(q)) return true;
         if (FILE.test(q)) return true;
         if (hasScreen() && SCREEN.test(q)) return true;
         // computer control verbs only matter when control is enabled
@@ -49,4 +51,4 @@ function createQuestionRouter(opts) {
     };
 }
 
-module.exports = { createQuestionRouter, WEB, APP, COMPUTER, FILE, SCREEN, MATH };
+module.exports = { createQuestionRouter, WEB, TEMPORAL, APP, COMPUTER, FILE, SCREEN, MATH };

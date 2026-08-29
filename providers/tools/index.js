@@ -61,8 +61,15 @@ function createDefaultTools(deps) {
                 let settled = false, timerId = 0, settleTimerId = 0;
                 // Phase 13: agent grace window (reduced to 400ms in Phase 14)
                 const graceMs = (ctx && typeof ctx.webGraceMs === 'number') ? ctx.webGraceMs : LIMITS.webGraceMs;
+                const isCancelled = () => !!(ctx && ctx.cancellable && ctx.cancellable.is_cancelled && ctx.cancellable.is_cancelled());
                 const finish = list => {
                     if (settled) return;
+                    if (isCancelled()) {
+                        settled = true;
+                        timers.clear(timerId);
+                        timers.clear(settleTimerId);
+                        return;
+                    }
                     settled = true;
                     timers.clear(timerId);
                     timers.clear(settleTimerId);
@@ -74,6 +81,7 @@ function createDefaultTools(deps) {
                 // but skip it in agent mode so the AI never processes a useless
                 // placeholder — it goes straight to real results.
                 const deliverOrWait = list => {
+                    if (isCancelled()) return;
                     if (isAgent) return; // agent: wait for real results only
                     finish(list);       // SEARCH mode: instant fallback
                 };
@@ -87,6 +95,7 @@ function createDefaultTools(deps) {
                 let first = true;
                 const opts = isAgent ? { agent: true } : undefined;
                 d.webProvider.search(String(args.query), ctx.cancellable || null, list => {
+                    if (isCancelled()) return;
                     if (first) {
                         first = false;
                         timerId = timers.after(graceMs, () => deliverOrWait(list));
