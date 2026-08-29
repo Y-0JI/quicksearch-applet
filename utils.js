@@ -72,15 +72,28 @@ function normalizeSearchEngine(raw) {
 }
 
 // extract http/https URLs from AI text (untrusted input): scheme-whitelisted,
-// trailing punctuation stripped, duplicates removed, order preserved
+// trailing punctuation stripped, duplicates removed, order preserved.
+// Now also supports bare domains like databoks.katadata.co.id/... (no scheme)
+// by normalizing to https:// for safe browser launch.
 function extractUrls(text) {
     const out = [];
     const seen = {};
-    const re = /https?:\/\/[^\s<>"'`]+/gi;
     const s = String(text || '');
+    // Match https:// URLs OR bare domains with at least one dot and optional path
+    const re = /(?:https?:\/\/[^\s<>"'`]+|\b(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/[^\s<>"'`]*)?)/gi;
     let m;
     while ((m = re.exec(s)) !== null) {
-        const url = m[0].replace(/[.,;:!?)\]}'"]+$/, '');
+        let raw = m[0];
+        let stripped = raw.replace(/[.,;:!?)\]}'"]+$/, '');
+        let url = stripped;
+        const hasScheme = /^https?:\/\//i.test(stripped);
+        if (!hasScheme) {
+            // bare domain must have a dot and valid TLD
+            if (!/\.[a-z]{2,}/i.test(stripped)) continue;
+            // avoid matching single-word with dot at end like "co." already stripped
+            if (stripped.length <= 4) continue;
+            url = 'https://' + stripped;
+        }
         if (url.length > 8 && !seen[url]) { seen[url] = true; out.push(url); }
     }
     return out;
@@ -88,20 +101,29 @@ function extractUrls(text) {
 
 // split AI text into an ordered text/url segment sequence so the renderer can
 // place clickable links at the URL's original position (no duplicate append):
-// [{type:'text'|'url', value}] — scheme-whitelisted http/https only, trailing
+// [{type:'text'|'url', value}] — http/https and bare domains, trailing
 // punctuation stays attached to the surrounding text, newlines kept in runs
 function splitTextAndUrls(text) {
     const out = [];
-    const re = /https?:\/\/[^\s<>"'`]+/gi;
+    const re = /(?:https?:\/\/[^\s<>"'`]+|\b(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/[^\s<>"'`]*)?)/gi;
     const s = String(text || '');
     let last = 0;
     let m;
     while ((m = re.exec(s)) !== null) {
-        const url = m[0].replace(/[.,;:!?)\]}'"]+$/, '');
+        let raw = m[0];
+        let stripped = raw.replace(/[.,;:!?)\]}'"]+$/, '');
+        let url = stripped;
+        const hasScheme = /^https?:\/\//i.test(stripped);
+        if (!hasScheme) {
+            if (!/\.[a-z]{2,}/i.test(stripped)) continue;
+            if (stripped.length <= 4) continue;
+            url = 'https://' + stripped;
+        }
         if (url.length <= 8) continue; // degenerate match: stays plain text
         if (m.index > last) out.push({ type: 'text', value: s.slice(last, m.index) });
         out.push({ type: 'url', value: url });
-        last = m.index + url.length;
+        // consume only the stripped part from original text, leave punctuation for next text
+        last = m.index + stripped.length;
     }
     if (out.length === 0) {
         return s ? [{ type: 'text', value: s }] : [];

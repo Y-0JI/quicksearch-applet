@@ -37,6 +37,8 @@ const AGENT_SYSTEM_PROMPT =
     'and answer directly in chat using the results — do NOT call open_url ' +
     'unless the user explicitly asks to open/visit/launch a link, page, or ' +
     'browser. ' +
+    'When you answer with web sources, always include the full https:// URL ' +
+    'for each source so the user can click it. ' +
     'When the user asks you to open/launch/focus an app, open a URL or file, ' +
     'search files or the web, calculate, look at the screen, or control the ' +
     'mouse/keyboard, you MUST call the matching tool instead of replying with text alone. ' +
