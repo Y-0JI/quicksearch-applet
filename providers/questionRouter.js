@@ -17,6 +17,10 @@ const COMPUTER = /\b(ketik|ketikkan|type|klik|click|scroll|tekan|press|drag|taha
 const FILE = /\b(file|cari file|buka file|dokumen|folder|direktori)\b/i;
 const SCREEN = /\b(layar|screen|screenshot|tangkapan|capture|tampilan)\b/i;
 const MATH = /[\d]+\s*[\+\-\*\/\%\^]\s*[\d]/;
+// Explicit "open/visit/launch" intent (loader-safe duplicate of
+// agentManager.OPEN_URL_INTENT). A question with this should use the agent
+// loop so open_url is available. Duplicated to avoid a relative require.
+const OPEN_URL = /\b((?:buka|bukakan|kunjungi|visit|launch|open)\s+(?:artikel|link|url|website|web|halaman|laman|situs|berita|page|article|browser|sumber)|(?:buka|kunjungi|launch|open)\s+di\s+browser|tampilkan\s+di\s+browser)\b/i;
 
 function createQuestionRouter(opts) {
     opts = opts || {};
@@ -28,6 +32,8 @@ function createQuestionRouter(opts) {
     return function needsAgent(question) {
         const q = String(question == null ? '' : question);
 
+        // Explicit open/visit/launch request -> agent loop (open_url available)
+        if (OPEN_URL.test(q)) return true;
         // URL present -> open_url tool
         if (detectUrl(q)) return true;
         // arithmetic -> keep the calculator tool working
@@ -51,4 +57,4 @@ function createQuestionRouter(opts) {
     };
 }
 
-module.exports = { createQuestionRouter, WEB, TEMPORAL, APP, COMPUTER, FILE, SCREEN, MATH };
+module.exports = { createQuestionRouter, WEB, TEMPORAL, APP, COMPUTER, FILE, SCREEN, MATH, OPEN_URL };

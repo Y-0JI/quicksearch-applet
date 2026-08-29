@@ -425,7 +425,12 @@ class QuickSearchApplet extends Applet.IconApplet {
                 appProvider: providers.appProvider,
                 computerControl: computerControlMod,
                 hasScreen: () => true
-            })
+            }),
+            // Phase 15 guardrail: only offer open_url when the user EXPLICITLY
+            // asks to open/visit/launch (shares the router's OPEN_URL detector
+            // so routing + tool availability stay in sync).
+            openUrlIntent: (q) => questionRouterMod.OPEN_URL.test(String(q || '')),
+            detectUrl: urlProviderMod.detectUrl
         });
 
         this._engine = searchEngineMod.createSearchEngine({

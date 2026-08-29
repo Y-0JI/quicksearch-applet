@@ -34,11 +34,19 @@ const FALLBACK_LIMITS = {
 const AGENT_SYSTEM_PROMPT =
     'You are Quick Search, an agent with tools. ' +
     'When the user asks a question or wants information, call search_web ' +
-    'and answer directly in chat using the results — do NOT call open_url ' +
-    'unless the user explicitly asks to open/visit/launch a link, page, or ' +
-    'browser. ' +
+    'and answer directly in chat using the results. ' +
+    'Use the search results as your source: read them, compare sources, ' +
+    'summarize, and answer the user from the returned summaries. Do NOT open ' +
+    'each result URL just to get the answer. ' +
+    'If the first search is not enough, run search_web again with a more ' +
+    'specific query rather than opening links. ' +
+    'Only call open_url when the user EXPLICITLY asks to open/visit/launch a ' +
+    'link, article, page, or browser (for example "buka artikel…"). Research ' +
+    'requests like "cari", "berita", "informasi", "rangkum", "daftar" must ' +
+    'never trigger open_url. ' +
     'When you answer with web sources, always include the full https:// URL ' +
-    'for each source so the user can click it. ' +
+    'for each source so the user can click it in the UI — but listing a URL ' +
+    'is NOT a command to open the browser. ' +
     'When the user asks you to open/launch/focus an app, open a URL or file, ' +
     'search files or the web, calculate, look at the screen, or control the ' +
     'mouse/keyboard, you MUST call the matching tool instead of replying with text alone. ' +
@@ -52,6 +60,13 @@ const AGENT_SYSTEM_PROMPT =
 const FAST_SYSTEM_PROMPT =
     'You are Quick Search, a concise assistant. Answer the user directly. ' +
     'Do not mention tools unless the user asked about them.';
+
+// Explicit "open/visit/launch" intent. ONLY when this matches may the model be
+// offered the open_url tool; research questions must use search_web and answer
+// from its results. Duplicated (loader-safe) from questionRouter.OPEN_URL so
+// both the router and the agent stay in sync without a relative require.
+const OPEN_URL_INTENT = /\b((?:buka|bukakan|kunjungi|visit|launch|open)\s+(?:artikel|link|url|website|web|halaman|laman|situs|berita|page|article|browser|sumber)|(?:buka|kunjungi|launch|open)\s+di\s+browser|tampilkan\s+di\s+browser)\b/i;
+function defaultOpenUrlIntent(q) { return OPEN_URL_INTENT.test(String(q || '')); }
 
 function createAgentManager(opts) {
     opts = opts || {};
@@ -81,6 +96,12 @@ function createAgentManager(opts) {
     // true => use the tool-enabled agent loop; false => Fast Path (single call,
     // no tools). Absent router => legacy behavior (always the agent loop).
     const routeToAgent = typeof opts.routeToAgent === 'function' ? opts.routeToAgent : null;
+    // Phase 15 guardrail: open_url is only offered to the model when the user
+    // EXPLICITLY asks to open/visit/launch (e.g. "buka artikel…"). Research
+    // questions (cari/berita/informasi/rangkum/daftar…) must use search_web and
+    // answer from its results — never auto-open result URLs.
+    const openUrlIntent = typeof opts.openUrlIntent === 'function' ? opts.openUrlIntent : defaultOpenUrlIntent;
+    const detectUrlFn = typeof opts.detectUrl === 'function' ? opts.detectUrl : null;
     const safeEmit = (fn, ...args) => {
         if (!fn) return;
         try { fn.apply(null, args); } catch (e) {}
@@ -94,20 +115,24 @@ function createAgentManager(opts) {
 
     // OpenAI wire-format tool definitions, derived fresh from the registry.
     // Conversion lives HERE so ToolRegistry stays free of AI knowledge.
-    function toolDefs() {
+    // When allowOpen is false (research question), the open_url tool is removed
+    // so the model physically cannot open result URLs — the strongest guardrail.
+    function toolDefs(allowOpen) {
         if (!registry) return null;
-        const defs = registry.list().map(t => ({
-            type: 'function',
-            function: {
-                name: t.id,
-                description: t.description,
-                parameters: {
-                    type: 'object',
-                    properties: t.inputSchema.properties || {},
-                    required: t.inputSchema.required || []
+        const defs = registry.list()
+            .filter(t => allowOpen || t.id !== 'open_url')
+            .map(t => ({
+                type: 'function',
+                function: {
+                    name: t.id,
+                    description: t.description,
+                    parameters: {
+                        type: 'object',
+                        properties: t.inputSchema.properties || {},
+                        required: t.inputSchema.required || []
+                    }
                 }
-            }
-        }));
+            }));
         return defs.length ? defs : null;
     }
 
@@ -119,12 +144,17 @@ function createAgentManager(opts) {
         const cancellable = makeCancellable() || null;
         activeCancellable = cancellable;
 
+        // Phase 15: is this an explicit "open/visit/launch" request? Only then
+        // is open_url offered. A pasted URL also counts as explicit open intent.
+        const allowOpen = !!((detectUrlFn && detectUrlFn(String(question == null ? '' : question)))
+                           || (openUrlIntent && openUrlIntent(String(question == null ? '' : question))));
+
         const base = Array.isArray(ctx && ctx.messages) ? ctx.messages.slice() : [];
         if (!base.length) base.push({ role: 'user', content: String(question == null ? '' : question) });
         // Phase 12: one system message per run so the model USES the tools
         // instead of narrating intent — it may only claim success after a
         // successful tool result. Never a substitute for policy enforcement.
-        if (toolDefs() && !base.some(m => m && m.role === 'system')) {
+        if (toolDefs(allowOpen) && !base.some(m => m && m.role === 'system')) {
             base.unshift({ role: 'system', content: AGENT_SYSTEM_PROMPT });
         }
         let steps = 0;
@@ -193,6 +223,18 @@ function createAgentManager(opts) {
             const verdict = policy
                 ? policy.decide(String(c.name || ''), toolMeta ? toolMeta.riskLevel : undefined)
                 : 'allow';
+
+            // Phase 15 backstop: even if the model names open_url on a research
+            // question (it shouldn't, since the tool is hidden), never open the
+            // browser. Tell it to answer from the search results instead.
+            if (String(c.name || '') === 'open_url' && !allowOpen) {
+                pushToolMessage(c.id, {
+                    error: 'open-url-not-requested',
+                    message: 'The user did not ask to open a URL. Use the search_web results to answer.'
+                });
+                executeCalls(calls, i + 1);
+                return;
+            }
 
             const proceed = () => {
                 safeEmit(onToolStart, String(c.name || ''));
@@ -266,7 +308,7 @@ function createAgentManager(opts) {
             safeEmit(onPhase, 'thinking');
             aiAsk(String(question == null ? '' : question), {
                 messages: base,
-                tools: toolDefs(),
+                tools: toolDefs(allowOpen),
                 cancellable: cancellable
             }, (err, res) => {
                 if (myGen !== gen) return;  // cancelled/superseded -> silent stop
