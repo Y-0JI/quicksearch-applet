@@ -1141,7 +1141,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 case "timeout":
                 case "network": base = _("AI tidak dapat dihubungi."); break;
                 case "bad-response": base = _("Response AI tidak valid."); break;
-                case "max-steps": base = _("Agent mencapai batas langkah."); break; // Phase 9
+                case "max-steps": base = _("Agent dihentikan: terlalu banyak langkah. Coba pecah permintaan menjadi lebih kecil."); break; // Phase 16
                 case "permission-denied": base = _("Aksi dibatalkan karena izin ditolak."); break; // Phase 12
                 default: base = _("Terjadi kesalahan pada AI.");
             }
