@@ -98,15 +98,16 @@
     font-size: 9pt;
 }
 
-/* Phase 4: inline AI answer / error text */
+/* Phase 4: AI answer text – stable vertical flow, wraps within panel */
 .quicksearch-ai-text {
     padding: 8px 10px;
     font-size: 10.5pt;
     color: rgba(255, 255, 255, 0.92);
+    spacing: 4px;
+    max-width: 640px;
 }
 
-/* AI answers as inline flow: one horizontal line row per source line,
-   mixing plain text runs with clickable URL buttons in original order */
+/* legacy horizontal line – kept for compat, not used after vertical fix */
 .quicksearch-ai-line {
     spacing: 3px;
 }
@@ -171,11 +172,12 @@
     padding: 0 4px;
 }
 
-/* clickable links inside AI answers (inline, sized to match text runs) */
+/* clickable links – vertical stacked, wraps long URLs, always clickable */
 .quicksearch-link-btn {
-    padding: 0 2px;
+    padding: 2px 4px;
     border-radius: 6px;
     font-size: 10.5pt;
     color: rgba(138, 180, 255, 0.95);
     text-decoration: underline;
+    max-width: 640px;
 }

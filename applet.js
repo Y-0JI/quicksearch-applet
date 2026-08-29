@@ -821,8 +821,27 @@ class QuickSearchApplet extends Applet.IconApplet {
                     pend.isError = true;
                 }
             } else {
-                pend.text = (res && res.answer) ? res.answer : _("(empty response)");
-                pend.pending = false;
+                const answer = (res && res.answer) ? res.answer : _("(empty response)");
+                const isWork = (t) => t !== _("Thinking...") && t !== _("— dibatalkan —");
+                if (pend.text && isWork(pend.text)) {
+                    // Preserve last tool activity as separate history so
+                    // final answer does not overwrite it (task §5).
+                    // Dedup if previous history already shows same status.
+                    const idx = this._aiChat.indexOf(pend);
+                    const prev = idx > 0 ? this._aiChat[idx - 1] : null;
+                    const isDupe = prev && prev.text === pend.text && prev.activity;
+                    if (!isDupe) {
+                        pend.pending = false;
+                        this._aiChat.push({ who: "ai", text: answer });
+                    } else {
+                        // already shown as history: just replace duplicate
+                        pend.text = answer;
+                        pend.pending = false;
+                    }
+                } else {
+                    pend.text = answer;
+                    pend.pending = false;
+                }
             }
             this._agentPend = null; // Phase 13: run ended
             this._renderAIChat();
@@ -839,7 +858,8 @@ class QuickSearchApplet extends Applet.IconApplet {
     // Phase 13: render agent activity on the current pending bubble only.
     // kind: 'thinking' | 'working'; customText overrides both (confirmation).
     // Fix: preserve previous tool activity as separate history entries so
-    // max-steps error does not erase them (task §1-2).
+    // max-steps error does not erase them (task §1-2). Dedup consecutive
+    // identical statuses so search_web -> search_web does not spam.
     _agentStatus(kind, toolId, customText) {
         const pend = this._agentPend;
         if (!pend || !pend.pending || pend.token !== this._aiSeq) return;
@@ -850,16 +870,32 @@ class QuickSearchApplet extends Applet.IconApplet {
         } else {
             newText = _("Thinking...");
         }
+        if (pend.text === newText) return; // consecutive identical -> single status (spam fix)
+        const isWork = (t) => t !== _("Thinking...") && t !== _("— dibatalkan —");
         // Preserve previous working activity as history before overwriting.
         // Only preserve real tool activities, not transient "Thinking...".
-        const isWork = (t) => t !== _("Thinking...") && t !== _("— dibatalkan —");
+        // Dedup: don't push if previous history already shows the same status.
         if (pend.text !== newText && isWork(pend.text)) {
             const idx = this._aiChat.indexOf(pend);
             if (idx !== -1) {
-                this._aiChat.splice(idx, 0, { who: "ai", text: pend.text, activity: true });
+                const prev = idx > 0 ? this._aiChat[idx - 1] : null;
+                const isDupeHistory = prev && prev.text === pend.text && prev.activity;
+                if (!isDupeHistory) {
+                    this._aiChat.splice(idx, 0, { who: "ai", text: pend.text, activity: true });
+                }
             }
         }
         pend.text = newText;
+        // Post-dedup: if new status is work and equals the immediately
+        // preceding history entry, collapse to a single status so
+        // search_web -> search_web (with Thinking in between) shows once.
+        const pendIdx = this._aiChat.indexOf(pend);
+        if (pendIdx > 0 && isWork(newText)) {
+            const prev = this._aiChat[pendIdx - 1];
+            if (prev && prev.text === newText && prev.activity) {
+                this._aiChat.splice(pendIdx - 1, 1);
+            }
+        }
         this._renderAIChat();
     }
 
@@ -944,50 +980,77 @@ class QuickSearchApplet extends Applet.IconApplet {
         }
     }
 
-    // AI answers render as one inline flow: text runs interleaved with
-    // clickable URL buttons at their original positions (text -> URL -> text).
-    // No duplicate link list is appended after the response.
+    // AI answers: stable vertical flow (Cinnamon/GJS): each text chunk
+    // wraps within the panel width and each URL is a clickable button
+    // on its own wrapped line. Vertical stacking prevents horizontal
+    // overflow/overlap while keeping URLs clickable and readable.
+    // No duplicate link list appended; URLs stay at original order.
     _buildAITextFlow(text, isError) {
         const flow = new St.BoxLayout({
             vertical: true,
             style_class: "quicksearch-ai-text" + (isError ? " quicksearch-ai-error" : "")
         });
-        let line = null;
-        const newLine = () => {
-            line = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-line" });
-            flow.add_child(line);
-        };
-        const addRun = (txt) => {
-            const lbl = new St.Label({
-                text: txt,
-                style_class: "quicksearch-ai-run" + (isError ? " quicksearch-ai-error" : "")
-            });
-            lbl.get_clutter_text().set_line_wrap(true);
-            line.add_child(lbl);
-        };
-        newLine();
-        for (const seg of utilsMod.splitTextAndUrls(text)) {
+        const segs = utilsMod.splitTextAndUrls(text);
+        // If no URL at all, single label already wraps correctly – but
+        // use the same path for consistency (handles long paragraphs)
+        for (const seg of segs) {
             if (seg.type === "text") {
-                const parts = String(seg.value).split("\n");
+                const raw = String(seg.value);
+                if (!raw) continue;
+                // Preserve paragraph/bullet structure: split on \n, each
+                // non-empty piece wraps, empty pieces become blank spacers.
+                const parts = raw.split("\n");
                 for (let i = 0; i < parts.length; i++) {
-                    if (i > 0) {
-                        newLine();
-                        if (!parts[i]) addRun(" "); // blank line stays visible
+                    const part = parts[i];
+                    if (part === "") {
+                        // blank line – keep visible spacing
+                        const spacer = new St.Label({
+                            text: " ",
+                            style_class: "quicksearch-ai-run" + (isError ? " quicksearch-ai-error" : ""),
+                            x_expand: true
+                        });
+                        spacer.get_clutter_text().set_line_wrap(true);
+                        try { spacer.get_clutter_text().set_line_wrap_mode(Pango.WrapMode.WORD_CHAR); } catch (e) {}
+                        flow.add_child(spacer);
+                    } else if (part) {
+                        const lbl = new St.Label({
+                            text: part,
+                            style_class: "quicksearch-ai-run" + (isError ? " quicksearch-ai-error" : ""),
+                            x_expand: true
+                        });
+                        lbl.get_clutter_text().set_line_wrap(true);
+                        try { lbl.get_clutter_text().set_line_wrap_mode(Pango.WrapMode.WORD_CHAR); } catch (e) {}
+                        flow.add_child(lbl);
                     }
-                    if (parts[i]) addRun(parts[i]);
                 }
             } else {
                 const url = seg.value;
+                // Safety: only http/https URLs are ever produced by
+                // splitTextAndUrls; still guard before launching.
+                if (!/^https?:\/\//i.test(url)) continue;
                 const link = new St.Button({
                     label: url,
-                    style_class: "quicksearch-link-btn"
+                    style_class: "quicksearch-link-btn",
+                    x_expand: true,
+                    x_align: St.Align.START
                 });
                 const cl = link.get_child();
-                if (cl && cl.get_clutter_text) cl.get_clutter_text().set_line_wrap(true);
-                link.set_y_align(Clutter.ActorAlign.CENTER);
-                link.connect("clicked", () => this._openExternalUrl(url)); // http/https only
-                line.add_child(link);
+                if (cl && cl.get_clutter_text) {
+                    cl.get_clutter_text().set_line_wrap(true);
+                    try { cl.get_clutter_text().set_line_wrap_mode(Pango.WrapMode.WORD_CHAR); } catch (e) {}
+                }
+                link.connect("clicked", () => this._openExternalUrl(url));
+                flow.add_child(link);
             }
+        }
+        if (flow.get_n_children() === 0) {
+            const lbl = new St.Label({
+                text: String(text || ""),
+                style_class: "quicksearch-ai-run" + (isError ? " quicksearch-ai-error" : ""),
+                x_expand: true
+            });
+            lbl.get_clutter_text().set_line_wrap(true);
+            flow.add_child(lbl);
         }
         return flow;
     }
