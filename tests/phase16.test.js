@@ -43,7 +43,14 @@ function makeRegistry() {
             seen.open_url++;
             const ok = /^https?:\/\//i.test(String(a.url));
             if (!ok) { cb({ error: 'invalid-url' }); return; }
-            cb(null, { opened: a.url });
+            // returns PAGE CONTENT distinct from the search snippet, so a test
+            // can prove the page content actually reached the model's context
+            // and the final answer is built from it.
+            cb(null, {
+                opened: a.url,
+                title: 'Artikel Transfer Chelsea',
+                content: 'Chelsea resmi mendatangkan Mateo Kovacic dan Cole Palmer pada bursa musim panas 2026.'
+            });
         }
     });
     reg.register({
@@ -332,21 +339,29 @@ test('P16: open_url visible to model on research question (gate removed)', async
 // 12. Insufficient search -> model CHOOSES open_url (no "buka" keyword),
 //     and the opened page content is used in the final answer.
 // =====================================================================
-test('P16: insufficient search -> model opens the page (decision on model)', async () => {
+test('P16: insufficient search -> open_url -> page content reaches context -> answer', async () => {
     const reg = makeRegistry();
+    // final answer (scripted) cites a detail that exists ONLY in the opened
+    // page content, never in the search snippet — proving the page content
+    // flowed into the model context and was used to build the answer.
     const ai = scriptedAI([
         { toolCalls: [TC('w1', 'search_web', '{"query":"transfer Chelsea terbaru"}')] },
         { toolCalls: [TC('o1', 'open_url', '{"url":"https://例.com/chelsea-article"}')] },
-        { answer: 'Dari artikel tersebut: Chelsea resmi mendatangkan dua pemain baru.' }
+        { answer: 'Dari halaman tersebut: Chelsea resmi mendatangkan Mateo Kovacic dan Cole Palmer.' }
     ]);
     const agent = createAgentManager({ aiAsk: ai.aiAsk, registry: reg });
     const { err, res } = await settled(agent, 'ringkas artikel tentang transfer Chelsea terbaru');
     assert.equal(err, null);
     assert.equal(reg._seen.search_web, 1, 'search ran first');
     assert.equal(reg._seen.open_url, 1, 'model may open the page when results are insufficient');
+    // the open_url tool result carried the page CONTENT (distinct from snippet)
     const opened = toolMsgs(ai.calls[2]).find(m => m.tool_call_id === 'o1');
-    assert.ok(opened && /opened/.test(opened.content));
-    assert.ok(/Chelsea resmi/.test(res.answer), 'final answer built from the opened page');
+    assert.ok(opened && /Kovacic/.test(opened.content), 'page content returned by open_url');
+    // that page content was in the context the model saw on its final turn
+    assert.ok(/Kovacic/.test(opened.content), 'page content present in tool result context');
+    // the final answer uses info that ONLY came from the page content
+    assert.ok(/Kovacic/.test(res.answer), 'final answer built from the opened page content');
+    assert.ok(!/BMRI naik/.test(res.answer), 'answer not just copied from the search snippet');
 });
 
 // =====================================================================

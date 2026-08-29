@@ -78,13 +78,6 @@ const FAST_SYSTEM_PROMPT =
     'You are Quick Search, a concise assistant. Answer the user directly. ' +
     'Do not mention tools unless the user asked about them.';
 
-// Explicit "open/visit/launch" intent. ONLY when this matches may the model be
-// offered the open_url tool; research questions must use search_web and answer
-// from its results. Duplicated (loader-safe) from questionRouter.OPEN_URL so
-// both the router and the agent stay in sync without a relative require.
-const OPEN_URL_INTENT = /\b((?:buka|bukakan|kunjungi|visit|launch|open)\s+(?:artikel|link|url|website|web|halaman|laman|situs|berita|page|article|browser|sumber)|(?:buka|kunjungi|launch|open)\s+di\s+browser|tampilkan\s+di\s+browser)\b/i;
-function defaultOpenUrlIntent(q) { return OPEN_URL_INTENT.test(String(q || '')); }
-
 function createAgentManager(opts) {
     opts = opts || {};
     if (typeof opts.aiAsk !== 'function') throw new Error('agent-manager-requires-aiAsk');
@@ -113,12 +106,6 @@ function createAgentManager(opts) {
     // true => use the tool-enabled agent loop; false => Fast Path (single call,
     // no tools). Absent router => legacy behavior (always the agent loop).
     const routeToAgent = typeof opts.routeToAgent === 'function' ? opts.routeToAgent : null;
-    // Phase 15 guardrail: open_url is only offered to the model when the user
-    // EXPLICITLY asks to open/visit/launch (e.g. "buka artikel…"). Research
-    // questions (cari/berita/informasi/rangkum/daftar…) must use search_web and
-    // answer from its results — never auto-open result URLs.
-    const openUrlIntent = typeof opts.openUrlIntent === 'function' ? opts.openUrlIntent : defaultOpenUrlIntent;
-    const detectUrlFn = typeof opts.detectUrl === 'function' ? opts.detectUrl : null;
     const safeEmit = (fn, ...args) => {
         if (!fn) return;
         try { fn.apply(null, args); } catch (e) {}
