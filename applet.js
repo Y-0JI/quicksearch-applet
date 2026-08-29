@@ -797,13 +797,29 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._conversation.send(question, askFn, (err, res) => {
             if (token !== this._aiSeq) return; // stale response, drop it
             if (err) {
-                // guardrail: rollback the failed user bubble from the UI;
-                // ConversationManager already rolled back its history
-                const lastYou = [...this._aiChat].reverse().findIndex(e => e.who === "you");
-                if (lastYou !== -1) this._aiChat.splice(this._aiChat.length - 1 - lastYou, 1);
-                pend.text = this._aiErrorText(err.error || "", err.detail || "");
-                pend.pending = false;
-                pend.isError = true;
+                const isMaxSteps = String(err.error || "") === 'max-steps';
+                const errText = this._aiErrorText(err.error || "", err.detail || "");
+                if (isMaxSteps) {
+                    // Preserve all prior tool activities; add error as final bubble
+                    // instead of overwriting the last activity (task §2).
+                    const isWork = (t) => t !== _("Thinking...") && t !== _("— dibatalkan —");
+                    if (pend.text && isWork(pend.text)) {
+                        pend.pending = false;
+                        this._aiChat.push({ who: "ai", text: errText, isError: true });
+                    } else {
+                        pend.text = errText;
+                        pend.pending = false;
+                        pend.isError = true;
+                    }
+                } else {
+                    // guardrail: rollback the failed user bubble from the UI;
+                    // ConversationManager already rolled back its history
+                    const lastYou = [...this._aiChat].reverse().findIndex(e => e.who === "you");
+                    if (lastYou !== -1) this._aiChat.splice(this._aiChat.length - 1 - lastYou, 1);
+                    pend.text = errText;
+                    pend.pending = false;
+                    pend.isError = true;
+                }
             } else {
                 pend.text = (res && res.answer) ? res.answer : _("(empty response)");
                 pend.pending = false;
@@ -822,15 +838,28 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     // Phase 13: render agent activity on the current pending bubble only.
     // kind: 'thinking' | 'working'; customText overrides both (confirmation).
+    // Fix: preserve previous tool activity as separate history entries so
+    // max-steps error does not erase them (task §1-2).
     _agentStatus(kind, toolId, customText) {
         const pend = this._agentPend;
         if (!pend || !pend.pending || pend.token !== this._aiSeq) return;
-        if (customText) pend.text = customText;
+        let newText;
+        if (customText) newText = customText;
         else if (kind === "working") {
-            pend.text = utilsMod.toolLabel(toolId) || _("Working...");
+            newText = utilsMod.toolLabel(toolId) || _("Working...");
         } else {
-            pend.text = _("Thinking...");
+            newText = _("Thinking...");
         }
+        // Preserve previous working activity as history before overwriting.
+        // Only preserve real tool activities, not transient "Thinking...".
+        const isWork = (t) => t !== _("Thinking...") && t !== _("— dibatalkan —");
+        if (pend.text !== newText && isWork(pend.text)) {
+            const idx = this._aiChat.indexOf(pend);
+            if (idx !== -1) {
+                this._aiChat.splice(idx, 0, { who: "ai", text: pend.text, activity: true });
+            }
+        }
+        pend.text = newText;
         this._renderAIChat();
     }
 
