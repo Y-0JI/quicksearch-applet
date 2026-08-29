@@ -299,8 +299,13 @@ function createWebProvider(helpers) {
             if (!s) return onResult(new Error('no-soup'));
             const msg = Soup.Message.new('POST', url);
             if (!msg) return onResult(new Error('bad-url'));
-            if (GLib) msg.set_request_body_from_bytes('application/x-www-form-urlencoded', new GLib.Bytes(Buffer.from(body)));
-            else msg.set_request_body_from_bytes('application/x-www-form-urlencoded', new (require('gi.GLib').Bytes)(Buffer.from(body)));
+            if (GLib) {
+                try { msg.set_request_body_from_bytes('application/x-www-form-urlencoded', GLib.Bytes.new(String(body))); }
+                catch (e) { msg.set_request_body_from_bytes('application/x-www-form-urlencoded', new GLib.Bytes(String(body))); }
+            } else {
+                try { msg.set_request_body_from_bytes('application/x-www-form-urlencoded', new (require('gi.GLib').Bytes)(String(body))); }
+                catch (e) { }
+            }
             s.send_and_read_async(msg, (GLib ? GLib.PRIORITY_DEFAULT : 0), cancellable, (sess, res) => {
                 try {
                     const bytes = sess.send_and_read_finish(res);
@@ -356,6 +361,15 @@ function createWebProvider(helpers) {
         if (!q) return;
 
         const isAgent = !!(opts && opts.agent);
+        const makeErrorFallback = (title, desc) => makeResult({
+            type: 'web',
+            title: title,
+            description: desc,
+            icon: 'dialog-warning',
+            score: scoreResult('web-fallback'),
+            url: searchUrl,
+            action: () => _openBrowser(searchUrl)
+        });
 
         // ── SearXNG Local backend ─────────────────────────────────────
         if (engine === 'searxng') {
@@ -384,6 +398,7 @@ function createWebProvider(helpers) {
                     searxngDone = true;
                     if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                     stage('http-done');
+                    searxngAvailable = false;
                     const errFallback = makeResult({
                         type: 'web',
                         title: 'SearXNG lokal tidak tersedia',
@@ -403,6 +418,7 @@ function createWebProvider(helpers) {
                     stage('http-done');
                     if (err) {
                         // SearXNG unavailable — re-deliver fallback with human-readable message
+                        searxngAvailable = false;
                         const errFallback = makeResult({
                             type: 'web',
                             title: 'SearXNG lokal tidak tersedia',
@@ -420,7 +436,11 @@ function createWebProvider(helpers) {
                         const extra = parseSearxngJson(data, makeResult, scoreResult);
                         stage('parse-done');
                         if (extra.length) { deliver([fallback].concat(extra)); stage('deliver'); }
-                    } catch (e) { /* parse failure: fallback already delivered */ }
+                    } catch (e) {
+                        searxngAvailable = false;
+                        const parseErr = makeErrorFallback('SearXNG: response tidak valid', 'Pastikan SearXNG berjalan');
+                        deliver([parseErr]);
+                    }
                 });
             } catch (e) { /* SearXNG backend error: fallback stands alone */ }
             return;
@@ -443,6 +463,7 @@ function createWebProvider(helpers) {
                         ggDone = true;
                         if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                         stage('http-done');
+                        deliver([makeErrorFallback('Google search timeout', 'Periksa koneksi')]);
                     });
                     doPost(apiUrl, body, cancellable, (err, dataStr) => {
                         if (ggDone) return;
@@ -450,13 +471,16 @@ function createWebProvider(helpers) {
                         _cancelTimeout(ggTid);
                         if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                         stage('http-done');
-                        if (err) return;
+                        if (err) {
+                            deliver([makeErrorFallback('Google search tidak tersedia', 'Periksa koneksi atau API key')]);
+                            return;
+                        }
                         try {
                             const data = JSON.parse(dataStr);
                             const extra = parseGoogleJson(data, makeResult, scoreResult);
                             stage('parse-done');
                             if (extra.length) { deliver([fallback].concat(extra)); stage('deliver'); }
-                        } catch (e) { /* parse failure: fallback already delivered */ }
+                        } catch (e) { deliver([makeErrorFallback('Google: response tidak valid', 'Coba lagi')]); }
                     });
                 } else {
                     // Production: Soup-based POST with Serper headers
@@ -468,14 +492,20 @@ function createWebProvider(helpers) {
                         // Set headers for Serper API
                         msg.request_headers.append('X-API-KEY', googleApiKey);
                         msg.request_headers.append('Content-Type', 'application/json');
-                        if (GLib) msg.set_request_body_from_bytes('application/json', new GLib.Bytes(Buffer.from(body)));
-                        else msg.set_request_body_from_bytes('application/json', new (require('gi.GLib').Bytes)(Buffer.from(body)));
+                        if (GLib) {
+                            try { msg.set_request_body_from_bytes('application/json', GLib.Bytes.new(String(body))); }
+                            catch (e) { msg.set_request_body_from_bytes('application/json', new GLib.Bytes(String(body))); }
+                        } else {
+                            try { msg.set_request_body_from_bytes('application/json', new (require('gi.GLib').Bytes)(String(body))); }
+                            catch (e) { }
+                        }
                         let serperDone = false;
                         let serperTid = _scheduleTimeout(REQUEST_TIMEOUT_MS, () => {
                             if (serperDone) return;
                             serperDone = true;
                             if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                             stage('http-done');
+                            deliver([makeErrorFallback('Google search timeout', 'Periksa koneksi')]);
                         });
                         s.send_and_read_async(msg, (GLib ? GLib.PRIORITY_DEFAULT : 0), cancellable, (sess, res) => {
                             if (serperDone) return;
@@ -489,18 +519,18 @@ function createWebProvider(helpers) {
                                 // Check for Serper error responses
                                 const status = msg.get_status();
                                 if (status === 429) {
-                                    // rate limited — fallback already delivered
+                                    deliver([makeErrorFallback('Google rate limited', 'Coba lagi nanti')]);
                                     return;
                                 }
                                 if (status >= 400) {
-                                    // other API error — fallback already delivered
+                                    deliver([makeErrorFallback('Google search error', 'Status ' + status)]);
                                     return;
                                 }
                                 const data = JSON.parse(dataStr);
                                 const extra = parseGoogleJson(data, makeResult, scoreResult);
                                 stage('parse-done');
                                 if (extra.length) { deliver([fallback].concat(extra)); stage('deliver'); }
-                            } catch (e) { /* network/parse failure: fallback already delivered */ }
+                            } catch (e) { deliver([makeErrorFallback('Google: response tidak valid', 'Coba lagi')]); }
                         });
                     } catch (e) { /* Soup unavailable: fallback stands alone */ }
                 }
@@ -523,6 +553,7 @@ function createWebProvider(helpers) {
                     bingDone = true;
                     if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                     stage('http-done');
+                    deliver([makeErrorFallback('Bing search timeout', 'Periksa koneksi')]);
                 });
                 doGet(htmlUrl, cancellable, (err, dataStr) => {
                     if (bingDone) return;
@@ -530,12 +561,15 @@ function createWebProvider(helpers) {
                     _cancelTimeout(bingTid);
                     if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                     stage('http-done');
-                    if (err) return; // network error: fallback already delivered
+                    if (err) {
+                        deliver([makeErrorFallback('Bing search tidak tersedia', 'Periksa koneksi')]);
+                        return;
+                    }
                     try {
                         const extra = parseBingHtml(dataStr, makeResult, scoreResult);
                         stage('parse-done');
                         if (extra.length) { deliver([fallback].concat(extra)); stage('deliver'); }
-                    } catch (e) { /* parse failure: fallback stands alone */ }
+                    } catch (e) { deliver([makeErrorFallback('Bing: response tidak valid', 'Coba lagi')]); }
                 });
             } catch (e) { /* transport unavailable: fallback stands alone */ }
             return;
@@ -559,6 +593,7 @@ function createWebProvider(helpers) {
                     ddgInstDone = true;
                     if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                     stage('http-done');
+                    deliver([makeErrorFallback('DDG search timeout', 'Periksa koneksi')]);
                 });
                 doGet(apiUrl, cancellable, (err, dataStr) => {
                     if (ddgInstDone) return;
@@ -566,7 +601,10 @@ function createWebProvider(helpers) {
                     _cancelTimeout(ddgInstTid);
                     if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                     stage('http-done');
-                    if (err) return;
+                    if (err) {
+                        deliver([makeErrorFallback('DDG search tidak tersedia', 'Periksa koneksi')]);
+                        return;
+                    }
                     try {
                         const data = JSON.parse(dataStr);
                         if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
@@ -598,7 +636,12 @@ function createWebProvider(helpers) {
                         }
                         stage('parse-done');
                         if (extra.length) { deliver([fallback].concat(extra)); stage('deliver'); }
-                    } catch (e) { /* network/parse failure: fallback already delivered */ }
+                        else {
+                            // DDG instant often has no web results for news queries – fall back to HTML path not available here
+                            // Deliver fallback only is enough for SEARCH mode; for Agent this path is not used (doInstant false)
+                            // Keep fallback only (already delivered) – no extra deliver to avoid duplicate
+                        }
+                    } catch (e) { deliver([makeErrorFallback('DDG: response tidak valid', 'Coba lagi')]); }
                 });
             } catch (e) { /* Soup unavailable etc.: fallback stands alone */ }
         }
@@ -615,6 +658,7 @@ function createWebProvider(helpers) {
                     ddgHtmlDone = true;
                     if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                     stage('http-done');
+                    deliver([makeErrorFallback('DDG search timeout', 'Periksa koneksi')]);
                 });
                 doPost(htmlUrl, body, cancellable, (err, dataStr) => {
                     if (ddgHtmlDone) return;
@@ -622,12 +666,15 @@ function createWebProvider(helpers) {
                     _cancelTimeout(ddgHtmlTid);
                     if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                     stage('http-done');
-                    if (err) return;
+                    if (err) {
+                        deliver([makeErrorFallback('DDG search tidak tersedia', 'Periksa koneksi')]);
+                        return;
+                    }
                     try {
                         const extra = parseDdgHtml(dataStr, makeResult, scoreResult);
                         stage('parse-done');
                         if (extra.length) { deliver([fallback].concat(extra)); stage('deliver'); }
-                    } catch (e) { /* parse failure: fallback already delivered */ }
+                    } catch (e) { deliver([makeErrorFallback('DDG: response tidak valid', 'Coba lagi')]); }
                 });
             } catch (e) { /* Soup unavailable etc.: fallback stands alone */ }
         }

@@ -85,19 +85,22 @@ function createDefaultTools(deps) {
                     if (isAgent) return; // agent: wait for real results only
                     finish(list);       // SEARCH mode: instant fallback
                 };
-                // Phase 14 settle timer: if the backend is unreachable the tool
-                // must still resolve.  In agent mode we deliver an empty result
-                // set so the AI can say 'no results found' instead of hanging.
-                // 3 500 ms covers SearXNG (fast) + Serper (1-2 s) + margin.
-                settleTimerId = timers.after(isAgent ? 3500 : LIMITS.webGraceMs, () => {
-                    if (!settled) finish(isAgent ? [] : undefined);
-                });
                 let first = true;
+                let firstList = null;
+                // 5 000 ms > webProvider 4000 ms timeout so provider has time
+                // to deliver proper error fallback before settle fires
+                settleTimerId = timers.after(isAgent ? 5000 : LIMITS.webGraceMs, () => {
+                    if (!settled) {
+                        if (isAgent && firstList) finish(firstList);
+                        else finish(isAgent ? [] : undefined);
+                    }
+                });
                 const opts = isAgent ? { agent: true } : undefined;
                 d.webProvider.search(String(args.query), ctx.cancellable || null, list => {
                     if (isCancelled()) return;
                     if (first) {
                         first = false;
+                        firstList = list;
                         timerId = timers.after(graceMs, () => deliverOrWait(list));
                     } else {
                         finish(list); // upgraded answers arrived: done early
