@@ -19,7 +19,13 @@ function makeRegistry(spy) {
     reg.register({
         id: 'open_url', name: 'Open URL', description: 'Open an http(s) URL in the default browser.', riskLevel: 'LOW',
         inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
-        execute: (a, c, cb) => { if (spy) spy.open.push(a.url); cb(null, { opened: a.url }); }
+        // mirror the real tool: only http(s) is opened; dangerous schemes are
+        // rejected by the tool itself (no browser launch).
+        execute: (a, c, cb) => {
+            const url = /^https?:\/\//i.test(String(a.url)) ? a.url : null;
+            if (!url) { cb({ error: 'invalid-url' }); return; }
+            if (spy) spy.open.push(url); cb(null, { opened: url });
+        }
     });
     return reg;
 }
@@ -82,7 +88,7 @@ test('OPEN_URL regex: research questions NOT detected as open intent', () => {
 
 // ---- 1 & 2: web research uses search_web, NOT open_url ----
 
-test('web research: open_url tool is NOT offered to the model', async () => {
+test('web research: open_url tool IS offered to the model (model decides)', async () => {
     const spy = { search: 0, open: [] };
     const { agent, ai } = makeAgent([
         { toolCalls: [TC('w1', 'search_web', '{"query":"transfer Chelsea 2026"}')] },
@@ -93,23 +99,33 @@ test('web research: open_url tool is NOT offered to the model', async () => {
     assert.ok(r.answer.includes('transfer'));
     const offered = namesOf(ai.calls[0]);
     assert.ok(offered.includes('search_web'), 'search_web offered');
-    assert.ok(!offered.includes('open_url'), 'open_url must be hidden for research');
+    // Phase 16: open_url is offered to the model so it can decide when a page
+    // is genuinely needed — it is NOT hidden behind a regex gate.
+    assert.ok(offered.includes('open_url'), 'open_url offered to the model (model-driven)');
+    assert.equal(spy.open.length, 0, 'model chose NOT to open (search result was sufficient)');
 });
 
-test('web research: model cannot open result URLs (backstop)', async () => {
+test('web research: open_url opens valid http(s), rejects dangerous schemes', async () => {
     const spy = { search: 0, open: [] };
+    // a dangerous scheme must never reach the browser (real safety backstop)
     const { agent, ai } = makeAgent([
-        { toolCalls: [TC('w1', 'search_web', '{"query":"x"}')] },
-        // model wrongly tries to open a result URL even on research question
-        { toolCalls: [TC('o1', 'open_url', '{"url":"https://a.com/1"}')] },
+        { toolCalls: [TC('o1', 'open_url', '{"url":"javascript:alert(1)"}')] },
         { answer: 'jawaban' }
     ], spy);
-    const { err } = await settled(agent, 'carikan berita BMRI minggu ini');
+    const { err } = await settled(agent, 'carikan berita BMRI');
     assert.equal(err, null);
-    assert.equal(spy.open.length, 0, 'no browser opened for research question');
-    // model received a not-requested tool message, not a success
-    const toolMsgs = ai.calls[2].ctx.messages.filter(m => m.role === 'tool');
-    assert.ok(toolMsgs.some(m => m.content.includes('open-url-not-requested')));
+    assert.equal(spy.open.length, 0, 'dangerous scheme never reaches the browser');
+    const toolMsgs = ai.calls[1].ctx.messages.filter(m => m.role === 'tool');
+    assert.ok(toolMsgs.some(m => m.content.includes('invalid-url')));
+    // a valid http(s) URL IS opened when the model decides it is needed
+    const spy2 = { search: 0, open: [] };
+    const { agent: a2 } = makeAgent([
+        { toolCalls: [TC('o1', 'open_url', '{"url":"https://a.com/1"}')] },
+        { answer: 'dibuka' }
+    ], spy2);
+    const { err: e2 } = await settled(a2, 'buka artikel pertama');
+    assert.equal(e2, null);
+    assert.deepEqual(spy2.open, ['https://a.com/1'], 'valid http(s) opened when model decides');
 });
 
 // ---- 3: explicit "buka artikel" still offers open_url ----
@@ -158,17 +174,25 @@ test('web research: multiple search_web calls allowed (refined query)', async ()
 
 // ---- 6: agent does not burn steps opening many URLs ----
 
-test('web research: model cannot spam open_url (guardrail stops browser, run finishes)', async () => {
+test('web research: open_url bounded by max-steps (run finishes, no infinite loop)', async () => {
     const spy = { search: 0, open: [] };
-    const { agent, ai } = makeAgent([
-        { toolCalls: [TC('w1', 'search_web', '{"query":"x"}')] },
+    // model keeps requesting pages — the safety limit (max-steps) must end the
+    // run; this is the remaining guardrail against runaway browser opens.
+    const { agent } = makeAgent([
         { toolCalls: [TC('o1', 'open_url', '{"url":"https://a.com/1"}')] },
         { toolCalls: [TC('o2', 'open_url', '{"url":"https://b.com/2"}')] },
-        { answer: 'jawaban akhir' }
-    ], spy);
+        { toolCalls: [TC('o3', 'open_url', '{"url":"https://c.com/3"}')] },
+        { toolCalls: [TC('o4', 'open_url', '{"url":"https://d.com/4"}')] },
+        { toolCalls: [TC('o5', 'open_url', '{"url":"https://e.com/5"}')] },
+        { toolCalls: [TC('o6', 'open_url', '{"url":"https://f.com/6"}')] },
+        { toolCalls: [TC('o7', 'open_url', '{"url":"https://g.com/7"}')] },
+        { toolCalls: [TC('o8', 'open_url', '{"url":"https://h.com/8"}')] },
+        { toolCalls: [TC('o9', 'open_url', '{"url":"https://i.com/9"}')] },
+        { toolCalls: [TC('o10', 'open_url', '{"url":"https://j.com/10"}')] }
+    ], spy, { maxSteps: 6 });
     const { err } = await settled(agent, 'carikan berita BMRI minggu ini');
-    assert.equal(err, null);
-    assert.equal(spy.open.length, 0, 'no URL opened despite repeated open_url attempts');
+    assert.equal(err && err.error, 'max-steps', 'run bounded even if model spams open_url');
+    assert.ok(spy.open.length <= 6, 'number of opens capped by the safety limit');
 });
 
 // ---- 7: source URLs remain in answer (clickable handled by UI) ----

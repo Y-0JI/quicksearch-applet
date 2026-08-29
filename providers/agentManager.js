@@ -51,11 +51,14 @@ const AGENT_SYSTEM_PROMPT =
     'membuka/mengunjungi suatu halaman, atau halaman itu benar-benar dibutuhkan ' +
     'untuk menyelesaikan tugas. JANGAN membuka URL hasil pencarian secara ' +
     'otomatis hanya karena URL-nya muncul. ' +
-    '- get_screen dan computer control (click, type_text, press_key, scroll, ' +
-    'focus_app): HANYA bila pengguna meminta tindakan pada komputer (misal ' +
-    '"buka browser", "klik tombol itu", "ketik ini"). Gunakan get_screen + ' +
-    'vision bila perlu memahami tampilan layar sebelum bertindak, dan selalu ' +
-    'patuhi konfirmasi izin yang diminta sistem. ' +
+    '- get_screen: untuk MEMBACA dan memahami tampilan layar kapan saja itu ' +
+    'diperlukan untuk membantu pengguna (misal "apa yang tampil di layar?", ' +
+    'atau untuk memahami kondisi sebelum bertindak). Ini hanya membaca, bukan ' +
+    'tindakan, sehingga tidak memerlukan izin. ' +
+    '- computer control (click, type_text, press_key, scroll, focus_app): HANYA ' +
+    'bila pengguna meminta tindakan pada komputer (misal "buka browser", "klik ' +
+    'tombol itu", "ketik ini"). Selalu patuhi konfirmasi izin yang diminta ' +
+    'sistem. ' +
     '- calculator, search_files, open_file, launch_app: gunakan bila relevan ' +
     'dengan permintaan. ' +
     'Gunakan percakapan sebelumnya untuk memahami rujukan seperti "yang ' +
@@ -129,8 +132,8 @@ function createAgentManager(opts) {
 
     // OpenAI wire-format tool definitions, derived fresh from the registry.
     // Conversion lives HERE so ToolRegistry stays free of AI knowledge.
-    // When allowOpen is false (research question), the open_url tool is removed
-    // so the model physically cannot open result URLs — the strongest guardrail.
+    // open_url is always offered; the model decides when a page is genuinely
+    // needed. Safety is the tool's URL-scheme validation + permission policy.
     function toolDefs(allowOpen) {
         if (!registry) return null;
         const defs = registry.list()
@@ -158,10 +161,14 @@ function createAgentManager(opts) {
         const cancellable = makeCancellable() || null;
         activeCancellable = cancellable;
 
-        // Phase 15: is this an explicit "open/visit/launch" request? Only then
-        // is open_url offered. A pasted URL also counts as explicit open intent.
-        const allowOpen = !!((detectUrlFn && detectUrlFn(String(question == null ? '' : question)))
-                           || (openUrlIntent && openUrlIntent(String(question == null ? '' : question))));
+        // Phase 16 refinement: open_url is OFFERED to the model in every agent
+        // run. The model — not a "buka/kunjungi" regex — decides when a page is
+        // genuinely needed (e.g. search results were insufficient). Safety is
+        // preserved: open_url's own URL-scheme validation (http/https only,
+        // never javascript:/file:/data:) and the permission policy still run for
+        // every call. The system prompt instructs the model not to auto-open
+        // result URLs; search-result URL dumps are NOT opened automatically.
+        const allowOpen = true;
 
         const base = Array.isArray(ctx && ctx.messages) ? ctx.messages.slice() : [];
         if (!base.length) base.push({ role: 'user', content: String(question == null ? '' : question) });
@@ -237,18 +244,6 @@ function createAgentManager(opts) {
             const verdict = policy
                 ? policy.decide(String(c.name || ''), toolMeta ? toolMeta.riskLevel : undefined)
                 : 'allow';
-
-            // Phase 15 backstop: even if the model names open_url on a research
-            // question (it shouldn't, since the tool is hidden), never open the
-            // browser. Tell it to answer from the search results instead.
-            if (String(c.name || '') === 'open_url' && !allowOpen) {
-                pushToolMessage(c.id, {
-                    error: 'open-url-not-requested',
-                    message: 'The user did not ask to open a URL. Use the search_web results to answer.'
-                });
-                executeCalls(calls, i + 1);
-                return;
-            }
 
             const proceed = () => {
                 safeEmit(onToolStart, String(c.name || ''));

@@ -309,3 +309,77 @@ test('P16: runaway tool loop hits safety limit with max-steps error', async () =
     assert.equal(err && err.error, 'max-steps');
     assert.equal(res, null);
 });
+
+// =====================================================================
+// 11. open_url is OFFERED to the model (no regex gate) on a plain
+//     research question — but a sufficient search still never opens it.
+// =====================================================================
+test('P16: open_url visible to model on research question (gate removed)', async () => {
+    const reg = makeRegistry();
+    let offered = null;
+    const agent = createAgentManager({
+        aiAsk: (q, ctx, cb) => { offered = ctx.tools; cb(null, { answer: 'cukup' }); },
+        registry: reg
+    });
+    const { err } = await settled(agent, 'berita apa hari ini?');
+    assert.equal(err, null);
+    const ids = (offered || []).map(t => t.function.name);
+    assert.ok(ids.includes('open_url'), 'open_url must be visible without buka/kunjungi regex');
+    assert.ok(ids.includes('search_web'));
+});
+
+// =====================================================================
+// 12. Insufficient search -> model CHOOSES open_url (no "buka" keyword),
+//     and the opened page content is used in the final answer.
+// =====================================================================
+test('P16: insufficient search -> model opens the page (decision on model)', async () => {
+    const reg = makeRegistry();
+    const ai = scriptedAI([
+        { toolCalls: [TC('w1', 'search_web', '{"query":"transfer Chelsea terbaru"}')] },
+        { toolCalls: [TC('o1', 'open_url', '{"url":"https://例.com/chelsea-article"}')] },
+        { answer: 'Dari artikel tersebut: Chelsea resmi mendatangkan dua pemain baru.' }
+    ]);
+    const agent = createAgentManager({ aiAsk: ai.aiAsk, registry: reg });
+    const { err, res } = await settled(agent, 'ringkas artikel tentang transfer Chelsea terbaru');
+    assert.equal(err, null);
+    assert.equal(reg._seen.search_web, 1, 'search ran first');
+    assert.equal(reg._seen.open_url, 1, 'model may open the page when results are insufficient');
+    const opened = toolMsgs(ai.calls[2]).find(m => m.tool_call_id === 'o1');
+    assert.ok(opened && /opened/.test(opened.content));
+    assert.ok(/Chelsea resmi/.test(res.answer), 'final answer built from the opened page');
+});
+
+// =====================================================================
+// 13. Screen-READING intent -> get_screen used, NO computer-control action.
+// =====================================================================
+test('P16: screen-reading -> get_screen used without computer-control request', async () => {
+    const reg = makeRegistry();
+    const ai = scriptedAI([
+        { toolCalls: [TC('s1', 'get_screen', '{}')] },
+        { answer: 'Di layar tampak jendela browser dengan berita terbuka.' }
+    ]);
+    const agent = createAgentManager({ aiAsk: ai.aiAsk, registry: reg, hasVision: () => true });
+    const { err, res } = await settled(agent, 'apa yang tampil di layar sekarang?');
+    assert.equal(err, null);
+    assert.equal(reg._seen.get_screen, 1, 'reading the screen needs no control request');
+    assert.equal(reg._seen.click, 0, 'no action taken');
+    assert.equal(reg._seen.launch_app, 0);
+    assert.equal(reg._seen.open_url, 0);
+    assert.ok(/layar/.test(res.answer));
+});
+
+// =====================================================================
+// 14. Verify no search result is auto-opened: sufficient search => 0 open_url
+// =====================================================================
+test('P16: sufficient search result is answered without opening any URL', async () => {
+    const reg = makeRegistry();
+    const ai = scriptedAI([
+        { toolCalls: [TC('w1', 'search_web', '{"query":"harga emas hari ini"}')] },
+        { answer: 'Harga emas hari ini naik. Sumber: https://例.com/bmri' }
+    ]);
+    const agent = createAgentManager({ aiAsk: ai.aiAsk, registry: reg });
+    const { err, res } = await settled(agent, 'harga emas hari ini?');
+    assert.equal(err, null);
+    assert.equal(reg._seen.open_url, 0, 'URLs from search results are NEVER auto-opened');
+    assert.ok(/naik/.test(res.answer));
+});
