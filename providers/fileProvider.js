@@ -24,12 +24,14 @@ function createFileProvider(helpers) {
     };
     const backend = pickFileBackend(avail);
 
-    const cache = new Map(); // key "query|loc0|backend" -> results array
+    const cache = new Map(); // key "query|locations|backend" -> results array
+    const ICON_CACHE_MAX = 500;
+    const iconCache = new Map(); // path -> icon (string or GIcon)
 
     function search(query, cancellable, onDone) {
         if (!backend || !query || !query.trim()) { onDone([]); return; }
 
-        const key = query + '|' + locations[0] + '|' + backend;
+        const key = query + '|' + JSON.stringify(locations) + '|' + backend; // P2-7: all locations
         if (cache.has(key)) {
             onDone(cache.get(key));
             return;
@@ -118,13 +120,24 @@ function createFileProvider(helpers) {
                 type: 'file',
                 title: GLib.basename(p) || p,
                 description: GLib.path_get_dirname(p),
-                icon: _iconForPath(p),
+                icon: _cachedIcon(p),
                 path: p.replace(/\/+$/, '') || '/',
                 score: scoreResult(quality),
                 action: () => _openPath(p)
             }));
         }
         return scored;
+    }
+
+    function _cachedIcon(p) {
+        if (iconCache.has(p)) return iconCache.get(p);
+        const icon = _iconForPath(p);
+        if (iconCache.size >= ICON_CACHE_MAX) {
+            const first = iconCache.keys().next().value;
+            iconCache.delete(first);
+        }
+        iconCache.set(p, icon);
+        return icon;
     }
 
     function _cachePut(key, value) {
@@ -137,6 +150,7 @@ function createFileProvider(helpers) {
 
     function destroy() {
         cache.clear();
+        iconCache.clear();
     }
 
     return { search, destroy };

@@ -11,6 +11,7 @@ function createAppProvider(helpers) {
     const limitDefault = helpers.limits && helpers.limits.app ? helpers.limits.app : 5;
     const appsys = Cinnamon.AppSystem.get_default();
     let index = null;
+    let installedChangedId = 0;
 
     function buildIndex() {
         index = [];
@@ -35,9 +36,11 @@ function createAppProvider(helpers) {
     function ensureIndex() {
         if (!index) {
             buildIndex();
-            try {
-                appsys.connect('installed-changed', () => { index = null; });
-            } catch (e) { /* non-critical */ }
+            if (!installedChangedId) {
+                try {
+                    installedChangedId = appsys.connect('installed-changed', () => { index = null; });
+                } catch (e) { /* non-critical */ }
+            }
         }
     }
 
@@ -84,6 +87,10 @@ function createAppProvider(helpers) {
 
     function destroy() {
         index = null;
+        if (installedChangedId) {
+            try { appsys.disconnect(installedChangedId); } catch (e) {}
+            installedChangedId = 0;
+        }
     }
 
     return { searchApps, destroy };

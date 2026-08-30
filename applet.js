@@ -88,17 +88,19 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
 
         this._entryRow.reactive = true;
         this._autoScroll.reactive = true;
+        this._hoverIds = [];
         for (const [actor, key] of [
             [this._entryRow, "_ptrInEntry"],
             [this._autoScroll, "_ptrInPopup"]
         ]) {
-            actor.connect("enter-event", () => this._applet._notePointer(key, true));
-            actor.connect("leave-event", () => this._applet._notePointer(key, false));
+            this._hoverIds.push(actor.connect("enter-event", () => this._applet._notePointer(key, true)));
+            this._hoverIds.push(actor.connect("leave-event", () => this._applet._notePointer(key, false)));
         }
+        this._keyFocusIds = [];
 
         // caret blink: 530ms toggle when entry has key focus
-        this._entry.connect("key-focus-in", () => this._startCaretBlink());
-        this._entry.connect("key-focus-out", () => this._stopCaretBlink());
+        this._keyFocusIds.push(this._entry.connect("key-focus-in", () => this._startCaretBlink()));
+        this._keyFocusIds.push(this._entry.connect("key-focus-out", () => this._stopCaretBlink()));
         this._entry.clutter_text.connect("text-changed", (actor) => {
             // reset to visible on typing so caret doesn't hide mid-type
             this._caretVisible = true;
@@ -224,6 +226,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._rows = [];
         this._selIdx = -1;
         this._current = [];
+        this._sortedResults = [];
 
         this._createEngine();
         this._bindHotkey();
@@ -438,6 +441,7 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     _buildLocals(text) {
         if (!text.trim()) return [];
+        if (!this.show_recent) return [];
         const appHits = this._appProvider
             ? this._appProvider.searchApps(text, 6).map(r => String(r.title))
             : [];
@@ -485,6 +489,22 @@ class QuickSearchApplet extends Applet.IconApplet {
             if (this._selIdx >= 0 && this._rows[this._selIdx]) {
                 this.activateRow(this._rows[this._selIdx]);
                 return Clutter.EVENT_STOP;
+            }
+            // P1-1: Enter without selection -> global Best Match (highest score)
+            if (this._sortedResults && this._sortedResults.length) {
+                const best = this._sortedResults[0];
+                // find row matching best id, else activate result directly
+                let bestRow = null;
+                for (let i = 0; i < this._rows.length; i++) {
+                    if (this._rows[i] && this._rows[i].result && this._rows[i].result.id === best.id) { bestRow = this._rows[i]; break; }
+                }
+                if (bestRow) { this.activateRow(bestRow); return Clutter.EVENT_STOP; }
+                if (best.action) {
+                    try { best.action(); } catch (e) { Main.notifyError(_("Quick Search"), _("Action failed")); }
+                    this._pushRecent(this._overlay ? this._overlay.getText() : "");
+                    this.close();
+                    return Clutter.EVENT_STOP;
+                }
             }
         }
         return Clutter.EVENT_PROPAGATE;
@@ -564,6 +584,7 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     renderResults(results) {
         this._current = results;
+        this._sortedResults = Array.isArray(results) ? results.slice() : [];
 
         const SECTION_ORDER = [
             ["calc", null],
@@ -608,14 +629,35 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     _syncSelection() {
+        // P1-3: preserve selection by id if still valid, else clamped index
+        let prevId = null;
+        let prevIdx = this._selIdx;
+        if (prevIdx >= 0 && this._rows && this._rows[prevIdx] && this._rows[prevIdx].result) {
+            prevId = this._rows[prevIdx].result.id || null;
+        }
         const hidden = this._overlay && !this._overlay._autoScroll.visible;
         const startAt = hidden ? Math.min(this._autoRows.length,
                                           Math.max(0, this._rows ? this._autoRows.length : 0)) : 0;
         this._rows = this._autoRows.concat(this._mainRows);
-        this._selIdx = -1;
-        if (this._rows.length) {
-            this.setSelection(Math.min(startAt, this._rows.length - 1));
+        if (!this._rows.length) { this._selIdx = -1; return; }
+        // try restore by id
+        if (prevId) {
+            for (let i = 0; i < this._rows.length; i++) {
+                if (this._rows[i].result && this._rows[i].result.id === prevId) {
+                    this._selIdx = -1;
+                    this.setSelection(i);
+                    return;
+                }
+            }
         }
+        // try restore by index if still in bounds
+        if (prevIdx >= 0 && prevIdx < this._rows.length) {
+            this._selIdx = -1;
+            this.setSelection(prevIdx);
+            return;
+        }
+        this._selIdx = -1;
+        this.setSelection(Math.min(startAt, this._rows.length - 1));
     }
 
     _buildRow(item) {
@@ -671,18 +713,39 @@ class QuickSearchApplet extends Applet.IconApplet {
     on_applet_removed_from_panel(reload) {
         Main.keybindingManager.removeHotKey(this._hotkeyName);
         this._cancelPopupHide();
+        if (this._overlay) {
+            try { this._overlay._stopCaretBlink(); } catch (e) {}
+            // disconnect hover/key-focus/outside signals
+            try {
+                if (this._overlay._hoverIds) for (const id of this._overlay._hoverIds) { try { this._overlay._entryRow.disconnect(id); } catch(e){} try { this._overlay._autoScroll.disconnect(id); } catch(e){} }
+            } catch(e){}
+            try {
+                if (this._overlay._keyFocusIds) for (const id of this._overlay._keyFocusIds) { try { this._overlay._entry.disconnect(id); } catch(e){} }
+            } catch(e){}
+            try {
+                if (this._overlay._outsideClickId) {
+                    const tgt = (this._overlay._lightbox && this._overlay._lightbox.actor) ? this._overlay._lightbox.actor : this._overlay._backgroundBin;
+                    if (tgt) try { tgt.disconnect(this._overlay._outsideClickId); } catch(e){}
+                }
+            } catch(e){}
+            this._overlay._hoverIds = [];
+            this._overlay._keyFocusIds = [];
+            this._overlay._outsideClickId = 0;
+        }
         if (this._engine) {
-            this._engine.destroy();
+            try { this._engine.cancel(); } catch(e){}
+            try { this._engine.destroy(); } catch(e){}
             this._engine = null;
         }
-        this.close();
+        try { this.close(); } catch(e){}
         if (this._overlay) {
-            this._overlay.destroy();
+            try { this._overlay.destroy(); } catch(e){}
             this._overlay = null;
         }
         this.destroySettings();
         this._rows = [];
         this._current = [];
+        this._sortedResults = [];
         this._recent = [];
     }
 }
