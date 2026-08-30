@@ -114,12 +114,11 @@ function createFileProvider(helpers) {
             else if (base.indexOf(q) === 0) quality = 'file-prefix';
             else quality = 'file-contains';
 
-            const isDir = p[p.length - 1] === '/';
             scored.push(makeResult({
                 type: 'file',
                 title: GLib.basename(p) || p,
                 description: GLib.path_get_dirname(p),
-                icon: _iconForPath(p, isDir),
+                icon: _iconForPath(p),
                 path: p.replace(/\/+$/, '') || '/',
                 score: scoreResult(quality),
                 action: () => _openPath(p)
@@ -143,13 +142,24 @@ function createFileProvider(helpers) {
     return { search, destroy };
 }
 
-function _iconForPath(path, isDir) {
+function _iconForPath(path) {
+    try {
+        const f = Gio.File.new_for_path(path);
+        let t;
+        try {
+            t = f.query_file_type(Gio.FileQueryInfoFlags.FOLLOW_SYMLINKS, null);
+        } catch (e) {
+            const info = f.query_info('standard::type', Gio.FileQueryInfoFlags.FOLLOW_SYMLINKS, null);
+            t = info.get_file_type();
+        }
+        if (t === Gio.FileType.DIRECTORY) return 'folder-symbolic';
+    } catch (e) {}
     try {
         const [type] = Gio.content_type_guess(path, null, 0);
-        const icon = Gio.app_info_get_default_for_type(type, true);
-        if (icon && icon.get_icon()) return icon.get_icon();
+        const icon = Gio.content_type_get_icon(type);
+        if (icon) return icon;
     } catch (e) {}
-    return isDir ? 'folder' : 'text-x-generic';
+    return 'text-x-generic-symbolic';
 }
 
 // shared with the open_file tool (Phase 8): true when the path existed and a

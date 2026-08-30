@@ -20,6 +20,17 @@ const searchEngineMod = require('./searchEngine.js');
 
 const UUID = "quicksearch@yoji";
 
+// i18n: bind UUID domain so _("Mau cari apa") picks locale from ~/.local/share/locale
+try { imports.gettext.bindtextdomain(UUID, GLib.get_home_dir() + "/.local/share/locale"); } catch (e) {}
+function _(str) {
+    try {
+        const t = imports.gettext.dgettext(UUID, str);
+        if (t && t !== str) return t;
+    } catch (e) {}
+    try { return imports.gettext.gettext(str); } catch (e2) {}
+    return str;
+}
+
 const RECENT_MAX = 15;
 
 const FALLBACK_URLS = {
@@ -36,16 +47,19 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._applet = applet;
 
         this._entry = new St.Entry({
-            hint_text: _("Search..."),
+            hint_text: _("Mau cari apa"),
             can_focus: true,
             track_hover: true,
             style_class: "quicksearch-entry"
         });
+        this._entry.clutter_text.set_cursor_visible(true);
         const entryRow = new St.BoxLayout({ style_class: "quicksearch-entry-row" });
         this._entryRow = entryRow;
         entryRow.add(this._entry, { expand: true });
         this.contentLayout.add_style_class_name("quicksearch-content");
         this.contentLayout.add(entryRow);
+        this._caretBlinkId = 0;
+        this._caretVisible = true;
 
         this.resultsBox = new St.BoxLayout({ vertical: true });
         this._scroll = new St.ScrollView({
@@ -82,7 +96,13 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             actor.connect("leave-event", () => this._applet._notePointer(key, false));
         }
 
+        // caret blink: 530ms toggle when entry has key focus
+        this._entry.connect("key-focus-in", () => this._startCaretBlink());
+        this._entry.connect("key-focus-out", () => this._stopCaretBlink());
         this._entry.clutter_text.connect("text-changed", (actor) => {
+            // reset to visible on typing so caret doesn't hide mid-type
+            this._caretVisible = true;
+            try { this._entry.clutter_text.set_cursor_visible(true); } catch (e) {}
             this._applet.onTextChanged(actor.get_text());
         });
 
@@ -105,6 +125,26 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
                 return Clutter.EVENT_PROPAGATE;
             });
         }
+    }
+
+    _startCaretBlink() {
+        this._stopCaretBlink();
+        this._caretVisible = true;
+        try { this._entry.clutter_text.set_cursor_visible(true); } catch (e) {}
+        this._caretBlinkId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 530, () => {
+            this._caretVisible = !this._caretVisible;
+            try { this._entry.clutter_text.set_cursor_visible(this._caretVisible); } catch (e) {}
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    _stopCaretBlink() {
+        if (this._caretBlinkId) {
+            try { GLib.source_remove(this._caretBlinkId); } catch (e) {}
+            this._caretBlinkId = 0;
+        }
+        try { this._entry.clutter_text.set_cursor_visible(true); } catch (e) {}
+        this._caretVisible = true;
     }
 
     _isInsideDialog(gx, gy) {
@@ -291,6 +331,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._overlay.open(global.get_current_time());
         this._overlay.dialogLayout.set_height(global.screen_height - 2);
         global.stage.set_key_focus(this._overlay._entry);
+        this._overlay._startCaretBlink();
         this._overlay.setText("");
         this.renderResults([]);
     }
@@ -300,7 +341,10 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._cancelPopupHide();
         this._ptrInEntry = false;
         this._ptrInPopup = false;
-        if (this._overlay) this._overlay.close(global.get_current_time());
+        if (this._overlay) {
+            try { this._overlay._stopCaretBlink(); } catch (e) {}
+            this._overlay.close(global.get_current_time());
+        }
     }
 
     // ---- input flow ----

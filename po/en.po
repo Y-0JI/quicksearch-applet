@@ -1,0 +1,35 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: quicksearch@yoji 1.0\n"
+"POT-Creation-Date: 2026-08-30\n"
+"Language: en\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Mau cari apa"
+msgstr "What are you looking for"
+
+msgid "Quick Search"
+msgstr "Quick Search"
+
+msgid "History"
+msgstr "History"
+
+msgid "Suggestion"
+msgstr "Suggestion"
+
+msgid "APPLICATIONS"
+msgstr "APPLICATIONS"
+
+msgid "FILES"
+msgstr "FILES"
+
+msgid "WEB"
+msgstr "WEB"
+
+msgid "Recent"
+msgstr "Recent"
+
+msgid "Action failed"
+msgstr "Action failed"

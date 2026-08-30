@@ -1,0 +1,36 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: quicksearch@yoji 1.0\n"
+"POT-Creation-Date: 2026-08-30\n"
+"Language: id\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language-Team: Indonesian\n"
+
+msgid "Mau cari apa"
+msgstr "Mau cari apa"
+
+msgid "Quick Search"
+msgstr "Pencarian Cepat"
+
+msgid "History"
+msgstr "Riwayat"
+
+msgid "Suggestion"
+msgstr "Saran"
+
+msgid "APPLICATIONS"
+msgstr "APLIKASI"
+
+msgid "FILES"
+msgstr "FILE"
+
+msgid "WEB"
+msgstr "WEB"
+
+msgid "Recent"
+msgstr "Terbaru"
+
+msgid "Action failed"
+msgstr "Aksi gagal"
