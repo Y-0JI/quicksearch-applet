@@ -220,8 +220,17 @@ function createAIProvider(opts) {
                 }
                 const content = msg && msg.content;
                 if (content == null || !String(content).trim()) {
-                    const why = choice && choice.finish_reason ? ('finish_reason=' + choice.finish_reason) : '';
-                    done({ error: 'bad-response', detail: why });
+                    // ponytail: empty 200+stop must stay an error — never
+                    // synthesize an answer from reasoning fields. Upgrade
+                    // only by adding explicit reasoning UI, not by coercing.
+                    const parts = ['empty-content'];
+                    if (choice && choice.finish_reason) parts.push('finish_reason=' + choice.finish_reason);
+                    const respModel = (json && json.model) || model;
+                    if (respModel) parts.push('model=' + String(respModel).slice(0, 80));
+                    const hasReasoning = !!(msg && (msg.reasoning_content || msg.reasoning)) ||
+                        !!(choice && (choice.reasoning_content || choice.reasoning || choice.reasoning_details));
+                    if (hasReasoning) parts.push('reasoning_present');
+                    done({ error: 'bad-response', detail: parts.join(' ') });
                     return;
                 }
                 done(null, { answer: String(content).trim(), model: json.model || model });

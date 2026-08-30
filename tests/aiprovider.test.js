@@ -325,3 +325,72 @@ test('phase 12: system role passes through verbatim', () => {
     assert.equal(msgs[0].content, 'You are Quick Search, an agent with tools.');
     assert.equal(msgs[1].role, 'user');
 });
+
+// ---- Regression: 9Router HTTP 200 + finish_reason=stop + empty content ----
+// Raw audit 2026-08-30: model coba9router (muse-spark-1.2-contributor-free)
+// returns status 200, finish_reason=stop, content="" for any prompt
+// regardless of max_tokens/tools. Must surface as diagnosable bad-response,
+// never synthesize answer from reasoning fields.
+
+test('regression: 200 stop empty-string is bad-response with finish_reason in detail', () => {
+    const body = JSON.stringify({
+        model: 'muse-spark-1.2-contributor-free',
+        choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '' } }]
+    });
+    const t = makeMockTransport((o, cb) => cb(null, { status: 200, text: body }));
+    makeProvider(t).ask('apa itu RSI?', {}, (err, res) => {
+        assert.equal(err.error, 'bad-response');
+        assert.ok(err.detail.includes('empty-content'));
+        assert.ok(err.detail.includes('finish_reason=stop'));
+        assert.ok(err.detail.includes('muse-spark'));
+        assert.equal(res, undefined);
+    });
+});
+
+test('regression: 200 stop whitespace-only is bad-response', () => {
+    const body = JSON.stringify({
+        model: 'm',
+        choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '   \n\t  ' } }]
+    });
+    const t = makeMockTransport((o, cb) => cb(null, { status: 200, text: body }));
+    makeProvider(t).ask('hello', {}, (err) => {
+        assert.equal(err.error, 'bad-response');
+        assert.ok(err.detail.includes('empty-content'));
+    });
+});
+
+test('regression: 200 stop null content is bad-response', () => {
+    const body = JSON.stringify({
+        model: 'm',
+        choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: null } }]
+    });
+    const t = makeMockTransport((o, cb) => cb(null, { status: 200, text: body }));
+    makeProvider(t).ask('hello', {}, (err) => {
+        assert.equal(err.error, 'bad-response');
+    });
+});
+
+test('regression: empty content with reasoning_content present is still bad-response (no coercion)', () => {
+    const body = JSON.stringify({
+        model: 'm',
+        choices: [{ finish_reason: 'stop', message: {
+            role: 'assistant', content: '', reasoning_content: 'internal chain-of-thought' } }]
+    });
+    const t = makeMockTransport((o, cb) => cb(null, { status: 200, text: body }));
+    makeProvider(t).ask('q', {}, (err, res) => {
+        assert.equal(err.error, 'bad-response');
+        assert.ok(err.detail.includes('reasoning_present'));
+        assert.equal(res, undefined);
+    });
+});
+
+test('regression: tool_calls with empty content is NOT bad-response (bypass still valid)', () => {
+    const body = JSON.stringify({ model: 'm', choices: [{ finish_reason: 'tool_calls', message: {
+        role: 'assistant', content: '',
+        tool_calls: [{ id: 'c1', type: 'function', function: { name: 'search_web', arguments: '{}' } }] } }] });
+    const t = makeMockTransport((o, cb) => cb(null, { status: 200, text: body }));
+    makeProvider(t).ask('q', {}, (err, res) => {
+        assert.equal(err, null);
+        assert.equal(res.toolCalls.length, 1);
+    });
+});
