@@ -417,15 +417,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 isAgentEnabled: () => !!this.ai_agent_enabled,
                 isComputerControlAllowed: () => !!this.ai_computer_control
             }),
-            requestConfirmation: (req, cb) => this._confirmTool(req, cb),
-            // Phase 13 latency fix: route general questions to the Fast Path
-            // (one model call, no tools); tool-intent questions use the loop.
-            routeToAgent: questionRouterMod.createQuestionRouter({
-                detectUrl: urlProviderMod.detectUrl,
-                appProvider: providers.appProvider,
-                computerControl: computerControlMod,
-                hasScreen: () => true
-            })
+            requestConfirmation: (req, cb) => this._confirmTool(req, cb)
         });
 
         this._engine = searchEngineMod.createSearchEngine({
