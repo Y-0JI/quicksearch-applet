@@ -78,7 +78,7 @@ test('Bing backend: engine selection routes to Bing, not DuckDuckGo', () => {
         engine: 'bing',
         httpGet: (url, c, cb) => { gets.push(url); cb(null, BING_FIXTURE); }
     });
-    wp.search('cari berita BMRI', null, () => {}, { agent: true });
+    wp.search('cari berita BMRI', null, () => {});
     assert.equal(gets.length, 1, 'exactly ONE GET for Bing');
     assert.ok(gets[0].includes('www.bing.com/search'), 'request went to Bing');
     assert.ok(!gets[0].includes('duckduckgo'), 'Bing must NOT route to DuckDuckGo');
@@ -92,12 +92,12 @@ test('Bing backend: query is URL-encoded in the request', () => {
         engine: 'bing',
         httpGet: (url, c, cb) => { gets.push(url); cb(null, BING_FIXTURE); }
     });
-    wp.search('cari berita BMRI hari ini', null, () => {}, { agent: true });
+    wp.search('cari berita BMRI hari ini', null, () => {});
     assert.ok(gets[0].includes('q='));
     assert.ok(gets[0].includes('BMRI') || gets[0].includes('cari'), 'query present (encoded)');
 });
 
-test('Bing backend: AGENT mode fetches Bing HTML and returns normalized results', () => {
+test('Bing backend: fetches Bing HTML and returns normalized results', () => {
     const stages = [];
     const wp = createWebProvider({
         makeResult: mk, scoreResult: sc,
@@ -107,7 +107,7 @@ test('Bing backend: AGENT mode fetches Bing HTML and returns normalized results'
         onStage: n => stages.push(n)
     });
     let delivered = 0;
-    wp.search('cari berita BMRI', null, list => { delivered = (list || []).length; }, { agent: true });
+    wp.search('cari berita BMRI', null, list => { delivered = (list || []).length; });
     assert.ok(stages.includes('http-start'));
     assert.ok(stages.includes('http-done'));
     assert.ok(stages.includes('parse-done'));
@@ -136,7 +136,7 @@ test('Bing backend: empty results -> fallback only', () => {
         httpGet: (url, c, cb) => cb(null, '<html><body>no b_algo here</body></html>')
     });
     let delivered = 0;
-    wp.search('test', null, list => { delivered = (list || []).length; }, { agent: true });
+    wp.search('test', null, list => { delivered = (list || []).length; });
     assert.equal(delivered, 1, 'fallback only (empty parse)');
 });
 
@@ -148,7 +148,7 @@ test('Bing backend: malformed HTML -> fallback only, no crash', () => {
         httpGet: (url, c, cb) => cb(null, '{broken')
     });
     let delivered = 0;
-    wp.search('test', null, list => { delivered = (list || []).length; }, { agent: true });
+    wp.search('test', null, list => { delivered = (list || []).length; });
     assert.equal(delivered, 1, 'fallback only (malformed)');
 });
 
@@ -160,7 +160,7 @@ test('Bing backend: network error -> fallback only, no crash', () => {
         httpGet: (url, c, cb) => cb(new Error('ECONNREFUSED'))
     });
     let delivered = 0;
-    wp.search('test', null, list => { delivered = (list || []).length; }, { agent: true });
+    wp.search('test', null, list => { delivered = (list || []).length; });
     assert.equal(delivered, 1, 'fallback only (network error)');
 });
 
@@ -172,7 +172,7 @@ test('Bing backend: timeout-like error -> fallback only, no crash', () => {
         httpGet: (url, c, cb) => cb(new Error('timeout'))
     });
     let delivered = 0;
-    wp.search('test', null, list => { delivered = (list || []).length; }, { agent: true });
+    wp.search('test', null, list => { delivered = (list || []).length; });
     assert.equal(delivered, 1, 'fallback only (timeout)');
 });
 
@@ -185,7 +185,7 @@ test('Bing backend: cancellation prevents upgrade delivery', () => {
     });
     let callCount = 0;
     const fakeCanc = { is_cancelled: () => true };
-    wp.search('test', fakeCanc, () => { callCount++; }, { agent: true });
+    wp.search('test', fakeCanc, () => { callCount++; });
     assert.ok(callCount <= 1, 'at most 1 delivery (fallback guaranteed, upgrade cancelled)');
 });
 
@@ -200,7 +200,7 @@ test('DDG regression: engine=ddgo still uses DuckDuckGo, not Bing', () => {
         engine: 'ddgo',
         httpGet: (url, c, cb) => { gets.push(url); cb(null, JSON.stringify({ AbstractText: 't', AbstractURL: 'https://example.com/a', Heading: 'h', RelatedTopics: [] })); }
     });
-    wp.search('test', null, () => {}, { agent: true });
+    wp.search('test', null, () => {});
     assert.ok(gets.some(u => u.includes('duckduckgo.com')), 'DDG instant used');
     assert.ok(!gets.some(u => u.includes('bing.com')), 'no Bing GET');
 });
@@ -213,7 +213,7 @@ test('Google regression: engine=google still uses Serper', () => {
         engine: 'google', googleApiKey: 'k',
         httpPost: (url, body, c, cb) => { posts.push(url); cb(null, JSON.stringify({ organic: [] })); }
     });
-    wp.search('test', null, () => {}, { agent: true });
+    wp.search('test', null, () => {});
     assert.equal(posts.length, 1);
     assert.ok(posts[0].includes('serper.dev'), 'Google -> Serper');
     assert.ok(!posts[0].includes('bing.com'));
@@ -228,7 +228,7 @@ test('SearXNG regression: engine=searxng still uses local instance', () => {
         searxngUrl: 'http://127.0.0.1:8080',
         httpGet: (url, c, cb) => { gets.push(url); cb(null, JSON.stringify({ results: [] })); }
     });
-    wp.search('test', null, () => {}, { agent: true });
+    wp.search('test', null, () => {});
     assert.ok(gets[0].includes('127.0.0.1:8080'), 'SearXNG local used');
     assert.ok(!gets[0].includes('bing.com'));
 });

@@ -53,7 +53,7 @@ test('parseGoogleJson: empty/missing organic -> empty array', () => {
 
 // ── Google backend via WebProvider (injected transport) ────────────────────
 
-test('Google backend: agent mode fetches from Serper API, returns real results', () => {
+test('Google backend: fetches from Serper API, returns real results', () => {
     const stages = [], posts = [];
     const wp = createWebProvider({
         makeResult: mk, scoreResult: sc,
@@ -68,7 +68,7 @@ test('Google backend: agent mode fetches from Serper API, returns real results',
         onStage: n => stages.push(n)
     });
     let delivered = 0;
-    wp.search('cari berita BMRI hari ini', null, list => { delivered = (list || []).length; }, { agent: true });
+    wp.search('cari berita BMRI hari ini', null, list => { delivered = (list || []).length; });
     assert.equal(posts.length, 1, 'exactly ONE POST to Serper');
     assert.equal(posts[0].url, 'https://google.serper.dev/search');
     assert.equal(posts[0].body.q, 'cari berita BMRI hari ini');
@@ -107,7 +107,7 @@ test('Google backend: no API key -> falls back to DDG instant (no Google request
         httpPost: (url, body, c, cb) => { posts.push(url); cb(null, '<html></html>'); }
     });
     let delivered = 0;
-    wp.search('test', null, list => { delivered = (list || []).length; }, { agent: true });
+    wp.search('test', null, list => { delivered = (list || []).length; });
     assert.equal(posts.length, 0, 'no Google POST when API key missing');
     assert.ok(gets.some(u => u.includes('duckduckgo.com')), 'falls back to DDG instant');
     assert.equal(delivered, 1, 'fallback only (empty DDG instant)');
@@ -122,7 +122,7 @@ test('Google backend: malformed JSON -> fallback only, no crash', () => {
         httpPost: (url, body, c, cb) => cb(null, '{broken json')
     });
     let delivered = 0;
-    wp.search('test', null, list => { delivered = (list || []).length; }, { agent: true });
+    wp.search('test', null, list => { delivered = (list || []).length; });
     assert.equal(delivered, 1, 'fallback only');
 });
 
@@ -135,13 +135,13 @@ test('Google backend: network error -> fallback only, no crash', () => {
         httpPost: (url, body, c, cb) => cb(new Error('network'))
     });
     let delivered = 0;
-    wp.search('test', null, list => { delivered = (list || []).length; }, { agent: true });
+    wp.search('test', null, list => { delivered = (list || []).length; });
     assert.equal(delivered, 1, 'fallback only');
 });
 
 // ── DDG backend unchanged (regression) ────────────────────────────────────
 
-test('DDG backend: agent mode still uses DDG instant GET (not Google)', () => {
+test('DDG backend: uses DDG instant GET (not Google)', () => {
     const gets = [];
     const wp = createWebProvider({
         makeResult: mk, scoreResult: sc,
@@ -150,7 +150,7 @@ test('DDG backend: agent mode still uses DDG instant GET (not Google)', () => {
         engine: 'ddgo',
         httpGet: (url, c, cb) => { gets.push(url); cb(null, JSON.stringify({ AbstractText: 't', AbstractURL: 'https://example.com/a', Heading: 'h', RelatedTopics: [] })); }
     });
-    wp.search('test', null, () => {}, { agent: true });
+    wp.search('test', null, () => {});
     assert.equal(gets.length, 1, 'DDG instant GET used');
     assert.ok(gets[0].includes('duckduckgo.com'));
 });
@@ -260,8 +260,8 @@ test('backend-neutral: both engines produce {title, url, description} shape', ()
         httpGet: (url, c, cb) => cb(null, JSON.stringify({ AbstractText: 'abstract', AbstractURL: 'https://example.com/a', Heading: 'H', RelatedTopics: [{ Text: 'T', FirstURL: 'https://example.com/b' }] }))
     });
     let googleResults = null, ddgResults = null;
-    googleProvider.search('bmri', null, list => { googleResults = list; }, { agent: true });
-    ddgProvider.search('bmri', null, list => { ddgResults = list; }, { agent: true });
+    googleProvider.search('bmri', null, list => { googleResults = list; });
+    ddgProvider.search('bmri', null, list => { ddgResults = list; });
     // both should have at least fallback + real results
     assert.ok(googleResults && googleResults.length > 1, 'Google: fallback + real results');
     assert.ok(ddgResults && ddgResults.length > 1, 'DDG: fallback + real results');

@@ -323,7 +323,7 @@ function createWebProvider(helpers) {
         });
     }
 
-    function search(query, cancellable, onDone, opts) {
+    function search(query, cancellable, onDone) {
         const q = String(query || '').trim();
         const searchUrl = fallbackUrlFor(q);
 

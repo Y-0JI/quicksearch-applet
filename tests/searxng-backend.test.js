@@ -53,7 +53,7 @@ test('parseSearxngJson: empty/missing results -> empty array', () => {
 
 // ── SearXNG backend via WebProvider (injected transport) ───────────────────
 
-test('SearXNG backend: agent mode fetches from local SearXNG, returns real results', () => {
+test('SearXNG backend: fetches from local SearXNG, returns real results', () => {
     const stages = [], gets = [];
     const wp = createWebProvider({
         makeResult: mk, scoreResult: sc,
@@ -68,7 +68,7 @@ test('SearXNG backend: agent mode fetches from local SearXNG, returns real resul
         onStage: n => stages.push(n)
     });
     let delivered = 0;
-    wp.search('cari berita BMRI hari ini', null, list => { delivered = (list || []).length; }, { agent: true });
+    wp.search('cari berita BMRI hari ini', null, list => { delivered = (list || []).length; });
     assert.equal(gets.length, 1, 'exactly ONE GET to SearXNG');
     assert.ok(gets[0].includes('127.0.0.1:8080/search'));
     assert.ok(gets[0].includes('q=cari'));
@@ -89,7 +89,7 @@ test('SearXNG backend: custom URL is used', () => {
         searxngUrl: 'http://192.168.1.100:8888',
         httpGet: (url, c, cb) => { gets.push(url); cb(null, JSON.stringify(SEARXNG_FIXTURE)); }
     });
-    wp.search('test', null, () => {}, { agent: true });
+    wp.search('test', null, () => {});
     assert.ok(gets[0].includes('192.168.1.100:8888'));
 });
 
@@ -115,7 +115,7 @@ test('SearXNG backend: URL trailing slash stripped', () => {
         searxngUrl: 'http://127.0.0.1:8080/',
         httpGet: (url, c, cb) => { gets.push(url); cb(null, JSON.stringify(SEARXNG_FIXTURE)); }
     });
-    wp.search('test', null, () => {}, { agent: true });
+    wp.search('test', null, () => {});
     assert.ok(gets[0].includes('127.0.0.1:8080/search'), 'no double slash');
 });
 
@@ -128,7 +128,7 @@ test('SearXNG backend: malformed JSON -> fallback only, no crash', () => {
         httpGet: (url, c, cb) => cb(null, '{broken json')
     });
     let delivered = 0;
-    wp.search('test', null, list => { delivered = (list || []).length; }, { agent: true });
+    wp.search('test', null, list => { delivered = (list || []).length; });
     assert.equal(delivered, 1, 'fallback only');
 });
 
@@ -145,7 +145,7 @@ test('SearXNG backend: network error -> fallback with unavailable message', () =
     wp.search('test', null, list => {
         delivered = (list || []).length;
         if (list && list[0]) fallbackDesc = list[0].description || '';
-    }, { agent: true });
+    });
     assert.equal(delivered, 1, 'fallback only');
     assert.ok(fallbackDesc.includes('SearXNG'), 'unavailable message in fallback');
 });
@@ -159,7 +159,7 @@ test('SearXNG backend: empty results -> fallback only', () => {
         httpGet: (url, c, cb) => cb(null, JSON.stringify({ results: [] }))
     });
     let delivered = 0;
-    wp.search('test', null, list => { delivered = (list || []).length; }, { agent: true });
+    wp.search('test', null, list => { delivered = (list || []).length; });
     assert.equal(delivered, 1, 'fallback only (empty results)');
 });
 
@@ -173,7 +173,7 @@ test('SearXNG backend: cancellation prevents delivery', () => {
     });
     let callCount = 0;
     const fakeCanc = { is_cancelled: () => true };
-    wp.search('test', fakeCanc, () => { callCount++; }, { agent: true });
+    wp.search('test', fakeCanc, () => { callCount++; });
     // deliver() checks cancellation before calling onDone
     // fallback is delivered before the cancellable check (guaranteed instant)
     // but the upgrade delivery IS cancelled
@@ -203,12 +203,12 @@ test('DDG regression: engine ddgo still uses DDG instant', () => {
         useInstantAnswers: true, engine: 'ddgo',
         httpGet: (url, c, cb) => { gets.push(url); cb(null, JSON.stringify({ AbstractText: 't', AbstractURL: 'https://example.com/a', Heading: 'h', RelatedTopics: [] })); }
     });
-    wp.search('test', null, () => {}, { agent: true });
+    wp.search('test', null, () => {});
     assert.equal(gets.length, 1);
     assert.ok(gets[0].includes('duckduckgo.com'));
 });
 
-test('Google regression: agent mode still uses Serper POST', () => {
+test('Google regression: engine google still uses Serper POST', () => {
     const posts = [];
     const wp = createWebProvider({
         makeResult: mk, scoreResult: sc,
@@ -216,7 +216,7 @@ test('Google regression: agent mode still uses Serper POST', () => {
         engine: 'google', googleApiKey: 'test-key',
         httpPost: (url, body, c, cb) => { posts.push(url); cb(null, JSON.stringify({ organic: [] })); }
     });
-    wp.search('test', null, () => {}, { agent: true });
+    wp.search('test', null, () => {});
     assert.equal(posts.length, 1);
     assert.ok(posts[0].includes('serper.dev'));
 });

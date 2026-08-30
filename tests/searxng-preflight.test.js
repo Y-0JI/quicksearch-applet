@@ -178,13 +178,13 @@ test('regression: preflight fail → search retry succeeds after SearXNG comes o
             // preflight just set hint to false; search must still call httpGet
             retryCalls = 0;
             let got = 0;
-            wpRetry.search('hello', null, list => { got = (list || []).length; }, { agent: true });
+            wpRetry.search('hello', null, list => { got = (list || []).length; });
             setTimeout(() => {
                 assert.equal(retryCalls, 1, 'search retried after preflight fail');
                 assert.ok(got > 1, 'recovered provider delivers real results');
 
                 // Also verify fresh healthy provider delivers
-                wpUp.search('hello', null, list => { deliveredLen = (list || []).length; }, { agent: true });
+                wpUp.search('hello', null, list => { deliveredLen = (list || []).length; });
                 setTimeout(() => {
                     assert.ok(deliveredLen > 1, 'healthy provider delivers results');
                     wpDown.destroy(); wpUp.destroy(); wpRetry.destroy();
@@ -210,19 +210,19 @@ test('regression: success → transient failure → recovery on next search', ()
     });
     // search() delivers twice: instant fallback (1) then upgrade. Collect all.
     let gotA = [];
-    wp.search('a', null, list => { gotA.push([...(list || [])]); }, { agent: true });
+    wp.search('a', null, list => { gotA.push([...(list || [])]); });
     assert.equal(gotA.length, 2, 'first search: 2 deliveries (fallback + upgrade)');
     assert.ok(gotA[1].length > 1, 'first search upgrade has real results');
 
     failNext = true;
     let gotB = [];
-    wp.search('b', null, list => { gotB.push([...(list || [])]); }, { agent: true });
+    wp.search('b', null, list => { gotB.push([...(list || [])]); });
     assert.equal(gotB.length, 2, 'failure search: 2 deliveries (fallback + error fallback)');
     assert.equal(gotB[1].length, 1, 'failure upgrade is error fallback (1 item)');
     assert.ok(String(gotB[1][0].title).includes('SearXNG'), 'error fallback mentions SearXNG');
 
     let gotC = [];
-    wp.search('c', null, list => { gotC.push([...(list || [])]); }, { agent: true });
+    wp.search('c', null, list => { gotC.push([...(list || [])]); });
     assert.equal(gotC.length, 2, 'recovery search: 2 deliveries');
     assert.ok(gotC[1].length > 1, 'recovered search delivers real results again');
     assert.ok(callCount >= 3, 'each search retried HTTP: ' + callCount);
@@ -243,8 +243,8 @@ test('regression: custom searxng URL change → new provider uses new URL', () =
         engine: 'searxng', searxngUrl: 'http://10.0.0.5:9090',
         httpGet: (url, c, cb) => { getsB.push(url); cb(null, '{"results":[]}'); }
     });
-    wpA.search('test', null, () => {}, { agent: true });
-    wpB.search('test', null, () => {}, { agent: true });
+    wpA.search('test', null, () => {});
+    wpB.search('test', null, () => {});
     assert.ok(getsA[0].includes('127.0.0.1:8080'), 'first provider used original URL');
     assert.ok(getsB[0].includes('10.0.0.5:9090'), 'second provider used new URL');
     assert.ok(!getsB[0].includes('127.0.0.1:8080'), 'new URL not polluted by old');
