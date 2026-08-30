@@ -291,7 +291,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.settings.bind("ai-agent-enabled", "ai_agent_enabled");       // Phase 12
         this.settings.bind("ai-computer-control", "ai_computer_control"); // Phase 12
         this.settings.bind("web-search-api-key", "web_search_api_key"); // Phase 13: Google backend
-        this.settings.bind("searxng-url", "searxng_url"); // Phase 13: SearXNG Local backend
+        this.settings.bind("searxng-url", "searxng_url", () => this._rebuildEngine()); // SearXNG URL change must rebuild provider
 
         this._applySearchEngineSetting(); // normalize stored/legacy values once
 

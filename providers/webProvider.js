@@ -320,11 +320,10 @@ function createWebProvider(helpers) {
     const doPost = httpPost || scopedHttpPost;
 
     // ── SearXNG pre-flight availability check ─────────────────────────
-    // Phase 14 latency: ping the SearXNG endpoint once at startup so the
-    // first search doesn't wait for a full HTTP timeout (4 s) when the
-    // local instance is not running.  Result is cached; unknown → null,
-    // available → true, unavailable → false.
-    let searxngAvailable = null; // null = unknown, true/false = cached
+    // Phase 14 latency: ping once at startup. Result is a HINT only
+    // (unknown → null, available → true, unavailable → false).
+    // search() always retries the real endpoint; hint only warms cache.
+    let searxngAvailable = null; // null = unknown, true/false = hint
 
     function preflight(cb) {
         if (engine !== 'searxng') { if (cb) cb(null); return; }
@@ -372,22 +371,11 @@ function createWebProvider(helpers) {
         });
 
         // ── SearXNG Local backend ─────────────────────────────────────
+        // searxngAvailable is a hint only — never a permanent breaker.
+        // Every search() retries the real endpoint; success flips to
+        // true, failure flips to false, but no state blocks the next
+        // HTTP attempt. Phase 14 preflight only warms this hint.
         if (engine === 'searxng') {
-            // Phase 14 latency: skip HTTP if pre-flight already proved
-            // the local instance is unreachable (< 100 ms vs 4 s timeout).
-            if (searxngAvailable === false) {
-                const errFallback = makeResult({
-                    type: 'web',
-                    title: 'SearXNG lokal tidak tersedia',
-                    description: 'Pastikan SearXNG sedang berjalan',
-                    icon: 'dialog-warning',
-                    score: scoreResult('web-fallback'),
-                    url: searchUrl,
-                    action: () => _openBrowser(searchUrl)
-                });
-                deliver([errFallback]);
-                return;
-            }
             try {
                 const base = String(searxngUrl).replace(/\/+$/, '');
                 const apiUrl = base + '/search?q=' + encodeURIComponent(q) + '&format=json';
@@ -417,7 +405,7 @@ function createWebProvider(helpers) {
                     if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                     stage('http-done');
                     if (err) {
-                        // SearXNG unavailable — re-deliver fallback with human-readable message
+                        // hint only — next search() will still retry
                         searxngAvailable = false;
                         const errFallback = makeResult({
                             type: 'web',
@@ -431,13 +419,14 @@ function createWebProvider(helpers) {
                         deliver([errFallback]);
                         return;
                     }
+                    searxngAvailable = true;
                     try {
                         const data = JSON.parse(dataStr);
                         const extra = parseSearxngJson(data, makeResult, scoreResult);
                         stage('parse-done');
                         if (extra.length) { deliver([fallback].concat(extra)); stage('deliver'); }
                     } catch (e) {
-                        searxngAvailable = false;
+                        // parse fail is not availability — keep true from successful HTTP
                         const parseErr = makeErrorFallback('SearXNG: response tidak valid', 'Pastikan SearXNG berjalan');
                         deliver([parseErr]);
                     }
