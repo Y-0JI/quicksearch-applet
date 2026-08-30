@@ -132,15 +132,21 @@ test('WEB PARSE: parse completes cheaply after HTTP body arrives', () => {
     assert.ok(pd - hd < 50, 'HTML parse + map is microseconds, not a wait: ' + (pd - hd) + 'ms');
 });
 
-test('WEB router: non-web question takes Fast Path, webProvider never invoked', async () => {
+test('WEB router: non-web question now uses unified agent loop (Fast Path removed)', async () => {
     const httpCalls = [], calls = [];
-    const httpPost = (url, body, c, onResult) => { httpCalls.push(url); };
+    const httpPost = (url, body, c, onResult) => { httpCalls.push(url); onResult(null, FIXTURE); };
     const { reg } = makeAgent(httpPost, []);
     const router = createQuestionRouter({ detectUrl: () => null, appProvider: { searchApps: () => [] }, computerControl: null, hasScreen: () => false });
-    const agent = createAgentManager({ aiAsk: makeAiAsk(calls), registry: reg, routeToAgent: router });
+    // Unified loop: model is offered tools but for general knowledge it answers directly (no tool call).
+    const directAi = (q, ctx, cb) => {
+        calls.push({ hasTools: !!(ctx.tools && ctx.tools.length) });
+        cb(null, { answer: 'final-answer' });
+    };
+    const agent = createAgentManager({ aiAsk: directAi, registry: reg, routeToAgent: router });
     const { r } = await settle(agent, 'Apa ibu kota Jepang?');
-    assert.equal(httpCalls.length, 0, 'web search NOT invoked for a general question');
-    assert.equal(calls.length, 1, 'fast path = single AI call');
+    assert.equal(calls.length, 1, 'single AI call via agent loop');
+    assert.equal(calls[0].hasTools, true, 'unified loop always sends tools');
+    assert.equal(httpCalls.length, 0, 'general knowledge: web not invoked (model answered directly)');
     assert.equal(r.answer, 'final-answer');
 });
 

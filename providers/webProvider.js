@@ -239,6 +239,24 @@ function parseBingHtml(html, makeResult, scoreResult) {
     return out;
 }
 
+// Strip full-page HTML (script/style/comments included) down to plain
+// text. Unlike the small-snippet `clean()` inside each parser, this must
+// remove <script>/<style> BODIES first — snippet parsers never see a
+// target site's own JS/CSS, a full-page fetch does.
+function _htmlToText(html) {
+    return String(html || '')
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<!--[\s\S]*?-->/g, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&#39;/g, "'")
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
+        .replace(/&#(\d+);/g, (m, n) => String.fromCharCode(Number(n)))
+        .replace(/&[a-z]+;/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
 // ── WebProvider factory ────────────────────────────────────────────────────
 
 function createWebProvider(helpers) {
@@ -669,12 +687,40 @@ function createWebProvider(helpers) {
         }
     }
 
+    // fetch_page: reads ONE specific URL's text content back to the model —
+    // no visible browser window (unlike open_url/_openBrowser). Reuses the
+    // SAME timeout-safe session/doGet as search(), same _scheduleTimeout
+    // idiom as the doHtml path above.
+    function fetchPage(url, cancellable, cb) {
+        cb = typeof cb === 'function' ? cb : () => {};
+        if (!/^https?:\/\//i.test(String(url || ''))) { cb({ error: 'invalid-url' }); return; }
+        try { ensureSession(); } catch (e) { cb({ error: 'session-unavailable' }); return; }
+        let done = false;
+        const tid = _scheduleTimeout(REQUEST_TIMEOUT_MS, () => {
+            if (done) return;
+            done = true;
+            if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
+            cb({ error: 'timeout', message: 'Halaman tidak merespons' });
+        });
+        doGet(url, cancellable, (err, dataStr) => {
+            if (done) return;
+            done = true;
+            _cancelTimeout(tid);
+            if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
+            if (err) { cb({ error: 'fetch-failed', message: String(err) }); return; }
+            try {
+                const text = _htmlToText(String(dataStr || '').slice(0, 300000));
+                cb(null, { url: url, text: text });
+            } catch (e) { cb({ error: 'parse-failed' }); }
+        });
+    }
+
     function destroy() {
         session = null;
         searxngAvailable = null;
     }
 
-    return { search, destroy, preflight };
+    return { search, destroy, preflight, fetchPage };
 }
 
 function _openBrowser(url) {

@@ -44,10 +44,10 @@ function registryWith(deps) {
     return reg;
 }
 
-test('all twelve tools registered with expected ids + risk levels', () => {
+test('all thirteen tools registered with expected ids + risk levels', () => {
     const reg = registryWith(makeControlDeps());
     const ids = reg.list().map(t => t.id).sort();
-    assert.deepEqual(ids, ['calculator', 'click', 'focus_app', 'get_screen', 'launch_app',
+    assert.deepEqual(ids, ['calculator', 'click', 'fetch_page', 'focus_app', 'get_screen', 'launch_app',
                            'open_file', 'open_url', 'press_key', 'scroll', 'search_files',
                            'search_web', 'type_text']);
     assert.equal(reg.get('launch_app').riskLevel, 'MEDIUM');
@@ -252,7 +252,7 @@ const VISION_CTX = { capabilities: { vision: true }, cancellable: { c: 1 } };
 test('phase 11: five control tools registered with expected risk levels', () => {
     const reg = registryWith(makeControlDeps());
     const ids = reg.list().map(t => t.id).sort();
-    assert.deepEqual(ids, ['calculator', 'click', 'focus_app', 'get_screen', 'launch_app',
+    assert.deepEqual(ids, ['calculator', 'click', 'fetch_page', 'focus_app', 'get_screen', 'launch_app',
                            'open_file', 'open_url', 'press_key', 'scroll', 'search_files',
                            'search_web', 'type_text']);
     for (const id of ['click', 'type_text', 'press_key', 'scroll']) {

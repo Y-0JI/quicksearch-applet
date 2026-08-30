@@ -28,55 +28,65 @@ const FALLBACK_LIMITS = {
     agentWebGraceMs: 400   // Phase 14: reduced from 1200ms for faster web search
 };
 
-// Phase 12: keeps the model honest about tool use — intent narration is NOT
-// execution. Short by design (token cost); policy enforcement lives in code,
-// never in the prompt.
-// Phase 16: natural, model-driven assistant persona. The model — not a fixed
-// workflow — decides when to use tools. Policy/safety is still enforced in
-// code (toolRegistry + permissionPolicy); the prompt only nudges behavior.
 const AGENT_SYSTEM_PROMPT =
-    'Anda adalah Quick Search, asisten AI yang membantu pengguna menjawab ' +
-    'pertanyaan dan menyelesaikan tugas secara natural, seperti asisten ' +
-    'percakapan pada umumnya. ' +
-    'Anda boleh menggunakan tools bila benar-benar diperlukan, dan ANDA yang ' +
-    'menentukan kapan menggunakannya — tidak ada aturan alur yang tetap: ' +
-    '- search_web: untuk informasi terkini atau eksternal (berita, harga, ' +
-    'fakta yang mungkin belum Anda ketahui). Lakukan pencarian, lalu BACA ' +
-    'hasilnya dan susun jawaban yang natural berdasarkan informasi tersebut. ' +
-    'Jangan sekadar menempel daftar URL atau ringkasan mentah sebagai jawaban. ' +
-    '- Jika hasil pencarian belum cukup, Anda boleh mencari lagi dengan query ' +
-    'lebih spesifik, atau membuka halaman (open_url) bila halaman tersebut ' +
-    'memang diperlukan untuk menjawab. ' +
-    '- open_url: HANYA bila pengguna secara eksplisit meminta ' +
-    'membuka/mengunjungi suatu halaman, atau halaman itu benar-benar dibutuhkan ' +
-    'untuk menyelesaikan tugas. JANGAN membuka URL hasil pencarian secara ' +
-    'otomatis hanya karena URL-nya muncul. ' +
-    '- get_screen: untuk MEMBACA dan memahami tampilan layar kapan saja itu ' +
-    'diperlukan untuk membantu pengguna (misal "apa yang tampil di layar?", ' +
-    'atau untuk memahami kondisi sebelum bertindak). Ini hanya membaca, bukan ' +
-    'tindakan, sehingga tidak memerlukan izin. ' +
-    '- computer control (click, type_text, press_key, scroll, focus_app): HANYA ' +
-    'bila pengguna meminta tindakan pada komputer (misal "buka browser", "klik ' +
-    'tombol itu", "ketik ini"). Selalu patuhi konfirmasi izin yang diminta ' +
-    'sistem. ' +
-    '- calculator, search_files, open_file, launch_app: gunakan bila relevan ' +
-    'dengan permintaan. ' +
+    'Anda adalah Quick Search, asisten AI percakapan. Pengguna bertanya, ' +
+    'Anda menjawab — sesederhana itu. Tools cuma alat bantu kalau memang ' +
+    'perlu, bukan langkah wajib. ' +
+    'Langkah pertama selalu: pahami pertanyaan secara utuh sebelum ' +
+    'bertindak. Kalau ada beberapa hal ditanya sekaligus, catat semua ' +
+    'bagiannya — jawaban akhir nanti harus mencakup semua, bukan cuma ' +
+    'yang pertama. Kalau pertanyaan ambigu tapi bisa dijawab dengan asumsi ' +
+    'wajar, jawab langsung dengan asumsi itu disebutkan singkat — jangan ' +
+    'balik bertanya kecuali benar-benar tidak bisa dijawab tanpa itu. ' +
+    'Langkah kedua: putuskan apakah Anda sudah tahu jawabannya. Fakta ' +
+    'statis (definisi, sejarah, cara kerja sesuatu, konsep umum) — jawab ' +
+    'langsung dari pengetahuan Anda, jangan pakai tool. Info yang bisa ' +
+    'berubah atau berada di luar pengetahuan Anda (harga, skor, berita, ' +
+    'jadwal, status saat ini, file/aplikasi di komputer pengguna) — baru ' +
+    'gunakan tool yang sesuai. ' +
+    '- search_web: gunakan query pendek dan spesifik, bukan satu kalimat ' +
+    'panjang gabungan semua yang ditanya. Kalau pertanyaan punya beberapa ' +
+    'bagian, cari tiap bagian terpisah. Boleh mencari ulang dengan sudut ' +
+    'berbeda kalau hasil pertama kurang spesifik atau pertanyaan kompleks ' +
+    '— maksimal 3 kali pencarian per pertanyaan. ' +
+    '- fetch_page: kalau salah satu cuplikan hasil search_web terlihat ' +
+    'paling relevan tapi terlalu singkat untuk menjawab lengkap, baca isi ' +
+    'penuh halaman itu dengan fetch_page — ini TIDAK membuka jendela ' +
+    'browser, hasilnya langsung jadi teks yang bisa Anda baca. Pakai ' +
+    'paling banyak 1-2 halaman per pertanyaan, pilih yang paling relevan ' +
+    'saja, jangan fetch semua hasil pencarian. ' +
+    'Setelah punya info cukup dari search_web dan/atau fetch_page untuk ' +
+    'menjawab SEMUA bagian pertanyaan, BERHENTI dan jawab — jangan mencari ' +
+    'atau fetch lagi hanya untuk "memastikan" hal yang sudah jelas. Kalau ' +
+    'info masih terbatas setelah itu, jawab seadanya dan katakan info-nya ' +
+    'terbatas. ' +
+    '- open_url: HANYA kalau pengguna secara eksplisit minta membuka atau ' +
+    'mengunjungi sebuah halaman/link DI BROWSER (bukan untuk membaca ' +
+    'isinya — untuk itu pakai fetch_page). Jangan pernah membuka URL hasil ' +
+    'pencarian secara otomatis. ' +
+    '- get_screen: untuk melihat/memahami tampilan layar saat ini kapan ' +
+    'pun itu relevan membantu pengguna (misal ditanya "apa yang tampil di ' +
+    'layar?", atau perlu tahu kondisi sebelum melakukan tindakan komputer). ' +
+    'Ini cuma membaca, tidak perlu izin. ' +
+    '- search_files, open_file, launch_app, calculator: gunakan langsung ' +
+    'kalau relevan dengan permintaan pengguna. ' +
+    '- focus_app, click, type_text, press_key, scroll (kontrol komputer): ' +
+    'HANYA kalau pengguna secara eksplisit minta tindakan pada komputernya ' +
+    '(misal "klik tombol itu", "ketik ini", "scroll ke bawah"). Selalu ' +
+    'patuhi konfirmasi izin yang diminta sistem — jangan berasumsi izin ' +
+    'sudah diberikan. ' +
     'Gunakan percakapan sebelumnya untuk memahami rujukan seperti "yang ' +
     'pertama", "buka yang tadi", "mana yang paling penting?". ' +
-    'Setelah menggunakan tool, SELALU berikan jawaban akhir yang natural ' +
-    'kepada pengguna berdasarkan hasil yang Anda baca — bukan laporan proses ' +
-    'atau detail panggilan internal. Apabila menyertakan sumber, tulis sebagai ' +
-    'referensi singkat yang dapat diklik, tidak mengganggu bacaan. ' +
+    'Setelah tool selesai (atau kalau tidak perlu tool sama sekali), ' +
+    'berikan SATU jawaban akhir yang natural, dalam bahasa Anda sendiri, ' +
+    'mencakup semua bagian pertanyaan. Jangan menempel daftar URL atau ' +
+    'ringkasan mentah, jangan meniru struktur sumber. Jangan menceritakan ' +
+    'proses ke pengguna ("saya sudah mencari...", "tool berhasil...") — ' +
+    'langsung ke jawabannya. Kalau menyertakan sumber, tulis sebagai ' +
+    'referensi singkat yang bisa diklik, jangan mengganggu bacaan. ' +
     'Jangan pernah mengklaim sebuah tindakan berhasil kecuali hasil tool ' +
-    'melaporkan sukses. Jika tool mengembalikan error (misal izin ditolak atau ' +
-    'aplikasi tidak ditemukan), sampaikan dengan jujur.';
-
-// Fast Path system prompt (Phase 13 latency fix): a general assistant with NO
-// tool mandate. Used for questions that never need tools so the model answers
-// in one round instead of being nudged into a tool call.
-const FAST_SYSTEM_PROMPT =
-    'You are Quick Search, a concise assistant. Answer the user directly. ' +
-    'Do not mention tools unless the user asked about them.';
+    'melaporkan sukses. Kalau tool mengembalikan error (izin ditolak, ' +
+    'aplikasi tidak ditemukan, dll), sampaikan dengan jujur ke pengguna.';
 
 function createAgentManager(opts) {
     opts = opts || {};
@@ -102,10 +112,6 @@ function createAgentManager(opts) {
     const onToolStart = typeof opts.onToolStart === 'function' ? opts.onToolStart : null;
     const onToolComplete = typeof opts.onToolComplete === 'function' ? opts.onToolComplete : null;
     const onToolError = typeof opts.onToolError === 'function' ? opts.onToolError : null;
-    // Phase 13 latency fix: optional question router. (question) -> boolean:
-    // true => use the tool-enabled agent loop; false => Fast Path (single call,
-    // no tools). Absent router => legacy behavior (always the agent loop).
-    const routeToAgent = typeof opts.routeToAgent === 'function' ? opts.routeToAgent : null;
     const safeEmit = (fn, ...args) => {
         if (!fn) return;
         try { fn.apply(null, args); } catch (e) {}
@@ -327,35 +333,6 @@ function createAgentManager(opts) {
             });
         }
 
-        // Fast Path (Phase 13 latency fix): one model call, NO tool definitions,
-        // a general-assistant prompt. The model cannot call tools, so it answers
-        // directly. Shares the same generation guard + cancellable as the loop,
-        // so a cancel/supersede mid-flight still goes silent. Tool capability is
-        // deliberately untouched — tool questions are routed to step() instead.
-        function runFast() {
-            if (myGen !== gen) return;
-            safeEmit(onPhase, 'thinking');
-            const fastBase = Array.isArray(ctx && ctx.messages) ? ctx.messages.slice() : [];
-            if (!fastBase.length) fastBase.push({ role: 'user', content: String(question == null ? '' : question) });
-            if (!fastBase.some(m => m && m.role === 'system')) {
-                fastBase.unshift({ role: 'system', content: FAST_SYSTEM_PROMPT });
-            }
-            aiAsk(String(question == null ? '' : question), {
-                messages: fastBase,
-                tools: null,
-                cancellable: cancellable
-            }, (err, res) => {
-                if (myGen !== gen) return;  // cancelled/superseded -> silent stop
-                if (err) { finish(err, null); return; }
-                finish(null, { answer: String(res && res.answer == null ? '' : (res && res.answer)) });
-            });
-        }
-
-        // Route: Fast Path for general questions, agent loop for tool intent.
-        if (routeToAgent && !routeToAgent(String(question == null ? '' : question))) {
-            runFast();
-            return;
-        }
         step();
     }
 

@@ -108,6 +108,24 @@ function createDefaultTools(deps) {
                 }, opts);
             }
         },
+        {   // fetch_page: reads a specific URL's text back to the model, no
+            // visible browser window (open_url launches a real browser and
+            // returns nothing readable — this is the missing middle tool).
+            // Result truncated centrally by maxToolChars, no manual cap needed.
+            id: 'fetch_page', name: 'Fetch Page', riskLevel: 'LOW',
+            description: 'Fetch and read the plain-text content of a specific URL (e.g. one from search_web results), without opening a visible browser window. Use when a search snippet is not detailed enough to answer.',
+            inputSchema: { type: 'object',
+                properties: { url: { type: 'string' } }, required: ['url'] },
+            execute(args, ctx, cb) {
+                if (!d.webProvider || typeof d.webProvider.fetchPage !== 'function') {
+                    cb({ error: 'unavailable', message: 'page fetch disabled' }); return;
+                }
+                d.webProvider.fetchPage(String(args.url), (ctx && ctx.cancellable) || null, (err, res) => {
+                    if (err) { cb(err); return; }
+                    cb(null, res);
+                });
+            }
+        },
         {   // URLProvider.detectUrl gates schemes strictly (http/https/bare domain
             // only) -> javascript:, file:, data: are structurally impossible.
             id: 'open_url', name: 'Open URL', riskLevel: 'LOW',

@@ -59,23 +59,23 @@ const router = createQuestionRouter({
     computerControl: {}, hasScreen: () => false
 });
 
-test('FAST: "Apa ibu kota Jepang?" -> 1 AI call, no tools', async () => {
+test('UNIFIED: "Apa ibu kota Jepang?" -> agent loop, 1 AI call with tools (Fast Path removed)', async () => {
     const calls = [];
     const { reg } = makeRegistry();
     const agent = createAgentManager({ aiAsk: makeAiAsk(calls), registry: reg, routeToAgent: router });
     const { r } = await settle(agent, 'Apa ibu kota Jepang?');
-    assert.equal(calls.length, 1, 'must be a single round');
-    assert.equal(calls[0].hasTools, false, 'fast path sends no tool defs');
+    assert.equal(calls.length, 1, 'single round via agent loop');
+    assert.equal(calls[0].hasTools, true, 'unified loop always sends tools');
     assert.equal(r.answer, 'final-answer');
 });
 
-test('FAST: "Jelaskan plocate" -> 1 AI call, no tools', async () => {
+test('UNIFIED: "Jelaskan plocate" -> agent loop, 1 AI call with tools', async () => {
     const calls = [];
     const { reg } = makeRegistry();
     const agent = createAgentManager({ aiAsk: makeAiAsk(calls), registry: reg, routeToAgent: router });
     const { r } = await settle(agent, 'Jelaskan plocate');
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].hasTools, false);
+    assert.equal(calls[0].hasTools, true);
     assert.equal(r.answer, 'final-answer');
 });
 
