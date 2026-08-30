@@ -88,63 +88,9 @@
         "step": 10,
         "units": "ms"
     },
-    "sec-ai": {
-        "type": "section",
-        "description": "AI"
-    },
-    "ai-provider": {
-        "type": "combobox",
-        "description": "AI provider",
-        "default": "9router",
-        "options": {
-            "9Router (local)": "9router",
-            "OpenRouter": "openrouter",
-            "OpenAI": "openai",
-            "Custom OpenAI-compatible": "custom"
-        }
-    },
-    "ai-model": {
-        "type": "entry",
-        "description": "AI model / Combo",
-        "default": ""
-    },
-    "ai-api-key": {
-        "type": "entry",
-        "description": "AI API key",
-        "default": ""
-    },
-    "ai-max-tokens": {
-        "type": "spinbutton",
-        "description": "Max AI tokens",
-        "default": 2048,
-        "min": 256,
-        "max": 16384,
-        "step": 128,
-        "units": "tokens"
-    },
-    "ai-vision-supported": {
-        "type": "switch",
-        "description": "Model supports images (enables screen analysis)",
-        "default": false
-    },
-    "ai-agent-enabled": {
-        "type": "switch",
-        "description": "Enable AI Agent (tools: apps, files, web, screen, control)",
-        "default": true
-    },
-    "ai-computer-control": {
-        "type": "switch",
-        "description": "Allow computer control (click, type, keys, scroll, focus)",
-        "default": false
-    },
     "sec-advanced": {
         "type": "section",
         "description": "Advanced"
-    },
-    "ai-endpoint": {
-        "type": "entry",
-        "description": "Leave empty to use the selected provider default.",
-        "default": ""
     },
     "file-locations": {
         "type": "list",

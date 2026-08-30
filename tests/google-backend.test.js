@@ -96,20 +96,21 @@ test('Google backend: SEARCH mode also works (same backend)', () => {
     assert.equal(posts.length, 1, 'Google backend used for SEARCH mode too');
 });
 
-test('Google backend: no API key -> falls back to DDG HTML path', () => {
-    const posts = [];
+test('Google backend: no API key -> falls back to DDG instant (no Google request)', () => {
+    const gets = [], posts = [];
     const wp = createWebProvider({
         makeResult: mk, scoreResult: sc,
         fallbackUrlFor: q => 'https://google.com/search?q=' + encodeURIComponent(q),
         engine: 'google',
         googleApiKey: '',
+        httpGet: (url, c, cb) => { gets.push(url); cb(null, JSON.stringify({ AbstractText: '', RelatedTopics: [] })); },
         httpPost: (url, body, c, cb) => { posts.push(url); cb(null, '<html></html>'); }
     });
     let delivered = 0;
     wp.search('test', null, list => { delivered = (list || []).length; }, { agent: true });
-    assert.equal(posts.length, 1, 'DDG HTML fallback used when no API key');
-    assert.ok(posts[0].includes('html.duckduckgo.com'), 'falls back to DDG endpoint');
-    assert.equal(delivered, 1, 'only fallback delivered (empty DDG HTML)');
+    assert.equal(posts.length, 0, 'no Google POST when API key missing');
+    assert.ok(gets.some(u => u.includes('duckduckgo.com')), 'falls back to DDG instant');
+    assert.equal(delivered, 1, 'fallback only (empty DDG instant)');
 });
 
 test('Google backend: malformed JSON -> fallback only, no crash', () => {
@@ -140,20 +141,18 @@ test('Google backend: network error -> fallback only, no crash', () => {
 
 // ── DDG backend unchanged (regression) ────────────────────────────────────
 
-test('DDG backend: agent mode still uses HTML POST (not Google)', () => {
-    const posts = [], gets = [];
+test('DDG backend: agent mode still uses DDG instant GET (not Google)', () => {
+    const gets = [];
     const wp = createWebProvider({
         makeResult: mk, scoreResult: sc,
         fallbackUrlFor: q => 'https://duckduckgo.com/?q=' + encodeURIComponent(q),
         useInstantAnswers: true,
         engine: 'ddgo',
-        httpPost: (url, body, c, cb) => { posts.push(url); cb(null, '<html></html>'); },
-        httpGet: (url, c, cb) => { gets.push(url); cb(null, '{}'); }
+        httpGet: (url, c, cb) => { gets.push(url); cb(null, JSON.stringify({ AbstractText: 't', AbstractURL: 'https://example.com/a', Heading: 'h', RelatedTopics: [] })); }
     });
     wp.search('test', null, () => {}, { agent: true });
-    assert.equal(posts.length, 1, 'DDG HTML POST used');
-    assert.equal(gets.length, 0, 'no GET in agent mode');
-    assert.ok(posts[0].includes('html.duckduckgo.com'));
+    assert.equal(gets.length, 1, 'DDG instant GET used');
+    assert.ok(gets[0].includes('duckduckgo.com'));
 });
 
 test('DDG backend: SEARCH mode uses instant-answer GET (not HTML POST)', () => {
@@ -258,8 +257,7 @@ test('backend-neutral: both engines produce {title, url, description} shape', ()
         makeResult: mk, scoreResult: sc,
         fallbackUrlFor: q => 'https://duckduckgo.com/?q=' + encodeURIComponent(q),
         useInstantAnswers: true, engine: 'ddgo',
-        httpPost: (url, body, c, cb) => cb(null, ROBUST_FIXTURE),
-        httpGet: (url, c, cb) => cb(null, '{}')
+        httpGet: (url, c, cb) => cb(null, JSON.stringify({ AbstractText: 'abstract', AbstractURL: 'https://example.com/a', Heading: 'H', RelatedTopics: [{ Text: 'T', FirstURL: 'https://example.com/b' }] }))
     });
     let googleResults = null, ddgResults = null;
     googleProvider.search('bmri', null, list => { googleResults = list; }, { agent: true });

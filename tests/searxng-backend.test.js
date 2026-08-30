@@ -195,17 +195,17 @@ test('SearXNG default URL is localhost', () => {
 
 // ── Regression: DDG and Google still work ──────────────────────────────────
 
-test('DDG regression: agent mode still uses HTML POST', () => {
-    const posts = [];
+test('DDG regression: engine ddgo still uses DDG instant', () => {
+    const gets = [];
     const wp = createWebProvider({
         makeResult: mk, scoreResult: sc,
         fallbackUrlFor: q => 'https://duckduckgo.com/?q=' + encodeURIComponent(q),
         useInstantAnswers: true, engine: 'ddgo',
-        httpPost: (url, body, c, cb) => { posts.push(url); cb(null, '<html></html>'); }
+        httpGet: (url, c, cb) => { gets.push(url); cb(null, JSON.stringify({ AbstractText: 't', AbstractURL: 'https://example.com/a', Heading: 'h', RelatedTopics: [] })); }
     });
     wp.search('test', null, () => {}, { agent: true });
-    assert.equal(posts.length, 1);
-    assert.ok(posts[0].includes('html.duckduckgo.com'));
+    assert.equal(gets.length, 1);
+    assert.ok(gets[0].includes('duckduckgo.com'));
 });
 
 test('Google regression: agent mode still uses Serper POST', () => {

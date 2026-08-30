@@ -192,17 +192,16 @@ test('Bing backend: cancellation prevents upgrade delivery', () => {
 // ── Regression: other engines must NOT be affected by Bing ────────────────────
 
 test('DDG regression: engine=ddgo still uses DuckDuckGo, not Bing', () => {
-    const gets = [], posts = [];
+    const gets = [];
     const wp = createWebProvider({
         makeResult: mk, scoreResult: sc,
         fallbackUrlFor: q => 'https://duckduckgo.com/?q=' + encodeURIComponent(q),
         useInstantAnswers: true,
         engine: 'ddgo',
-        httpGet: (url, c, cb) => { gets.push(url); cb(null, '{}'); },
-        httpPost: (url, body, c, cb) => { posts.push(url); cb(null, '<html></html>'); }
+        httpGet: (url, c, cb) => { gets.push(url); cb(null, JSON.stringify({ AbstractText: 't', AbstractURL: 'https://example.com/a', Heading: 'h', RelatedTopics: [] })); }
     });
     wp.search('test', null, () => {}, { agent: true });
-    assert.ok(posts.some(u => u.includes('html.duckduckgo.com')), 'DDG HTML used');
+    assert.ok(gets.some(u => u.includes('duckduckgo.com')), 'DDG instant used');
     assert.ok(!gets.some(u => u.includes('bing.com')), 'no Bing GET');
 });
 

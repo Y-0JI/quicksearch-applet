@@ -1,5 +1,4 @@
-/* Phase 2.5 floating layout: the dialog itself is an invisible container;
-   the searchbox row and the results panel are two separate surfaces. */
+/* Quick Search — floating layout: invisible dialog container; searchbox pill + results panel as separate surfaces */
 .quicksearch-dialog {
     background: none;
     border: none;
@@ -11,12 +10,9 @@
 
 .quicksearch-content {
     padding: 0;
-    /* keeps the searchbox pill at the same spot whether the floating
-       panel is shown or not (max main panel 650 + pill 54 + gap 6) */
     min-height: 718px;
 }
 
-/* searchbox pill: the primary surface, stays compact */
 .quicksearch-entry-row {
     spacing: 6px;
     padding: 9px 12px;
@@ -41,23 +37,6 @@
     selection-background-color: rgba(255, 255, 255, 0.85);
 }
 
-.quicksearch-mode-btn {
-    padding: 9px 10px;
-    border-radius: 16px;
-    background-color: rgba(255, 255, 255, 0.06);
-    border: none;
-}
-
-.quicksearch-mode-btn:hover {
-    background-color: rgba(255, 255, 255, 0.14);
-}
-
-.quicksearch-mode-active {
-    background-color: rgba(120, 160, 255, 0.30);
-    border: none;
-}
-
-/* floating results panel: separate surface right below the searchbox */
 .quicksearch-results {
     padding: 6px 4px;
     background-color: rgba(36, 39, 46, 0.97);
@@ -96,88 +75,4 @@
 .quicksearch-desc {
     color: rgba(255, 255, 255, 0.62);
     font-size: 9pt;
-}
-
-/* Phase 4: AI answer text – stable vertical flow, wraps within panel */
-.quicksearch-ai-text {
-    padding: 8px 10px;
-    font-size: 10.5pt;
-    color: rgba(255, 255, 255, 0.92);
-    spacing: 4px;
-    max-width: 640px;
-}
-
-/* legacy horizontal line – kept for compat, not used after vertical fix */
-.quicksearch-ai-line {
-    spacing: 3px;
-}
-
-.quicksearch-ai-run {
-    font-size: 10.5pt;
-    color: rgba(255, 255, 255, 0.92);
-}
-
-.quicksearch-ai-error {
-    color: rgba(255, 160, 160, 0.95);
-}
-
-/* Phase 4.5: conversational chat entries */
-.quicksearch-chat-header {
-    font-size: 8.5pt;
-    font-weight: bold;
-    padding: 6px 10px 2px 10px;
-}
-
-.quicksearch-chat-you {
-    color: rgba(138, 180, 255, 0.95);
-}
-
-.quicksearch-chat-ai {
-    color: rgba(195, 166, 255, 0.95);
-}
-
-.quicksearch-newchat-btn {
-    padding: 3px 10px;
-    border-radius: 10px;
-    font-size: 8.5pt;
-    color: rgba(255, 255, 255, 0.75);
-    background-color: rgba(255, 255, 255, 0.07);
-}
-
-.quicksearch-newchat-btn:hover {
-    background-color: rgba(255, 255, 255, 0.16);
-}
-
-/* Phase 4.6: dedicated follow-up input below the AI conversation panel;
-   attached flush to the panel bottom by _syncRegionGeometry (no CSS margin) */
-.quicksearch-followup-row {
-    spacing: 8px;
-}
-
-.quicksearch-followup {
-    padding: 8px 12px;
-    font-size: 11pt;
-    color: rgba(255, 255, 255, 0.95);
-    background-color: rgba(36, 39, 46, 0.97);
-    border: 1px solid rgba(255, 255, 255, 0.09);
-    border-radius: 14px;
-    caret-color: rgba(255, 255, 255, 0.90);
-    selected-color: rgba(0, 0, 0, 0.85);
-    selection-background-color: rgba(255, 255, 255, 0.85);
-}
-
-.quicksearch-followup-hint {
-    font-size: 11pt;
-    color: rgba(255, 255, 255, 0.45);
-    padding: 0 4px;
-}
-
-/* clickable links – vertical stacked, wraps long URLs, always clickable */
-.quicksearch-link-btn {
-    padding: 2px 4px;
-    border-radius: 6px;
-    font-size: 10.5pt;
-    color: rgba(138, 180, 255, 0.95);
-    text-decoration: underline;
-    max-width: 640px;
 }

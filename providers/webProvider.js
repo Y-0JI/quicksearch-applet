@@ -1,18 +1,6 @@
 // Web search (spec §10 / 24-H): browser-search fallback ALWAYS instant,
 // DuckDuckGo instant answers best-effort upgrade. Failure here never breaks
-// local search. Cancellable owned by engine (guardrail 3).
-//
-// Phase 13 — full rewrite:
-//   BUG A fix: defaultHttpGet/HttpPost now use session-scoped closures so the
-//   Soup.Session lives inside createWebProvider, not at module scope.
-//   BUG B fix: parseDdgHtml is more robust — extracts result blocks from
-//   <div class="result"> or <div class="web-result"> containers, and falls
-//   back to generic anchor+text extraction when class="result__a" is absent.
-//   NEW: Google backend via Serper.dev API (user-provided API key).
-//   The agent never knows which backend is used — search_web returns a
-//   uniform {query, count, results:[{title,url,summary}]} format.
-//
-// SECURITY: no API keys in source, no shell, no browser automation.
+// local search. Cancellable owned by engine.
 
 let Gio = null, GLib = null, Soup = null;
 try { Gio = require('gi.Gio'); } catch (e) {}
@@ -239,24 +227,6 @@ function parseBingHtml(html, makeResult, scoreResult) {
     return out;
 }
 
-// Strip full-page HTML (script/style/comments included) down to plain
-// text. Unlike the small-snippet `clean()` inside each parser, this must
-// remove <script>/<style> BODIES first — snippet parsers never see a
-// target site's own JS/CSS, a full-page fetch does.
-function _htmlToText(html) {
-    return String(html || '')
-        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-        .replace(/<!--[\s\S]*?-->/g, ' ')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&#39;/g, "'")
-        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
-        .replace(/&#(\d+);/g, (m, n) => String.fromCharCode(Number(n)))
-        .replace(/&[a-z]+;/gi, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
 // ── WebProvider factory ────────────────────────────────────────────────────
 
 function createWebProvider(helpers) {
@@ -377,7 +347,6 @@ function createWebProvider(helpers) {
 
         if (!q) return;
 
-        const isAgent = !!(opts && opts.agent);
         const makeErrorFallback = (title, desc) => makeResult({
             type: 'web',
             title: title,
@@ -583,136 +552,64 @@ function createWebProvider(helpers) {
         }
 
         // ── DuckDuckGo backend (default) ───────────────────────────────
-        // SEARCH mode: optional DDG instant-answer upgrade (engine-gated).
-        const doInstant = useInstantAnswers && !isAgent;
-        // AGENT mode: fetch REAL DuckDuckGo HTML results (works for ANY query).
-        const doHtml = isAgent;
+        if (!useInstantAnswers) return;
+        try {
+            ensureSession();
+            const apiUrl = 'https://api.duckduckgo.com/?format=json&no_html=1&skip_disambig=1&q=' +
+                encodeURIComponent(q);
+            stage('http-start');
+            let ddgInstDone = false;
+            let ddgInstTid = _scheduleTimeout(REQUEST_TIMEOUT_MS, () => {
+                if (ddgInstDone) return;
+                ddgInstDone = true;
+                if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
+                stage('http-done');
+                deliver([makeErrorFallback('DDG search timeout', 'Periksa koneksi')]);
+            });
+            doGet(apiUrl, cancellable, (err, dataStr) => {
+                if (ddgInstDone) return;
+                ddgInstDone = true;
+                _cancelTimeout(ddgInstTid);
+                if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
+                stage('http-done');
+                if (err) {
+                    deliver([makeErrorFallback('DDG search tidak tersedia', 'Periksa koneksi')]);
+                    return;
+                }
+                try {
+                    const data = JSON.parse(dataStr);
+                    if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
 
-        if (doInstant) {
-            try {
-                ensureSession();
-                const apiUrl = 'https://api.duckduckgo.com/?format=json&no_html=1&skip_disambig=1&q=' +
-                    encodeURIComponent(q);
-                stage('http-start');
-                let ddgInstDone = false;
-                let ddgInstTid = _scheduleTimeout(REQUEST_TIMEOUT_MS, () => {
-                    if (ddgInstDone) return;
-                    ddgInstDone = true;
-                    if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
-                    stage('http-done');
-                    deliver([makeErrorFallback('DDG search timeout', 'Periksa koneksi')]);
-                });
-                doGet(apiUrl, cancellable, (err, dataStr) => {
-                    if (ddgInstDone) return;
-                    ddgInstDone = true;
-                    _cancelTimeout(ddgInstTid);
-                    if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
-                    stage('http-done');
-                    if (err) {
-                        deliver([makeErrorFallback('DDG search tidak tersedia', 'Periksa koneksi')]);
-                        return;
+                    const extra = [];
+                    if (data.AbstractText && data.AbstractURL) {
+                        extra.push(makeResult({
+                            type: 'web',
+                            title: String(data.AbstractText).slice(0, 120),
+                            description: data.Heading || searchEngineLabel,
+                            icon: 'web-browser',
+                            score: scoreResult('web-instant'),
+                            url: data.AbstractURL,
+                            action: () => _openBrowser(data.AbstractURL)
+                        }));
                     }
-                    try {
-                        const data = JSON.parse(dataStr);
-                        if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
-
-                        const extra = [];
-                        if (data.AbstractText && data.AbstractURL) {
-                            extra.push(makeResult({
-                                type: 'web',
-                                title: String(data.AbstractText).slice(0, 120),
-                                description: data.Heading || searchEngineLabel,
-                                icon: 'web-browser',
-                                score: scoreResult('web-instant'),
-                                url: data.AbstractURL,
-                                action: () => _openBrowser(data.AbstractURL)
-                            }));
-                        }
-                        const topics = (data.RelatedTopics || []).filter(t => t.FirstURL && t.Text);
-                        for (let i = 0; i < Math.min(topics.length, 4); i++) {
-                            const t = topics[i];
-                            extra.push(makeResult({
-                                type: 'web',
-                                title: String(t.Text).slice(0, 100),
-                                description: t.FirstURL.replace(/^https?:\/\//, '').split('/')[0],
-                                icon: 'web-browser',
-                                score: scoreResult('web-instant'),
-                                url: t.FirstURL,
-                                action: () => _openBrowser(t.FirstURL)
-                            }));
-                        }
-                        stage('parse-done');
-                        if (extra.length) { deliver([fallback].concat(extra)); stage('deliver'); }
-                        else {
-                            // DDG instant often has no web results for news queries – fall back to HTML path not available here
-                            // Deliver fallback only is enough for SEARCH mode; for Agent this path is not used (doInstant false)
-                            // Keep fallback only (already delivered) – no extra deliver to avoid duplicate
-                        }
-                    } catch (e) { deliver([makeErrorFallback('DDG: response tidak valid', 'Coba lagi')]); }
-                });
-            } catch (e) { /* Soup unavailable etc.: fallback stands alone */ }
-        }
-
-        if (doHtml) {
-            try {
-                ensureSession();
-                const htmlUrl = 'https://html.duckduckgo.com/html/';
-                const body = 'q=' + encodeURIComponent(q);
-                stage('http-start');
-                let ddgHtmlDone = false;
-                let ddgHtmlTid = _scheduleTimeout(REQUEST_TIMEOUT_MS, () => {
-                    if (ddgHtmlDone) return;
-                    ddgHtmlDone = true;
-                    if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
-                    stage('http-done');
-                    deliver([makeErrorFallback('DDG search timeout', 'Periksa koneksi')]);
-                });
-                doPost(htmlUrl, body, cancellable, (err, dataStr) => {
-                    if (ddgHtmlDone) return;
-                    ddgHtmlDone = true;
-                    _cancelTimeout(ddgHtmlTid);
-                    if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
-                    stage('http-done');
-                    if (err) {
-                        deliver([makeErrorFallback('DDG search tidak tersedia', 'Periksa koneksi')]);
-                        return;
+                    const topics = (data.RelatedTopics || []).filter(t => t.FirstURL && t.Text);
+                    for (let i = 0; i < Math.min(topics.length, 4); i++) {
+                        const t = topics[i];
+                        extra.push(makeResult({
+                            type: 'web',
+                            title: String(t.Text).slice(0, 100),
+                            description: t.FirstURL.replace(/^https?:\/\//, '').split('/')[0],
+                            icon: 'web-browser',
+                            score: scoreResult('web-instant'),
+                            url: t.FirstURL,
+                            action: () => _openBrowser(t.FirstURL)
+                        }));
                     }
-                    try {
-                        const extra = parseDdgHtml(dataStr, makeResult, scoreResult);
-                        stage('parse-done');
-                        if (extra.length) { deliver([fallback].concat(extra)); stage('deliver'); }
-                    } catch (e) { deliver([makeErrorFallback('DDG: response tidak valid', 'Coba lagi')]); }
-                });
-            } catch (e) { /* Soup unavailable etc.: fallback stands alone */ }
-        }
-    }
-
-    // fetch_page: reads ONE specific URL's text content back to the model —
-    // no visible browser window (unlike open_url/_openBrowser). Reuses the
-    // SAME timeout-safe session/doGet as search(), same _scheduleTimeout
-    // idiom as the doHtml path above.
-    function fetchPage(url, cancellable, cb) {
-        cb = typeof cb === 'function' ? cb : () => {};
-        if (!/^https?:\/\//i.test(String(url || ''))) { cb({ error: 'invalid-url' }); return; }
-        try { ensureSession(); } catch (e) { cb({ error: 'session-unavailable' }); return; }
-        let done = false;
-        const tid = _scheduleTimeout(REQUEST_TIMEOUT_MS, () => {
-            if (done) return;
-            done = true;
-            if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
-            cb({ error: 'timeout', message: 'Halaman tidak merespons' });
-        });
-        doGet(url, cancellable, (err, dataStr) => {
-            if (done) return;
-            done = true;
-            _cancelTimeout(tid);
-            if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
-            if (err) { cb({ error: 'fetch-failed', message: String(err) }); return; }
-            try {
-                const text = _htmlToText(String(dataStr || '').slice(0, 300000));
-                cb(null, { url: url, text: text });
-            } catch (e) { cb({ error: 'parse-failed' }); }
-        });
+                    stage('parse-done');
+                    if (extra.length) { deliver([fallback].concat(extra)); stage('deliver'); }
+                } catch (e) { deliver([makeErrorFallback('DDG: response tidak valid', 'Coba lagi')]); }
+            });
+        } catch (e) { /* Soup unavailable etc.: fallback stands alone */ }
     }
 
     function destroy() {
@@ -720,7 +617,7 @@ function createWebProvider(helpers) {
         searxngAvailable = null;
     }
 
-    return { search, destroy, preflight, fetchPage };
+    return { search, destroy, preflight };
 }
 
 function _openBrowser(url) {
