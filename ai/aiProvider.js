@@ -1,6 +1,4 @@
-// ai/aiProvider.js — normalized provider contract. Mock only for Phase AI-0.
-// No real HTTP, no API keys. Future 9router transport lives behind this boundary.
-// Reserved config shape (Phase AI-1): { baseUrl, apiKey, model } — never logged.
+// ai/aiProvider.js — normalized provider contract. Mock + 9router facade.
 const ALLOWED_TOOL = 'web_search';
 
 function normalizeResult(raw) {
@@ -18,8 +16,6 @@ function normalizeResult(raw) {
     return { type: 'error', code: 'invalid_response', message: 'Invalid AI response' };
 }
 
-// Factory for mock provider. handler(req, cb) -> cb(err, rawResult)
-// If handler omitted, queue mode: { responses: [raw, raw, ...], errorAt: index }
 function createMockAiProvider(opts) {
     opts = opts || {};
     let handler = opts.handler || null;
@@ -36,12 +32,12 @@ function createMockAiProvider(opts) {
         };
     }
     if (!handler) {
-        // default: echo answer
         handler = (req, cb) => cb(null, { type: 'answer', text: 'mock answer for: ' + (req && req.query) });
     }
 
-    function request(payload, cb) {
-        // normalize payload minimally — engine passes { query, systemPrompt, groundingContext }
+    function request(payload, cancellableOrCb, maybeCb) {
+        let cb = cancellableOrCb;
+        if (typeof maybeCb === 'function') cb = maybeCb;
         const req = payload && typeof payload === 'object' ? payload : { query: String(payload || '') };
         try {
             const maybe = handler(req, (err, raw) => {
@@ -54,7 +50,6 @@ function createMockAiProvider(opts) {
                 }
                 cb(null, norm);
             });
-            // handler may be sync throwing
             if (maybe && typeof maybe.then === 'function') {
                 maybe.then(r => {
                     const norm = normalizeResult(r);
@@ -70,9 +65,15 @@ function createMockAiProvider(opts) {
     return { request, __callCount: () => callCount };
 }
 
-// Generic provider wrapper (future real transport can plug via handler)
 function createAiProvider(handler) {
     return createMockAiProvider({ handler });
 }
 
-module.exports = { createMockAiProvider, createAiProvider, normalizeResult, ALLOWED_TOOL };
+const _exp = { createMockAiProvider, createAiProvider, normalizeResult, ALLOWED_TOOL };
+try {
+    const nr = require('./nineRouterProvider.js');
+    _exp.createNineRouterProvider = nr.createNineRouterProvider;
+    _exp.NineRouterProvider = nr.createNineRouterProvider;
+    _exp.buildChatCompletionsUrl = nr.buildChatCompletionsUrl;
+} catch (e) {}
+module.exports = _exp;

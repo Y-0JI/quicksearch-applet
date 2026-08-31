@@ -9,6 +9,10 @@ const ERROR_MESSAGES = {
     grounding_error: 'Web search unavailable',
     unsupported_tool: 'Unsupported AI tool request',
     invalid_response: 'Invalid AI response',
+    timeout: 'AI request timeout',
+    auth_error: 'AI authentication failed',
+    rate_limited: 'AI rate limited',
+    network_error: 'AI network error',
     cancelled: null
 };
 
@@ -29,7 +33,10 @@ function _normalizeProviderError(err) {
     if (!err) return { code: 'provider_error', message: ERROR_MESSAGES.provider_error };
     if (err.code === 'unsupported_tool') return { code: 'unsupported_tool', message: ERROR_MESSAGES.unsupported_tool };
     if (err.code === 'invalid_response') return { code: 'invalid_response', message: ERROR_MESSAGES.invalid_response };
-    // cancelled is not user-facing
+    if (err.code === 'timeout') return { code: 'timeout', message: ERROR_MESSAGES.timeout };
+    if (err.code === 'auth_error') return { code: 'auth_error', message: ERROR_MESSAGES.auth_error };
+    if (err.code === 'rate_limited') return { code: 'rate_limited', message: ERROR_MESSAGES.rate_limited };
+    if (err.code === 'network_error') return { code: 'network_error', message: ERROR_MESSAGES.network_error };
     if (err.code === 'cancelled') return { code: 'cancelled', message: null };
     return { code: 'provider_error', message: ERROR_MESSAGES.provider_error };
 }
@@ -107,9 +114,9 @@ function createAISearchEngine(deps) {
         let systemPrompt = '';
         try { systemPrompt = promptBuilder.buildSystemPrompt(); } catch (e) { systemPrompt = ''; }
 
-        // first provider call
+        // first provider call — pass cancellable if provider supports it (§12)
         try {
-            provider.request({ query: q, systemPrompt, tools: ['web_search'] }, (err, res) => {
+            provider.request({ query: q, systemPrompt, tools: ['web_search'] }, myCancellable, (err, res) => {
                 if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
                 if (err) {
                     const n = _normalizeProviderError(err);
@@ -143,7 +150,7 @@ function createAISearchEngine(deps) {
                             try { groundingContext = promptBuilder.buildGroundingContext(sources); } catch (e) { groundingContext = ''; }
                             // second provider call with grounding
                             try {
-                                provider.request({ query: q, systemPrompt, groundingContext, searchResults: sources, tools: [] }, (err2, res2) => {
+                                provider.request({ query: q, systemPrompt, groundingContext, searchResults: sources, tools: [] }, myCancellable, (err2, res2) => {
                                     if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
                                     if (err2) {
                                         const n3 = _normalizeProviderError(err2);
