@@ -24,6 +24,7 @@ const urlProviderMod = require('./providers/urlProvider.js');
 const calculatorProviderMod = require('./providers/calculatorProvider.js');
 const searchEngineMod = require('./searchEngine.js');
 const contextActionsMod = require('./providers/contextActions.js');
+const fileLauncherMod = require('./providers/fileLauncher.js');
 
 const UUID = "quicksearch@yoji";
 
@@ -223,7 +224,7 @@ class QuickSearchContextMenu {
         } catch (e) {}
         try { global.stage.add_actor(this.actor); } catch (e) { try { this._overlay.contentLayout.add_actor(this.actor); } catch (e2) {} }
     }
-    show(actions, iconActor) {
+    show(actions, anchorActor, event) {
         this._actions = actions || [];
         this.ensureParent();
         while (this.actor.get_n_children() > 0) this.actor.remove_child(this.actor.get_child_at_index(0));
@@ -240,9 +241,7 @@ class QuickSearchContextMenu {
             this.actor.add_child(btn);
         }
         this.actor.visible = true;
-        // keep the popup layer itself above dialog content
         try { if (this._overlay && this._overlay._contextLayer) this._overlay._contextLayer.raise_top(); } catch (e) {}
-        // if we fell back to a direct child of the Modal, undo Lightbox lowering
         try {
             const L = this._overlay && this._overlay._contextLayer;
             const lb = this._overlay && this._overlay._lightbox;
@@ -252,31 +251,55 @@ class QuickSearchContextMenu {
             }
         } catch (e) {}
         this.actor.raise_top();
-        this._positionNear(iconActor);
+        this._positionNear(anchorActor, event);
         this._bindOutside();
     }
-    _positionNear(iconActor) {
+    _positionNear(anchorActor, event) {
         try {
-            const [ix, iy] = iconActor.get_transformed_position();
-            const [iw, ih] = iconActor.get_transformed_size();
+            let ax = 0, ay = 0, aw = 0, ah = 0;
+            let usePointer = false;
+            let px = 0, py = 0;
+            try {
+                if (event && typeof event.get_coords === 'function') {
+                    const c = event.get_coords();
+                    if (Array.isArray(c) && c.length >= 2) { px = c[0]; py = c[1]; usePointer = true; }
+                }
+            } catch (e) {}
+            try {
+                if (anchorActor && typeof anchorActor.get_transformed_position === 'function') {
+                    const p = anchorActor.get_transformed_position();
+                    ax = p[0] || 0; ay = p[1] || 0;
+                    const s = anchorActor.get_transformed_size();
+                    aw = s[0] || 0; ah = s[1] || 0;
+                }
+            } catch (e) {}
             let [mw, mh] = this.actor.get_preferred_size ? (() => { const [, w] = this.actor.get_preferred_width(-1); const [, h] = this.actor.get_preferred_height(w); return [w, h]; })() : [220, 160];
             if (!mw || mw < 120) mw = 220;
             if (!mh || mh < 40) mh = this._actions.length * 36 + 12;
-            // layer offset: menu is child of _contextLayer, position is relative to it
             let lx = 0, ly = 0;
             try {
                 const L = this._overlay && this._overlay._contextLayer;
                 if (L && L.get_parent()) { const p = L.get_transformed_position(); lx = p[0] || 0; ly = p[1] || 0; }
             } catch (e) {}
-            let x = ix + iw + 6 - lx;
-            let y = iy - 4 - ly;
             const sw = global.screen_width || 1920;
             const sh = global.screen_height || 1080;
-            const absX = x + lx, absY = y + ly;
-            if (absX + mw > sw - 8) x = ix - mw - 6 - lx;
-            if (x + lx < 8) x = 8 - lx;
-            if (absY + mh > sh - 8) y = sh - mh - 8 - ly;
-            if (y + ly < 8) y = 8 - ly;
+            let x, y;
+            if (usePointer) {
+                x = px + 8 - lx;
+                y = py + 8 - ly;
+                if (x + lx + mw > sw - 8) x = px - mw - 8 - lx;
+                if (x + lx < 8) x = 8 - lx;
+                if (y + ly + mh > sh - 8) y = py - mh - 8 - ly;
+                if (y + ly < 8) y = 8 - ly;
+            } else {
+                x = ax + aw + 6 - lx;
+                y = ay - 4 - ly;
+                const absX = x + lx, absY = y + ly;
+                if (absX + mw > sw - 8) x = ax - mw - 6 - lx;
+                if (x + lx < 8) x = 8 - lx;
+                if (absY + mh > sh - 8) y = sh - mh - 8 - ly;
+                if (y + ly < 8) y = 8 - ly;
+            }
             this.actor.set_position(Math.round(x), Math.round(y));
             try { this.actor.set_size(mw, mh); } catch (e) {}
         } catch (e) {}
@@ -558,7 +581,40 @@ class QuickSearchApplet extends Applet.IconApplet {
                 else imports.misc.util.spawnCommandLine(cmd);
             } catch (e) {}
         };
-        // file helpers
+        // file helpers — persistent launcher for arbitrary files
+        env.fileLauncherIdForPath = (p) => {
+            try { return fileLauncherMod.fileLauncherIdForPath(String(p)); } catch (e) { return null; }
+        };
+        env.ensureFileLauncher = (p) => {
+            try {
+                const id = fileLauncherMod.fileLauncherIdForPath(String(p));
+                let appsDir = null;
+                try { if (GLib && GLib.get_user_data_dir) appsDir = GLib.get_user_data_dir() + "/applications"; } catch (e) {}
+                if (!appsDir) try { appsDir = GLib.get_home_dir() + "/.local/share/applications"; } catch (e) {}
+                if (!appsDir) return id;
+                try { Gio.File.new_for_path(appsDir).make_directory_with_parents(null); } catch (e) {}
+                const destPath = appsDir + "/" + id;
+                const dest = Gio.File.new_for_path(destPath);
+                let uri = "";
+                try { uri = Gio.File.new_for_path(String(p)).get_uri(); } catch (e) { uri = String(p); }
+                const contents = fileLauncherMod.buildFileLauncherContent(String(p), uri);
+                let needsWrite = true;
+                try {
+                    if (dest.query_exists(null)) {
+                        try {
+                            const [ok, data] = dest.load_contents(null);
+                            let existing = "";
+                            try { existing = imports.byteArray ? imports.byteArray.toString(data) : String(data); } catch (e2) { existing = String(data); }
+                            if (existing === contents) needsWrite = false;
+                        } catch (e2) {}
+                    }
+                } catch (e) {}
+                if (needsWrite) {
+                    try { dest.replace_contents(contents, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null); } catch (e) {}
+                }
+                return id;
+            } catch (e) { return null; }
+        };
         env.openFileLocation = (p) => {
             try {
                 const clean = String(p).replace(/\/+$/, "") || "/";
@@ -586,41 +642,31 @@ class QuickSearchApplet extends Applet.IconApplet {
         };
         env.addFileToDesktop = (p, desktopDir) => {
             try {
+                let uri = "";
+                try { uri = Gio.File.new_for_path(String(p)).get_uri(); } catch (e) { uri = String(p); }
+                const contents = fileLauncherMod.buildDesktopLauncherContent(String(p), uri);
                 const src = Gio.File.new_for_path(String(p).replace(/\/+$/, "") || "/");
                 const base = src.get_basename() || "file";
-                // sanitize base for .desktop filename
                 const safe = base.replace(/[\/\\]/g, "_") + ".desktop";
                 const dest = Gio.File.new_for_path(desktopDir + "/" + safe);
-                const uri = src.get_uri();
-                // desktop entry: use xdg-open with quoted uri via shell_quote for Exec safety
-                let execLine = "xdg-open " + GLib.shell_quote(uri);
-                const contents = "[Desktop Entry]\nType=Application\nName=" + base.replace(/\n/g, " ") + "\nExec=" + execLine + "\nIcon=text-x-generic-symbolic\nTerminal=false\n";
                 dest.replace_contents(contents, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
                 try { if (FileUtils) FileUtils.changeModeGFile(dest, 493); } catch (e2) {}
             } catch (e) {}
         };
-        // file panel/favorites: hide (graceful limitation) — do not provide impl
         return env;
     }
 
-    _showContextMenu(result, iconActor) {
-        if (!result || !iconActor) return;
-        // filter by type strictly (web/url/calc -> no menu)
+    _showContextMenu(result, anchorActor, event) {
+        if (!result || !anchorActor) return;
         if (result.type !== "app" && result.type !== "file") return;
         if (!this._contextMenu) {
             if (!this._overlay) return;
             this._contextMenu = new QuickSearchContextMenu(this._overlay);
         }
         const env = this._buildContextEnv();
-        // hide file panel/favorites by not exposing them (graceful limitation)
-        // file addFileToPanel / addFileToFavorites omitted -> contextActions hides them
-        delete env.addFileToPanel;
-        delete env.addFileToFavorites;
-        env.filePanelSupported = false;
-        env.fileFavoritesSupported = false;
         const actions = contextActionsMod.getContextActions(result, env);
         if (!actions || !actions.length) return;
-        this._contextMenu.show(actions, iconActor);
+        this._contextMenu.show(actions, anchorActor, event || null);
     }
 
     // ---- input flow ----
@@ -941,22 +987,11 @@ class QuickSearchApplet extends Applet.IconApplet {
         const icon = new St.Icon({
             icon_size: 24,
             x_align: Clutter.ActorAlign.START,
-            reactive: true
+            reactive: false
         });
         if (typeof r.icon === "string") icon.icon_name = r.icon;
         else if (r.icon) icon.gicon = r.icon;
         else icon.icon_name = "system-search";
-        // right-click on icon only
-        try {
-            icon.connect("button-press-event", (actor, event) => {
-                if (event.get_button() === 3) {
-                    // don't trigger row activation
-                    try { this._showContextMenu(r, icon); } catch (e) {}
-                    return Clutter.EVENT_STOP;
-                }
-                return Clutter.EVENT_PROPAGATE;
-            });
-        } catch (e) {}
 
         const titleLbl = new St.Label({ text: String(r.title || ""), style_class: "quicksearch-title" });
         titleLbl.get_clutter_text().set_line_wrap(false);
@@ -987,6 +1022,24 @@ class QuickSearchApplet extends Applet.IconApplet {
                 if (this._rows[i] === row) { this.setSelection(i); break; }
             }
         });
+        // right-click anywhere on row — only app/file produce a menu
+        if (r && (r.type === "app" || r.type === "file")) {
+            try {
+                button.connect("button-press-event", (actor, event) => {
+                    if (event.get_button() === 3) {
+                        // select this row first so the menu belongs to it
+                        try {
+                            for (let i = 0; i < this._rows.length; i++) {
+                                if (this._rows[i] === row) { this.setSelection(i); break; }
+                            }
+                        } catch (e) {}
+                        try { this._showContextMenu(r, button, event); } catch (e) {}
+                        return Clutter.EVENT_STOP;
+                    }
+                    return Clutter.EVENT_PROPAGATE;
+                });
+            } catch (e) {}
+        }
         return row;
     }
 

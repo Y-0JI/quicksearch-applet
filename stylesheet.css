@@ -83,15 +83,35 @@
     border-radius: 12px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
     padding: 6px;
+    color: rgba(255,255,255,0.95);
 }
 
 .quicksearch-context-item {
     padding: 6px 10px;
     border-radius: 8px;
     spacing: 8px;
+    color: rgba(255,255,255,0.95);
+}
+
+.quicksearch-context-item StIcon {
+    color: rgba(255,255,255,0.95);
+}
+
+.quicksearch-context-item StLabel {
+    color: rgba(255,255,255,0.95);
 }
 
 .quicksearch-context-item:hover,
 .quicksearch-context-item:selected {
     background: rgba(255, 255, 255, 0.14);
+    color: rgba(255,255,255,1.0);
+}
+
+.quicksearch-context-item:disabled {
+    color: rgba(255,255,255,0.40);
+}
+
+.quicksearch-context-item:disabled StIcon,
+.quicksearch-context-item:disabled StLabel {
+    color: rgba(255,255,255,0.40);
 }
