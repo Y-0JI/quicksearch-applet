@@ -5,6 +5,17 @@ const Gio = require('gi.Gio');
 const Main = require('ui.main');
 const Cinnamon = require('gi.Cinnamon');
 
+const INTERNAL_LAUNCHER_PREFIX = "quicksearch-file-";
+
+function _isInternalFileLauncher(id, info) {
+    if (id && id.indexOf(INTERNAL_LAUNCHER_PREFIX) === 0) return true;
+    if (!info) return false;
+    try { if (info.has_key && info.has_key("X-QuickSearch-File")) return true; } catch (e) {}
+    try { if (info.get_string && info.get_string("X-QuickSearch-File") === "true") return true; } catch (e) {}
+    try { if (info.get_boolean && info.get_boolean("X-QuickSearch-File") === true) return true; } catch (e) {}
+    return false;
+}
+
 function createAppProvider(helpers) {
     const makeResult = helpers.makeResult;
     const scoreResult = helpers.scoreResult;
@@ -21,6 +32,7 @@ function createAppProvider(helpers) {
             const id = app.get_id();
             if (!id) continue;
             const info = Gio.DesktopAppInfo.new(id);
+            if (_isInternalFileLauncher(id, info)) continue;
             index.push({
                 app: app,
                 appId: id,
