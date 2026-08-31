@@ -93,6 +93,38 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._autoScroll.add_actor(this.autoCompleteBox);
         this.resultsRegion.add_actor(this._autoScroll);
 
+        // dedicated popup layer for context menu — must be above the
+        // lightbox shade and not clipped by ScrollView / Dialog.
+        // Lightbox tracks direct children of the Modal and lowers any new
+        // direct child below its shade, so the layer is inserted inside
+        // backgroundStack (child of the highlighted _backgroundBin) where
+        // Lightbox does not intervene. Use a fixed layout for absolute
+        // positioning; fill the monitor work area via the parent bin.
+        this._contextLayer = new St.Widget({
+            reactive: false,
+            visible: true,
+            clip_to_allocation: false,
+            layout_manager: new Clutter.FixedLayout()
+        });
+        let _layerOk = false;
+        try { this.backgroundStack.add_actor(this._contextLayer); _layerOk = true; } catch (e) {}
+        if (!_layerOk) { try { this._backgroundBin.add_actor(this._contextLayer); _layerOk = true; } catch (e2) {} }
+        if (!_layerOk) { try { this.add_actor(this._contextLayer); } catch (e3) {} }
+        // let the layer fill its parent (backgroundStack / work area)
+        try {
+            this._contextLayer.set_position(0, 0);
+            this._contextLayer.set_size(global.screen_width || 1920, global.screen_height || 1080);
+        } catch (e) {}
+        // keep the layer above the dialog content inside backgroundStack
+        try { this._contextLayer.raise_top(); } catch (e) {}
+        // if we fell back to a direct child of the Modal, undo Lightbox lowering
+        try {
+            if (this._lightbox && this._lightbox.actor && this._contextLayer.get_parent() === this) {
+                this._lightbox.actor.lower(this._contextLayer);
+                this._contextLayer.raise_top();
+            }
+        } catch (e) {}
+
         this._entryRow.reactive = true;
         this._autoScroll.reactive = true;
         this._hoverIds = [];
@@ -182,9 +214,14 @@ class QuickSearchContextMenu {
         this._actions = [];
     }
     ensureParent() {
-        if (!this.actor.get_parent()) {
-            try { global.stage.add_actor(this.actor); } catch (e) { try { this._overlay.contentLayout.add_actor(this.actor); } catch (e2) {} }
-        }
+        if (this.actor.get_parent()) return;
+        // prefer dedicated _contextLayer (inside backgroundStack, above lightbox shade
+        // and outside ScrollView clipping). fallback to stage/contentLayout for headless tests.
+        try {
+            const L = this._overlay && this._overlay._contextLayer;
+            if (L) { L.add_actor(this.actor); return; }
+        } catch (e) {}
+        try { global.stage.add_actor(this.actor); } catch (e) { try { this._overlay.contentLayout.add_actor(this.actor); } catch (e2) {} }
     }
     show(actions, iconActor) {
         this._actions = actions || [];
@@ -203,6 +240,17 @@ class QuickSearchContextMenu {
             this.actor.add_child(btn);
         }
         this.actor.visible = true;
+        // keep the popup layer itself above dialog content
+        try { if (this._overlay && this._overlay._contextLayer) this._overlay._contextLayer.raise_top(); } catch (e) {}
+        // if we fell back to a direct child of the Modal, undo Lightbox lowering
+        try {
+            const L = this._overlay && this._overlay._contextLayer;
+            const lb = this._overlay && this._overlay._lightbox;
+            if (L && lb && lb.actor && L.get_parent() === this._overlay) {
+                lb.actor.lower(L);
+                L.raise_top();
+            }
+        } catch (e) {}
         this.actor.raise_top();
         this._positionNear(iconActor);
         this._bindOutside();
@@ -212,18 +260,23 @@ class QuickSearchContextMenu {
             const [ix, iy] = iconActor.get_transformed_position();
             const [iw, ih] = iconActor.get_transformed_size();
             let [mw, mh] = this.actor.get_preferred_size ? (() => { const [, w] = this.actor.get_preferred_width(-1); const [, h] = this.actor.get_preferred_height(w); return [w, h]; })() : [220, 160];
-            // fallback if not measured yet
             if (!mw || mw < 120) mw = 220;
             if (!mh || mh < 40) mh = this._actions.length * 36 + 12;
-            let x = ix + iw + 6;
-            let y = iy - 4;
+            // layer offset: menu is child of _contextLayer, position is relative to it
+            let lx = 0, ly = 0;
+            try {
+                const L = this._overlay && this._overlay._contextLayer;
+                if (L && L.get_parent()) { const p = L.get_transformed_position(); lx = p[0] || 0; ly = p[1] || 0; }
+            } catch (e) {}
+            let x = ix + iw + 6 - lx;
+            let y = iy - 4 - ly;
             const sw = global.screen_width || 1920;
             const sh = global.screen_height || 1080;
-            // flip to left if not enough space on right
-            if (x + mw > sw - 8) x = ix - mw - 6;
-            if (x < 8) x = 8;
-            if (y + mh > sh - 8) y = sh - mh - 8;
-            if (y < 8) y = 8;
+            const absX = x + lx, absY = y + ly;
+            if (absX + mw > sw - 8) x = ix - mw - 6 - lx;
+            if (x + lx < 8) x = 8 - lx;
+            if (absY + mh > sh - 8) y = sh - mh - 8 - ly;
+            if (y + ly < 8) y = 8 - ly;
             this.actor.set_position(Math.round(x), Math.round(y));
             try { this.actor.set_size(mw, mh); } catch (e) {}
         } catch (e) {}
