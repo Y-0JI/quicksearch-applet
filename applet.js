@@ -8,6 +8,12 @@ const Gio = require('gi.Gio');
 const GLib = require('gi.GLib');
 const GObject = require('gi.GObject');
 const Pango = require('gi.Pango');
+let FileUtils = null, Util = null, AppFavorites = null, XApp = null, Mainloop = null;
+try { FileUtils = imports.misc.fileUtils; } catch (e) {}
+try { Util = imports.misc.util; } catch (e) {}
+try { AppFavorites = imports.ui.appFavorites; } catch (e) {}
+try { XApp = imports.gi.XApp; } catch (e) {}
+try { Mainloop = imports.mainloop; } catch (e) { try { Mainloop = require('mainloop'); } catch (e2) {} }
 
 const resultMod = require('./result.js');
 const utilsMod = require('./utils.js');
@@ -17,6 +23,7 @@ const webProviderMod = require('./providers/webProvider.js');
 const urlProviderMod = require('./providers/urlProvider.js');
 const calculatorProviderMod = require('./providers/calculatorProvider.js');
 const searchEngineMod = require('./searchEngine.js');
+const contextActionsMod = require('./providers/contextActions.js');
 
 const UUID = "quicksearch@yoji";
 
@@ -114,11 +121,13 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
 
         if (this._lightbox && this._lightbox.actor) {
             this._outsideClickId = this._lightbox.actor.connect("button-press-event", () => {
+                if (this._applet._contextMenu && this._applet._contextMenu.isVisible()) { this._applet._contextMenu.hide(); return Clutter.EVENT_STOP; }
                 this._applet.close();
                 return Clutter.EVENT_STOP;
             });
         } else {
             this._outsideClickId = this._backgroundBin.connect("button-press-event", (actor, event) => {
+                if (this._applet._contextMenu && this._applet._contextMenu.isVisible()) { this._applet._contextMenu.hide(); return Clutter.EVENT_STOP; }
                 const [gx, gy] = event.get_coords();
                 if (!this._isInsideDialog(gx, gy)) {
                     this._applet.close();
@@ -162,6 +171,91 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._entry.clutter_text.set_cursor_position(text.length);
     }
 });
+
+// Small popup context menu — custom St, not PopupMenu, to match floating style
+class QuickSearchContextMenu {
+    constructor(overlay) {
+        this._overlay = overlay;
+        this.actor = new St.BoxLayout({ vertical: true, style_class: "quicksearch-context-menu", visible: false, reactive: true });
+        // hidden until shown; parent will be global.stage or overlay container
+        this._outsideId = 0;
+        this._actions = [];
+    }
+    ensureParent() {
+        if (!this.actor.get_parent()) {
+            try { global.stage.add_actor(this.actor); } catch (e) { try { this._overlay.contentLayout.add_actor(this.actor); } catch (e2) {} }
+        }
+    }
+    show(actions, iconActor) {
+        this._actions = actions || [];
+        this.ensureParent();
+        while (this.actor.get_n_children() > 0) this.actor.remove_child(this.actor.get_child_at_index(0));
+        for (let i = 0; i < this._actions.length; i++) {
+            const a = this._actions[i];
+            const icon = new St.Icon({ icon_name: a.iconName, icon_size: 16, icon_type: St.IconType.SYMBOLIC, x_align: Clutter.ActorAlign.START });
+            const label = new St.Label({ text: a.label, x_align: Clutter.ActorAlign.START });
+            const content = new St.BoxLayout({ vertical: false, x_align: Clutter.ActorAlign.START });
+            content.add(icon);
+            content.add(label, { expand: true });
+            const btn = new St.Button({ style_class: "quicksearch-context-item", x_align: St.Align.START, child: content });
+            const act = a;
+            btn.connect("clicked", () => { try { act.run(); } catch (e) {} this.hide(); });
+            this.actor.add_child(btn);
+        }
+        this.actor.visible = true;
+        this.actor.raise_top();
+        this._positionNear(iconActor);
+        this._bindOutside();
+    }
+    _positionNear(iconActor) {
+        try {
+            const [ix, iy] = iconActor.get_transformed_position();
+            const [iw, ih] = iconActor.get_transformed_size();
+            let [mw, mh] = this.actor.get_preferred_size ? (() => { const [, w] = this.actor.get_preferred_width(-1); const [, h] = this.actor.get_preferred_height(w); return [w, h]; })() : [220, 160];
+            // fallback if not measured yet
+            if (!mw || mw < 120) mw = 220;
+            if (!mh || mh < 40) mh = this._actions.length * 36 + 12;
+            let x = ix + iw + 6;
+            let y = iy - 4;
+            const sw = global.screen_width || 1920;
+            const sh = global.screen_height || 1080;
+            // flip to left if not enough space on right
+            if (x + mw > sw - 8) x = ix - mw - 6;
+            if (x < 8) x = 8;
+            if (y + mh > sh - 8) y = sh - mh - 8;
+            if (y < 8) y = 8;
+            this.actor.set_position(Math.round(x), Math.round(y));
+            try { this.actor.set_size(mw, mh); } catch (e) {}
+        } catch (e) {}
+    }
+    _bindOutside() {
+        this._unbindOutside();
+        try {
+            this._outsideId = global.stage.connect("button-press-event", (actor, event) => {
+                try {
+                    const [gx, gy] = event.get_coords();
+                    const [mx, my] = this.actor.get_transformed_position();
+                    const [mw, mh] = this.actor.get_transformed_size();
+                    const inside = gx >= mx && gx <= mx + mw && gy >= my && gy <= my + mh;
+                    if (!inside && this.actor.visible) { this.hide(); return Clutter.EVENT_STOP; }
+                } catch (e) {}
+                return Clutter.EVENT_PROPAGATE;
+            });
+        } catch (e) {}
+    }
+    _unbindOutside() {
+        if (this._outsideId) { try { global.stage.disconnect(this._outsideId); } catch (e) {} this._outsideId = 0; }
+    }
+    hide() {
+        this.actor.visible = false;
+        this._unbindOutside();
+    }
+    isVisible() { try { return this.actor.visible; } catch (e) { return false; } }
+    destroy() {
+        this._unbindOutside();
+        try { this.actor.destroy(); } catch (e) {}
+    }
+}
 
 class QuickSearchApplet extends Applet.IconApplet {
     constructor(orientation, panel_height, instance_id) {
@@ -227,6 +321,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._selIdx = -1;
         this._current = [];
         this._sortedResults = [];
+        this._contextMenu = null;
 
         this._createEngine();
         this._bindHotkey();
@@ -340,6 +435,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     close() {
+        try { if (this._contextMenu) this._contextMenu.hide(); } catch (e) {}
         if (this._engine) this._engine.cancel();
         this._cancelPopupHide();
         this._ptrInEntry = false;
@@ -348,6 +444,130 @@ class QuickSearchApplet extends Applet.IconApplet {
             try { this._overlay._stopCaretBlink(); } catch (e) {}
             this._overlay.close(global.get_current_time());
         }
+    }
+
+    _buildContextEnv() {
+        const env = {};
+        // app helpers
+        env.canUninstall = false;
+        try { env.canUninstall = GLib.file_test("/usr/bin/cinnamon-remove-application", GLib.FileTest.EXISTS); } catch (e) {}
+        env.getUserDesktopDir = () => { try { return FileUtils ? FileUtils.getUserDesktopDir() : null; } catch (e) { return null; } };
+        env.getAppFilename = (appId) => { try { const inf = Gio.DesktopAppInfo.new(appId); return inf ? inf.get_filename() : null; } catch (e) { return null; } };
+        env.isFavorite = (appId) => { try { return AppFavorites ? AppFavorites.getAppFavorites().isFavorite(appId) : false; } catch (e) { return false; } };
+        env.addFavorite = (appId) => { try { AppFavorites.getAppFavorites().addFavorite(appId); } catch (e) {} };
+        env.removeFavorite = (appId) => { try { AppFavorites.getAppFavorites().removeFavorite(appId); } catch (e) {} };
+        env.ensurePanelLauncher = () => {
+            try {
+                if (!Main.AppletManager.get_role_provider_exists(Main.AppletManager.Roles.PANEL_LAUNCHER)) {
+                    const nid = global.settings.get_int("next-applet-id");
+                    global.settings.set_int("next-applet-id", nid + 1);
+                    const arr = global.settings.get_strv("enabled-applets");
+                    arr.push("panel1:right:0:panel-launchers@cinnamon.org:" + nid);
+                    global.settings.set_strv("enabled-applets", arr);
+                }
+            } catch (e) {}
+        };
+        env.acceptNewLauncher = (appId) => {
+            try {
+                const prov = Main.AppletManager.get_role_provider(Main.AppletManager.Roles.PANEL_LAUNCHER);
+                if (prov) prov.acceptNewLauncher(appId);
+            } catch (e) {}
+        };
+        env.acceptNewLauncherWithRetry = (appId) => {
+            try {
+                let retries = 10;
+                const tick = () => {
+                    if (retries-- <= 0) return false;
+                    try {
+                        const prov = Main.AppletManager.get_role_provider(Main.AppletManager.Roles.PANEL_LAUNCHER);
+                        if (!prov) return true;
+                        prov.acceptNewLauncher(appId);
+                    } catch (e) {}
+                    return false;
+                };
+                if (Mainloop) Mainloop.timeout_add(100, tick);
+                else GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, tick);
+            } catch (e) { try { env.acceptNewLauncher(appId); } catch (e2) {} }
+        };
+        env.copyToDesktop = (filename, desktopDir) => {
+            try {
+                const src = Gio.file_new_for_path(filename);
+                const dest = Gio.file_new_for_path(desktopDir + "/" + src.get_basename());
+                src.copy(dest, 0, null, () => {});
+                try { if (FileUtils) FileUtils.changeModeGFile(dest, 493); } catch (e2) {}
+            } catch (e) {}
+        };
+        env.uninstallApp = (filename) => {
+            try {
+                const q = GLib.shell_quote(filename);
+                const cmd = "/usr/bin/cinnamon-remove-application " + q;
+                if (Util) Util.spawnCommandLine(cmd);
+                else imports.misc.util.spawnCommandLine(cmd);
+            } catch (e) {}
+        };
+        // file helpers
+        env.openFileLocation = (p) => {
+            try {
+                const clean = String(p).replace(/\/+$/, "") || "/";
+                const f = Gio.File.new_for_path(clean);
+                if (!f.query_exists(null)) return false;
+                let target = f;
+                try {
+                    let t = null;
+                    try { t = f.query_file_type(Gio.FileQueryInfoFlags.FOLLOW_SYMLINKS, null); } catch (e2) {
+                        const inf = f.query_info("standard::type", Gio.FileQueryInfoFlags.FOLLOW_SYMLINKS, null);
+                        t = inf.get_file_type();
+                    }
+                    if (t !== Gio.FileType.DIRECTORY) {
+                        const par = f.get_parent();
+                        if (!par) return false;
+                        target = par;
+                    }
+                } catch (e) {
+                    const par = f.get_parent();
+                    if (par) target = par;
+                }
+                Gio.AppInfo.launch_default_for_uri_async(target.get_uri(), null, null, null);
+                return true;
+            } catch (e) { return false; }
+        };
+        env.addFileToDesktop = (p, desktopDir) => {
+            try {
+                const src = Gio.File.new_for_path(String(p).replace(/\/+$/, "") || "/");
+                const base = src.get_basename() || "file";
+                // sanitize base for .desktop filename
+                const safe = base.replace(/[\/\\]/g, "_") + ".desktop";
+                const dest = Gio.File.new_for_path(desktopDir + "/" + safe);
+                const uri = src.get_uri();
+                // desktop entry: use xdg-open with quoted uri via shell_quote for Exec safety
+                let execLine = "xdg-open " + GLib.shell_quote(uri);
+                const contents = "[Desktop Entry]\nType=Application\nName=" + base.replace(/\n/g, " ") + "\nExec=" + execLine + "\nIcon=text-x-generic-symbolic\nTerminal=false\n";
+                dest.replace_contents(contents, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+                try { if (FileUtils) FileUtils.changeModeGFile(dest, 493); } catch (e2) {}
+            } catch (e) {}
+        };
+        // file panel/favorites: hide (graceful limitation) — do not provide impl
+        return env;
+    }
+
+    _showContextMenu(result, iconActor) {
+        if (!result || !iconActor) return;
+        // filter by type strictly (web/url/calc -> no menu)
+        if (result.type !== "app" && result.type !== "file") return;
+        if (!this._contextMenu) {
+            if (!this._overlay) return;
+            this._contextMenu = new QuickSearchContextMenu(this._overlay);
+        }
+        const env = this._buildContextEnv();
+        // hide file panel/favorites by not exposing them (graceful limitation)
+        // file addFileToPanel / addFileToFavorites omitted -> contextActions hides them
+        delete env.addFileToPanel;
+        delete env.addFileToFavorites;
+        env.filePanelSupported = false;
+        env.fileFavoritesSupported = false;
+        const actions = contextActionsMod.getContextActions(result, env);
+        if (!actions || !actions.length) return;
+        this._contextMenu.show(actions, iconActor);
     }
 
     // ---- input flow ----
@@ -474,6 +694,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         const sym = event.get_key_symbol();
 
         if (sym === Clutter.KEY_Escape) {
+            if (this._contextMenu && this._contextMenu.isVisible()) { this._contextMenu.hide(); return Clutter.EVENT_STOP; }
             this.close();
             return Clutter.EVENT_STOP;
         }
@@ -666,11 +887,23 @@ class QuickSearchApplet extends Applet.IconApplet {
 
         const icon = new St.Icon({
             icon_size: 24,
-            x_align: Clutter.ActorAlign.START
+            x_align: Clutter.ActorAlign.START,
+            reactive: true
         });
         if (typeof r.icon === "string") icon.icon_name = r.icon;
         else if (r.icon) icon.gicon = r.icon;
         else icon.icon_name = "system-search";
+        // right-click on icon only
+        try {
+            icon.connect("button-press-event", (actor, event) => {
+                if (event.get_button() === 3) {
+                    // don't trigger row activation
+                    try { this._showContextMenu(r, icon); } catch (e) {}
+                    return Clutter.EVENT_STOP;
+                }
+                return Clutter.EVENT_PROPAGATE;
+            });
+        } catch (e) {}
 
         const titleLbl = new St.Label({ text: String(r.title || ""), style_class: "quicksearch-title" });
         titleLbl.get_clutter_text().set_line_wrap(false);
@@ -711,6 +944,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     on_applet_removed_from_panel(reload) {
+        try { if (this._contextMenu) { this._contextMenu.destroy(); this._contextMenu = null; } } catch (e) {}
         Main.keybindingManager.removeHotKey(this._hotkeyName);
         this._cancelPopupHide();
         if (this._overlay) {

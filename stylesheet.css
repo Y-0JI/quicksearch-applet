@@ -76,3 +76,22 @@
     color: rgba(255, 255, 255, 0.62);
     font-size: 9pt;
 }
+
+.quicksearch-context-menu {
+    background: rgba(36, 39, 46, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    padding: 6px;
+}
+
+.quicksearch-context-item {
+    padding: 6px 10px;
+    border-radius: 8px;
+    spacing: 8px;
+}
+
+.quicksearch-context-item:hover,
+.quicksearch-context-item:selected {
+    background: rgba(255, 255, 255, 0.14);
+}
