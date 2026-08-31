@@ -1,8 +1,5 @@
 // Helpers for persistent per-file .desktop launchers.
-// Pure JS fallbacks for Node tests; in Cinnamon uses GLib/Gio when available.
-// ponytail: deterministic hash is 32-bit djb + 32-bit FNV (16 hex) — fine for
-// file paths. Upgrade to SHA256 via GLib.compute_checksum when needed for
-// stronger collision resistance.
+// ponytail: hash 32-bit djb + 32-bit FNV (16 hex) fallback; GLib SHA256 when available.
 const FILE_LAUNCHER_PREFIX = "quicksearch-file-";
 const FILE_LAUNCHER_SUFFIX = ".desktop";
 
@@ -41,27 +38,19 @@ function _sanitizeName(name) {
     return String(name).replace(/\n/g, " ").replace(/\r/g, " ").trim() || "File";
 }
 
-function _shellQuote(s) {
-    try {
-        if (typeof GLib !== "undefined" && GLib && typeof GLib.shell_quote === "function") {
-            return GLib.shell_quote(String(s));
-        }
-    } catch (e) {}
-    return "'" + String(s).replace(/'/g, "'\\''") + "'";
-}
-
 function _escapeDesktopField(s) {
-    // desktop entry spec: escape newline, backslash; we keep simple
     return String(s).replace(/\\/g, "\\\\").replace(/\n/g, " ").replace(/\r/g, " ");
 }
 
+// Desktop Entry Exec is NOT shell — do not shell_quote. URI from Gio.get_uri()
+// is already percent-encoded (%20 etc) so plain `xdg-open <uri>` is correct and
+// handles spaces/quotes/unicode. Shell quoting would produce literal quotes.
 function buildFileLauncherContent(path, uri) {
     const p = String(path);
-    const u = String(uri || "");
+    const u = String(uri || p);
     const base = _basenameForPath(p);
     const name = _sanitizeName(base);
-    const execLine = "xdg-open " + _shellQuote(u || p);
-    // Use content_type icon fallback; launcher icon generic but valid
+    const execLine = "xdg-open " + u;
     const lines = [
         "[Desktop Entry]",
         "Type=Application",
@@ -81,7 +70,6 @@ function buildFileLauncherContent(path, uri) {
 }
 
 function buildDesktopLauncherContent(path, uri) {
-    // same content for Desktop; Name distinct is fine
     return buildFileLauncherContent(path, uri);
 }
 
@@ -92,6 +80,5 @@ module.exports = {
     fileLauncherIdForPath,
     buildFileLauncherContent,
     buildDesktopLauncherContent,
-    _hashPathJS,
-    _shellQuote
+    _hashPathJS
 };

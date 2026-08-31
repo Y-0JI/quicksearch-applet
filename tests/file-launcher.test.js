@@ -29,17 +29,18 @@ test('buildFileLauncherContent valid persistent desktop entry', () => {
     assert.ok(c.includes('[Desktop Entry]'));
     assert.ok(c.includes('Type=Application'));
     assert.ok(c.includes('Name=report.pdf'));
-    assert.ok(c.includes('Exec=xdg-open'));
-    assert.ok(c.includes("'" + uri + "'") || c.includes(uri));
+    assert.ok(c.includes('Exec=xdg-open ' + uri));
+    assert.ok(!c.includes("'file://"), 'Exec must not shell-quote (percent-encoded uri)');
     assert.ok(c.includes('Icon=text-x-generic-symbolic'));
     assert.ok(c.includes('X-QuickSearch-File=true'));
     assert.ok(c.includes('X-QuickSearch-Path='));
-    // persistent: same path same content
     assert.equal(c, fl.buildFileLauncherContent(path, uri));
-    // safe quoting for spaces/specials
-    const nastyUri = 'file:///home/user/test file.txt';
-    const c2 = fl.buildFileLauncherContent('/home/user/test file.txt', nastyUri);
-    assert.ok(c2.includes("xdg-open '" + nastyUri + "'") || c2.includes('xdg-open'), 'quoted exec');
+    // space path: uri is percent-encoded, Exec plain uri valid
+    const nastyPath = '/home/user/test file.txt';
+    const nastyUri = 'file:///home/user/test%20file.txt';
+    const c2 = fl.buildFileLauncherContent(nastyPath, nastyUri);
+    assert.ok(c2.includes('Exec=xdg-open ' + nastyUri));
+    assert.ok(!c2.includes("'file://"), 'no shell quotes in Exec');
 });
 
 test('buildDesktopLauncherContent same as file launcher', () => {
@@ -48,9 +49,10 @@ test('buildDesktopLauncherContent same as file launcher', () => {
     assert.equal(fl.buildDesktopLauncherContent(p, u), fl.buildFileLauncherContent(p, u));
 });
 
-test('_shellQuote fallback safe', () => {
-    // GLib not available in Node, fallback should quote
-    const q = fl._shellQuote("a'b");
-    assert.ok(q.includes("'"), 'quoted');
-    assert.equal(fl._shellQuote('file:///a b.txt'), "'file:///a b.txt'");
+test('percent-encoded uri valid for specials', () => {
+    // GIO percent-encodes: ; -> %3B, " -> %22, ` -> %60 etc
+    const p = '/home/user/a;b.txt';
+    const uri = 'file:///home/user/a%3Bb.txt';
+    const c = fl.buildFileLauncherContent(p, uri);
+    assert.ok(c.includes('Exec=xdg-open ' + uri));
 });

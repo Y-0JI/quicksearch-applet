@@ -553,25 +553,52 @@ class QuickSearchApplet extends Applet.IconApplet {
             try {
                 let retries = 10;
                 const tick = () => {
-                    if (retries-- <= 0) return false;
+                    if (retries-- <= 0) {
+                        try { global.logWarning("[quicksearch@yoji] acceptNewLauncher timeout: " + appId); } catch (e) {}
+                        return false;
+                    }
+                    let recognized = false;
+                    try {
+                        if (typeof Cinnamon !== "undefined" && Cinnamon.AppSystem) {
+                            const sys = Cinnamon.AppSystem.get_default();
+                            if (sys && sys.lookup_app) recognized = !!sys.lookup_app(appId);
+                        }
+                        if (!recognized) {
+                            try { const inf = Gio.DesktopAppInfo.new(appId); if (inf) recognized = true; } catch (e2) {}
+                        }
+                    } catch (e) {}
+                    if (!recognized) return true;
                     try {
                         const prov = Main.AppletManager.get_role_provider(Main.AppletManager.Roles.PANEL_LAUNCHER);
                         if (!prov) return true;
                         prov.acceptNewLauncher(appId);
-                    } catch (e) {}
+                    } catch (e) {
+                        try { global.logWarning("[quicksearch@yoji] acceptNewLauncher failed: " + e); } catch (e2) {}
+                        return true;
+                    }
                     return false;
                 };
                 if (Mainloop) Mainloop.timeout_add(100, tick);
                 else GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, tick);
-            } catch (e) { try { env.acceptNewLauncher(appId); } catch (e2) {} }
+            } catch (e) {
+                try { global.logWarning("[quicksearch@yoji] acceptNewLauncherWithRetry error: " + e); } catch (e2) {}
+                try { env.acceptNewLauncher(appId); } catch (e2) {}
+            }
         };
         env.copyToDesktop = (filename, desktopDir) => {
             try {
                 const src = Gio.file_new_for_path(filename);
                 const dest = Gio.file_new_for_path(desktopDir + "/" + src.get_basename());
-                src.copy(dest, 0, null, () => {});
-                try { if (FileUtils) FileUtils.changeModeGFile(dest, 493); } catch (e2) {}
-            } catch (e) {}
+                try { src.copy(dest, 0, null, () => {}); } catch (e) {
+                    try { global.logWarning("[quicksearch@yoji] copyToDesktop copy failed: " + e); } catch (e2) {}
+                    throw e;
+                }
+                try { if (FileUtils) FileUtils.changeModeGFile(dest, 755); } catch (e2) {
+                    try { global.logWarning("[quicksearch@yoji] changeModeGFile failed: " + e2); } catch (e3) {}
+                }
+            } catch (e) {
+                try { global.logWarning("[quicksearch@yoji] copyToDesktop failed: " + e); } catch (e2) {}
+            }
         };
         env.uninstallApp = (filename) => {
             try {
@@ -610,10 +637,15 @@ class QuickSearchApplet extends Applet.IconApplet {
                     }
                 } catch (e) {}
                 if (needsWrite) {
-                    try { dest.replace_contents(contents, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null); } catch (e) {}
+                    try { dest.replace_contents(contents, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null); } catch (e) {
+                        try { global.logWarning("[quicksearch@yoji] ensureFileLauncher write failed: " + e); } catch (e2) {}
+                    }
                 }
                 return id;
-            } catch (e) { return null; }
+            } catch (e) {
+                try { global.logWarning("[quicksearch@yoji] ensureFileLauncher failed: " + e); } catch (e2) {}
+                return null;
+            }
         };
         env.openFileLocation = (p) => {
             try {
@@ -649,9 +681,16 @@ class QuickSearchApplet extends Applet.IconApplet {
                 const base = src.get_basename() || "file";
                 const safe = base.replace(/[\/\\]/g, "_") + ".desktop";
                 const dest = Gio.File.new_for_path(desktopDir + "/" + safe);
-                dest.replace_contents(contents, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
-                try { if (FileUtils) FileUtils.changeModeGFile(dest, 493); } catch (e2) {}
-            } catch (e) {}
+                try { dest.replace_contents(contents, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null); } catch (e) {
+                    try { global.logWarning("[quicksearch@yoji] addFileToDesktop write failed: " + e); } catch (e2) {}
+                    throw e;
+                }
+                try { if (FileUtils) FileUtils.changeModeGFile(dest, 755); } catch (e2) {
+                    try { global.logWarning("[quicksearch@yoji] addFileToDesktop chmod failed: " + e2); } catch (e3) {}
+                }
+            } catch (e) {
+                try { global.logWarning("[quicksearch@yoji] addFileToDesktop failed: " + e); } catch (e2) {}
+            }
         };
         return env;
     }
