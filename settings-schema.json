@@ -88,6 +88,25 @@
         "step": 10,
         "units": "ms"
     },
+    "sec-ai": {
+        "type": "section",
+        "description": "AI Search"
+    },
+    "ai-base-url": {
+        "type": "entry",
+        "description": "AI base URL (9router, e.g. http://127.0.0.1:20128)",
+        "default": ""
+    },
+    "ai-api-key": {
+        "type": "entry",
+        "description": "AI API key (9router)",
+        "default": ""
+    },
+    "ai-model": {
+        "type": "entry",
+        "description": "AI model (e.g. gpt-4o-mini, coba9router)",
+        "default": ""
+    },
     "sec-advanced": {
         "type": "section",
         "description": "Advanced"

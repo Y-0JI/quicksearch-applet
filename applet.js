@@ -25,6 +25,11 @@ const calculatorProviderMod = require('./providers/calculatorProvider.js');
 const searchEngineMod = require('./searchEngine.js');
 const contextActionsMod = require('./providers/contextActions.js');
 const fileLauncherMod = require('./providers/fileLauncher.js');
+let aiSearchEngineMod = null, aiProviderMod = null, nineRouterProviderMod = null, webSearchToolMod = null;
+try { aiSearchEngineMod = require('./ai/aiSearchEngine.js'); } catch (e) {}
+try { aiProviderMod = require('./ai/aiProvider.js'); } catch (e) {}
+try { nineRouterProviderMod = require('./ai/nineRouterProvider.js'); } catch (e) {}
+try { webSearchToolMod = require('./ai/webSearchTool.js'); } catch (e) {}
 
 const UUID = "quicksearch@yoji";
 
@@ -64,6 +69,37 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         const entryRow = new St.BoxLayout({ style_class: "quicksearch-entry-row" });
         this._entryRow = entryRow;
         entryRow.add(this._entry, { expand: true });
+        // AI mode control lives inside the existing searchbox pill (Phase AI-2).
+        // Single overlay, single searchbox — toggle does not create a second searchbox.
+        this._modeButton = new St.Button({
+            style_class: "quicksearch-mode-button",
+            can_focus: false,
+            reactive: true,
+            track_hover: true
+        });
+        const _modeIcon = new St.Icon({
+            icon_name: "system-search",
+            icon_size: 14,
+            icon_type: St.IconType.SYMBOLIC,
+            style_class: "quicksearch-mode-icon"
+        });
+        const _modeLabel = new St.Label({
+            text: _("Mode AI"),
+            style_class: "quicksearch-mode-label"
+        });
+        const _modeContent = new St.BoxLayout({ style_class: "quicksearch-mode-content", vertical: false });
+        _modeContent.add(_modeIcon);
+        _modeContent.add(_modeLabel);
+        this._modeButton.set_child(_modeContent);
+        this._modeIcon = _modeIcon;
+        this._modeLabel = _modeLabel;
+        entryRow.add(this._modeButton);
+        try {
+            this._modeButton.connect("clicked", () => {
+                try { this._applet._toggleMode(); } catch (e) {}
+                return Clutter.EVENT_STOP;
+            });
+        } catch (e) {}
         this.contentLayout.add_style_class_name("quicksearch-content");
         this.contentLayout.add(entryRow);
         this._caretBlinkId = 0;
@@ -383,6 +419,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.settings.bind("recent-queries", "recent_queries_json");
         this.settings.bind("web-search-api-key", "web_search_api_key");
         this.settings.bind("searxng-url", "searxng_url", () => this._rebuildEngine());
+        this.settings.bind("ai-base-url", "ai_base_url", () => this._rebuildAiEngine());
+        this.settings.bind("ai-api-key", "ai_api_key", () => this._rebuildAiEngine());
+        this.settings.bind("ai-model", "ai_model", () => this._rebuildAiEngine());
 
         this._applySearchEngineSetting();
 
@@ -399,7 +438,19 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._sortedResults = [];
         this._contextMenu = null;
 
+        // ---- AI Search mode state (Phase AI-2) ----
+        this._mode = 'search';
+        this._aiLoading = false;
+        this._aiAnswer = '';
+        this._aiError = null;
+        this._aiGen = 0;
+        this._aiEngine = null;
+        this.ai_base_url = this.ai_base_url || "";
+        this.ai_api_key = this.ai_api_key || "";
+        this.ai_model = this.ai_model || "";
+
         this._createEngine();
+        this._createAiEngine();
         this._bindHotkey();
     }
 
@@ -466,6 +517,306 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._createEngine();
     }
 
+    _createAiEngine() {
+        if (this._aiEngine) {
+            try { this._aiEngine.destroy(); } catch (e) {}
+            this._aiEngine = null;
+        }
+        if (!aiSearchEngineMod || typeof aiSearchEngineMod.createAISearchEngine !== 'function') return;
+        let provider = null;
+        let webTool = null;
+        // test injection hook (used by headless tests)
+        if (this._injectedProvider) {
+            provider = this._injectedProvider;
+            try { webTool = this._injectedWebSearchTool || (webSearchToolMod ? webSearchToolMod.createMockWebSearchTool() : null); } catch (e) { webTool = null; }
+        } else {
+            const baseUrl = String(this.ai_base_url || '').trim();
+            const apiKey = String(this.ai_api_key || '').trim();
+            const model = String(this.ai_model || '').trim();
+            if (!baseUrl || !apiKey || !model) {
+                // missing config -> mock provider that returns auth_error (UI remains testable, no throw)
+                try {
+                    if (aiProviderMod && typeof aiProviderMod.createMockAiProvider === 'function') {
+                        provider = aiProviderMod.createMockAiProvider({
+                            handler: (req, cb) => {
+                                const e = new Error('AI provider auth error');
+                                e.code = 'auth_error';
+                                cb(e);
+                            }
+                        });
+                    } else {
+                        return;
+                    }
+                    webTool = webSearchToolMod ? webSearchToolMod.createMockWebSearchTool() : null;
+                } catch (e) { return; }
+            } else {
+                try {
+                    if (nineRouterProviderMod && typeof nineRouterProviderMod.createNineRouterProvider === 'function') {
+                        provider = nineRouterProviderMod.createNineRouterProvider({ baseUrl, apiKey, model });
+                    } else if (aiProviderMod && typeof aiProviderMod.createMockAiProvider === 'function') {
+                        provider = aiProviderMod.createMockAiProvider({ handler: (req, cb) => cb(null, { type: 'answer', text: 'mock' }) });
+                    } else {
+                        return;
+                    }
+                } catch (e) {
+                    try {
+                        if (aiProviderMod && typeof aiProviderMod.createMockAiProvider === 'function') {
+                            provider = aiProviderMod.createMockAiProvider({
+                                handler: (req, cb) => {
+                                    const err = new Error('AI provider error');
+                                    err.code = 'provider_error';
+                                    cb(err);
+                                }
+                            });
+                        } else { return; }
+                    } catch (e2) { return; }
+                }
+                try { webTool = webSearchToolMod ? webSearchToolMod.createMockWebSearchTool() : null; } catch (e) { webTool = null; }
+            }
+        }
+        if (!webTool && webSearchToolMod && typeof webSearchToolMod.createMockWebSearchTool === 'function') {
+            try { webTool = webSearchToolMod.createMockWebSearchTool(); } catch (e) {}
+        }
+        // fallback if webSearchTool still missing
+        if (!webTool) webTool = { search: (q, c, cb) => { const e = new Error('Web search unavailable'); e.code = 'web_search_unavailable'; if (typeof c === 'function') c(e); else if (cb) cb(e); } };
+        try {
+            this._aiEngine = aiSearchEngineMod.createAISearchEngine({ provider, webSearchTool: webTool });
+        } catch (e) {}
+    }
+
+    _rebuildAiEngine() {
+        if (this._aiEngine) { try { this._aiEngine.cancel(); } catch (e) {} }
+        this._aiGen++;
+        this._createAiEngine();
+        if (this._mode === 'ai') {
+            // if currently in AI mode, resync UI (keeps pill correct) and keep loading state consistent
+            try { this._syncModeUI(); } catch (e) {}
+        }
+    }
+
+    _syncModeUI() {
+        const ov = this._overlay;
+        if (!ov || !ov._entry || !ov._modeButton) return;
+        const isAi = this._mode === 'ai';
+        try {
+            // St.Entry hint_text property (Cinnamon's St.Entry uses hint_text)
+            if (ov._entry) {
+                try { ov._entry.hint_text = isAi ? _("Ask AI...") : _("Mau cari apa"); } catch (e) {
+                    try { ov._entry.set_hint_text && ov._entry.set_hint_text(isAi ? _("Ask AI...") : _("Mau cari apa")); } catch (e2) {}
+                }
+            }
+        } catch (e) {}
+        try {
+            if (ov._modeLabel) ov._modeLabel.set_text(isAi ? _("AI ON") : _("\u2728 Mode AI"));
+        } catch (e) {}
+        try {
+            if (ov._modeIcon) ov._modeIcon.icon_name = isAi ? "emblem-favorite" : "system-search";
+        } catch (e) {}
+        try {
+            if (isAi) {
+                ov._entryRow.add_style_class_name("quicksearch-mode-active");
+                ov._modeButton.add_style_class_name("quicksearch-mode-active");
+            } else {
+                ov._entryRow.remove_style_class_name("quicksearch-mode-active");
+                ov._modeButton.remove_style_class_name("quicksearch-mode-active");
+            }
+        } catch (e) {}
+    }
+
+    _toggleMode() {
+        const toAi = this._mode !== 'ai';
+        if (toAi) {
+            if (this._engine) try { this._engine.cancel(); } catch (e) {}
+            this._clearNormalResultsForModeSwitch();
+            this._clearAIState();
+            this._mode = 'ai';
+            this._aiGen++;
+            this._aiLoading = false;
+            this._syncModeUI();
+            this._renderAIState();
+            try {
+                if (this._overlay && this._overlay._entry) {
+                    if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(this._overlay._entry);
+                    if (this._overlay._startCaretBlink) this._overlay._startCaretBlink();
+                }
+            } catch (e) {}
+        } else {
+            if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
+            this._aiGen++;
+            this._aiLoading = false;
+            this._aiError = null;
+            this._aiAnswer = '';
+            this._mode = 'search';
+            this._syncModeUI();
+            // clear AI visuals
+            try { this._clearAIStateVisualOnly(); } catch (e) { this._clearAIState(); }
+            // restore normal panel empty, then re-run query if text present
+            this.renderResults([]);
+            try {
+                if (this._overlay && this._overlay._entry) {
+                    if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(this._overlay._entry);
+                    if (this._overlay._startCaretBlink) this._overlay._startCaretBlink();
+                }
+            } catch (e) {}
+            const txt = this._overlay ? this._overlay.getText() : "";
+            if (txt && String(txt).trim()) {
+                // re-trigger normal search for current text
+                try { this.onTextChanged(txt); } catch (e) {}
+            }
+        }
+    }
+
+    _clearNormalResultsForModeSwitch() {
+        try {
+            if (this._overlay) {
+                if (this._overlay.resultsBox) {
+                    while (this._overlay.resultsBox.get_n_children() > 0) this._overlay.resultsBox.remove_child(this._overlay.resultsBox.get_child_at_index(0));
+                }
+                if (this._overlay.autoCompleteBox) {
+                    while (this._overlay.autoCompleteBox.get_n_children() > 0) this._overlay.autoCompleteBox.remove_child(this._overlay.autoCompleteBox.get_child_at_index(0));
+                }
+                this._autoRows = [];
+                this._mainRows = [];
+                this._rows = [];
+                this._selIdx = -1;
+                this._current = [];
+                this._sortedResults = [];
+                try { if (this._overlay._scroll) this._overlay._scroll.visible = false; } catch (e) {}
+                try { if (this._overlay._autoScroll) this._overlay._autoScroll.visible = false; } catch (e) {}
+            } else {
+                this._autoRows = [];
+                this._mainRows = [];
+                this._rows = [];
+                this._selIdx = -1;
+            }
+        } catch (e) {}
+    }
+
+    _clearAIState() {
+        this._aiLoading = false;
+        this._aiAnswer = '';
+        this._aiError = null;
+    }
+
+    _clearAIStateVisualOnly() {
+        this._aiLoading = false;
+        this._aiAnswer = '';
+        this._aiError = null;
+        const ov = this._overlay;
+        if (!ov || !ov.resultsBox) return;
+        try { while (ov.resultsBox.get_n_children() > 0) ov.resultsBox.remove_child(ov.resultsBox.get_child_at_index(0)); } catch (e) {}
+        this._mainRows = [];
+        // keep _rows recomputed via _syncSelection/_render paths; but ensure scroll hidden until normal renders
+        try { if (ov._scroll) ov._scroll.visible = false; } catch (e) {}
+        try { this._syncRegionGeometry(); } catch (e) {}
+    }
+
+    _renderAIState() {
+        const ov = this._overlay;
+        if (!ov || !ov.resultsBox) return;
+        try { if (ov._autoScroll) ov._autoScroll.visible = false; } catch (e) {}
+        this._autoRows = [];
+        try { while (ov.resultsBox.get_n_children() > 0) ov.resultsBox.remove_child(ov.resultsBox.get_child_at_index(0)); } catch (e) {}
+        this._mainRows = [];
+        this._rows = [];
+        this._selIdx = -1;
+        this._sortedResults = [];
+        if (this._aiLoading) {
+            try {
+                const lbl = new St.Label({ text: _("Thinking..."), style_class: "quicksearch-ai-loading" });
+                try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+                ov.resultsBox.add_child(lbl);
+                ov._scroll.visible = true;
+            } catch (e) {}
+        } else if (this._aiError) {
+            try {
+                const msg = _("Unable to get an AI response.");
+                const lbl = new St.Label({ text: msg, style_class: "quicksearch-ai-error" });
+                try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+                ov.resultsBox.add_child(lbl);
+                ov._scroll.visible = true;
+            } catch (e) {}
+        } else if (this._aiAnswer) {
+            try {
+                const lbl = new St.Label({ text: String(this._aiAnswer), style_class: "quicksearch-ai-answer" });
+                try {
+                    const ct = lbl.get_clutter_text();
+                    ct.set_line_wrap(true);
+                    if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
+                } catch (e) {}
+                ov.resultsBox.add_child(lbl);
+                ov._scroll.visible = true;
+            } catch (e) {}
+        } else {
+            try { ov._scroll.visible = false; } catch (e) {}
+        }
+        try { this._syncRegionGeometry(); } catch (e) {}
+        try { this._syncSelection(); } catch (e) {}
+    }
+
+    _submitAIQuery(raw) {
+        const q = String(raw || "").trim();
+        if (!q) return;
+        this._aiGen++;
+        const myGen = this._aiGen;
+        if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
+        this._aiLoading = true;
+        this._aiAnswer = '';
+        this._aiError = null;
+        this._renderAIState();
+        if (!this._aiEngine) this._createAiEngine();
+        if (!this._aiEngine) {
+            if (myGen !== this._aiGen || this._mode !== 'ai') return;
+            this._aiLoading = false;
+            this._aiError = { code: 'provider_error' };
+            this._renderAIState();
+            return;
+        }
+        const cbs = {
+            onAnswer: (data) => {
+                if (myGen !== this._aiGen || this._mode !== 'ai') return;
+                this._aiLoading = false;
+                this._aiAnswer = data && typeof data.text === 'string' ? data.text : String((data && data.text) || '');
+                this._aiError = null;
+                this._renderAIState();
+            },
+            onError: (err) => {
+                if (myGen !== this._aiGen || this._mode !== 'ai') return;
+                const code = err && err.code ? err.code : 'provider_error';
+                if (code === 'cancelled') {
+                    this._aiLoading = false;
+                    this._renderAIState();
+                    return;
+                }
+                this._aiLoading = false;
+                this._aiError = err || { code };
+                this._aiAnswer = '';
+                this._renderAIState();
+            },
+            onDone: (err, data) => {
+                if (myGen !== this._aiGen || this._mode !== 'ai') return;
+                if (err) {
+                    const code = err.code || 'provider_error';
+                    if (code === 'cancelled') { this._aiLoading = false; this._renderAIState(); return; }
+                    this._aiLoading = false; this._aiError = err; this._aiAnswer = ''; this._renderAIState();
+                } else if (data) {
+                    this._aiLoading = false; this._aiAnswer = data.text || ''; this._aiError = null; this._renderAIState();
+                }
+            }
+        };
+        try {
+            // support both callback signatures
+            const maybe = this._aiEngine.search(q, cbs);
+            // also handle function-callback overload via second attempt if needed
+            void maybe;
+        } catch (e) {
+            if (myGen !== this._aiGen || this._mode !== 'ai') return;
+            this._aiLoading = false;
+            this._aiError = { code: 'provider_error', message: e && e.message };
+            this._renderAIState();
+        }
+    }
+
     _applySearchEngineSetting() {
         const n = utilsMod.normalizeSearchEngine(this.search_engine);
         if (!n) {
@@ -502,17 +853,35 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!this._overlay) {
             this._overlay = new QuickSearchOverlay(this);
         }
+        // AI-2: every open starts in Normal Search (§16)
+        this._mode = 'search';
+        this._aiLoading = false;
+        this._aiAnswer = '';
+        this._aiError = null;
+        if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
+        this._aiGen++;
         this._overlay.open(global.get_current_time());
         this._overlay.dialogLayout.set_height(global.screen_height - 2);
         global.stage.set_key_focus(this._overlay._entry);
         this._overlay._startCaretBlink();
         this._overlay.setText("");
+        this._syncModeUI();
+        this._clearAIState();
+        try { while (this._overlay.resultsBox.get_n_children() > 0) this._overlay.resultsBox.remove_child(this._overlay.resultsBox.get_child_at_index(0)); } catch (e) {}
+        this._mainRows = [];
+        this._autoRows = [];
+        this._rows = [];
+        this._selIdx = -1;
+        if (this._overlay._autoScroll) try { this._overlay._autoScroll.visible = false; } catch (e) {}
         this.renderResults([]);
     }
 
     close() {
         try { if (this._contextMenu) this._contextMenu.hide(); } catch (e) {}
         if (this._engine) this._engine.cancel();
+        if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
+        this._aiGen++;
+        this._aiLoading = false;
         this._cancelPopupHide();
         this._ptrInEntry = false;
         this._ptrInPopup = false;
@@ -711,6 +1080,22 @@ class QuickSearchApplet extends Applet.IconApplet {
     // ---- input flow ----
 
     onTextChanged(text) {
+        if (this._mode === 'ai') {
+            this._selIdx = -1;
+            try {
+                if (this._overlay && this._overlay.autoCompleteBox) {
+                    while (this._overlay.autoCompleteBox.get_n_children() > 0) this._overlay.autoCompleteBox.remove_child(this._overlay.autoCompleteBox.get_child_at_index(0));
+                }
+                this._autoRows = [];
+                if (this._overlay && this._overlay._autoScroll) this._overlay._autoScroll.visible = false;
+                this._rows = [];
+            } catch (e) {}
+            if (this._aiError) {
+                this._aiError = null;
+                if (!this._aiLoading && !this._aiAnswer) this._renderAIState();
+            }
+            return;
+        }
         this._selIdx = -1;
         this._renderAutocomplete(this._buildLocals(text));
         if (!text.trim()) {
@@ -835,6 +1220,16 @@ class QuickSearchApplet extends Applet.IconApplet {
             if (this._contextMenu && this._contextMenu.isVisible()) { this._contextMenu.hide(); return Clutter.EVENT_STOP; }
             this.close();
             return Clutter.EVENT_STOP;
+        }
+        if (this._mode === 'ai') {
+            if (sym === Clutter.KEY_Return || sym === Clutter.KEY_KP_Enter) {
+                try { this._submitAIQuery(this._overlay ? this._overlay.getText() : ""); } catch (e) {}
+                return Clutter.EVENT_STOP;
+            }
+            if (sym === Clutter.KEY_Down || sym === Clutter.KEY_KP_Down || sym === Clutter.KEY_Up || sym === Clutter.KEY_KP_Up) {
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
         }
         if (sym === Clutter.KEY_Down || sym === Clutter.KEY_KP_Down) {
             this._moveSelection(1);
@@ -1115,6 +1510,11 @@ class QuickSearchApplet extends Applet.IconApplet {
             try { this._engine.cancel(); } catch(e){}
             try { this._engine.destroy(); } catch(e){}
             this._engine = null;
+        }
+        if (this._aiEngine) {
+            try { this._aiEngine.cancel(); } catch(e){}
+            try { this._aiEngine.destroy(); } catch(e){}
+            this._aiEngine = null;
         }
         try { this.close(); } catch(e){}
         if (this._overlay) {

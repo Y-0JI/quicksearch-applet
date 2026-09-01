@@ -115,3 +115,9 @@
 .quicksearch-context-item:disabled StLabel {
     color: rgba(255,255,255,0.40);
 }
+
+.quicksearch-mode-button { padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.10); background-color: rgba(255,255,255,0.06); }
+.quicksearch-mode-button:hover { background-color: rgba(255,255,255,0.12); }
+.quicksearch-mode-active { border-color: rgba(255,255,255,0.18); }
+.quicksearch-ai-loading, .quicksearch-ai-answer, .quicksearch-ai-error { padding: 10px 8px; font-size: 10pt; }
+.quicksearch-ai-error { color: rgba(255,120,120,0.95); }
