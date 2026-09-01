@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: quicksearch@yoji 1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-30\n"
+"POT-Creation-Date: 2026-09-01\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -43,4 +43,40 @@ msgstr ""
 
 #: applet.js
 msgid "Action failed"
+msgstr ""
+
+#: applet.js
+msgid "Ask AI..."
+msgstr ""
+
+#: applet.js
+msgid "✨ Mode AI"
+msgstr ""
+
+#: applet.js
+msgid "AI ON"
+msgstr ""
+
+#: applet.js
+msgid "Thinking..."
+msgstr ""
+
+#: applet.js
+msgid "Unable to get an AI response."
+msgstr ""
+
+#: settings-schema.json
+msgid "AI Search"
+msgstr ""
+
+#: settings-schema.json
+msgid "AI base URL (9router, e.g. http://127.0.0.1:20128)"
+msgstr ""
+
+#: settings-schema.json
+msgid "AI API key (9router)"
+msgstr ""
+
+#: settings-schema.json
+msgid "AI model (e.g. gpt-4o-mini, coba9router)"
 msgstr ""

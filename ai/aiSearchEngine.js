@@ -50,12 +50,23 @@ function _normalizeWebError(err) {
 function createAISearchEngine(deps) {
     deps = deps || {};
     const provider = deps.provider;
-    const webSearchTool = deps.webSearchTool;
+    let webSearchTool = deps.webSearchTool;
     const promptBuilder = deps.promptBuilder || promptBuilderMod;
     const sourceFormatter = deps.sourceFormatter || sourceFormatterMod;
 
     if (!provider || typeof provider.request !== 'function') throw new Error('AISearchEngine: provider.request required');
-    if (!webSearchTool || typeof webSearchTool.search !== 'function') throw new Error('AISearchEngine: webSearchTool.search required');
+    if (!webSearchTool || typeof webSearchTool.search !== 'function') {
+        // AI-2: no grounding yet — stub keeps basic answer path working
+        webSearchTool = {
+            search: (q, c, cb) => {
+                const e = new Error('Web search unavailable');
+                e.code = 'web_search_unavailable';
+                if (typeof c === 'function' && cb === undefined) return c(e);
+                if (typeof cb === 'function') return cb(e);
+                if (typeof c === 'function') return c(e);
+            }
+        };
+    }
 
     let gen = 0;
     let currentCancellable = null;

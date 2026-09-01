@@ -1,7 +1,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: quicksearch@yoji 1.0\n"
-"POT-Creation-Date: 2026-08-30\n"
+"POT-Creation-Date: 2026-09-01\n"
 "Language: en\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -33,3 +33,30 @@ msgstr "Recent"
 
 msgid "Action failed"
 msgstr "Action failed"
+
+msgid "Ask AI..."
+msgstr "Ask AI..."
+
+msgid "✨ Mode AI"
+msgstr "✨ Mode AI"
+
+msgid "AI ON"
+msgstr "AI ON"
+
+msgid "Thinking..."
+msgstr "Thinking..."
+
+msgid "Unable to get an AI response."
+msgstr "Unable to get an AI response."
+
+msgid "AI Search"
+msgstr "AI Search"
+
+msgid "AI base URL (9router, e.g. http://127.0.0.1:20128)"
+msgstr "AI base URL (9router, e.g. http://127.0.0.1:20128)"
+
+msgid "AI API key (9router)"
+msgstr "AI API key (9router)"
+
+msgid "AI model (e.g. gpt-4o-mini, coba9router)"
+msgstr "AI model (e.g. gpt-4o-mini, coba9router)"

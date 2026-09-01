@@ -25,11 +25,8 @@ const calculatorProviderMod = require('./providers/calculatorProvider.js');
 const searchEngineMod = require('./searchEngine.js');
 const contextActionsMod = require('./providers/contextActions.js');
 const fileLauncherMod = require('./providers/fileLauncher.js');
-let aiSearchEngineMod = null, aiProviderMod = null, nineRouterProviderMod = null, webSearchToolMod = null;
-try { aiSearchEngineMod = require('./ai/aiSearchEngine.js'); } catch (e) {}
-try { aiProviderMod = require('./ai/aiProvider.js'); } catch (e) {}
-try { nineRouterProviderMod = require('./ai/nineRouterProvider.js'); } catch (e) {}
-try { webSearchToolMod = require('./ai/webSearchTool.js'); } catch (e) {}
+let aiFactoryMod = null;
+try { aiFactoryMod = require('./ai/aiFactory.js'); } catch (e) {}
 
 const UUID = "quicksearch@yoji";
 
@@ -84,7 +81,7 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             style_class: "quicksearch-mode-icon"
         });
         const _modeLabel = new St.Label({
-            text: _("Mode AI"),
+            text: _("\u2728 Mode AI"),
             style_class: "quicksearch-mode-label"
         });
         const _modeContent = new St.BoxLayout({ style_class: "quicksearch-mode-content", vertical: false });
@@ -522,75 +519,39 @@ class QuickSearchApplet extends Applet.IconApplet {
             try { this._aiEngine.destroy(); } catch (e) {}
             this._aiEngine = null;
         }
-        if (!aiSearchEngineMod || typeof aiSearchEngineMod.createAISearchEngine !== 'function') return;
-        let provider = null;
-        let webTool = null;
-        // test injection hook (used by headless tests)
+        if (!aiFactoryMod || typeof aiFactoryMod.createAiEngine !== 'function') return;
+        // test injection hook (headless tests) — provider only; AI-2 has no grounding
         if (this._injectedProvider) {
-            provider = this._injectedProvider;
-            try { webTool = this._injectedWebSearchTool || (webSearchToolMod ? webSearchToolMod.createMockWebSearchTool() : null); } catch (e) { webTool = null; }
-        } else {
-            const baseUrl = String(this.ai_base_url || '').trim();
-            const apiKey = String(this.ai_api_key || '').trim();
-            const model = String(this.ai_model || '').trim();
-            if (!baseUrl || !apiKey || !model) {
-                // missing config -> mock provider that returns auth_error (UI remains testable, no throw)
-                try {
-                    if (aiProviderMod && typeof aiProviderMod.createMockAiProvider === 'function') {
-                        provider = aiProviderMod.createMockAiProvider({
-                            handler: (req, cb) => {
-                                const e = new Error('AI provider auth error');
-                                e.code = 'auth_error';
-                                cb(e);
-                            }
-                        });
-                    } else {
-                        return;
-                    }
-                    webTool = webSearchToolMod ? webSearchToolMod.createMockWebSearchTool() : null;
-                } catch (e) { return; }
-            } else {
-                try {
-                    if (nineRouterProviderMod && typeof nineRouterProviderMod.createNineRouterProvider === 'function') {
-                        provider = nineRouterProviderMod.createNineRouterProvider({ baseUrl, apiKey, model });
-                    } else if (aiProviderMod && typeof aiProviderMod.createMockAiProvider === 'function') {
-                        provider = aiProviderMod.createMockAiProvider({ handler: (req, cb) => cb(null, { type: 'answer', text: 'mock' }) });
-                    } else {
-                        return;
-                    }
-                } catch (e) {
-                    try {
-                        if (aiProviderMod && typeof aiProviderMod.createMockAiProvider === 'function') {
-                            provider = aiProviderMod.createMockAiProvider({
-                                handler: (req, cb) => {
-                                    const err = new Error('AI provider error');
-                                    err.code = 'provider_error';
-                                    cb(err);
-                                }
-                            });
-                        } else { return; }
-                    } catch (e2) { return; }
-                }
-                try { webTool = webSearchToolMod ? webSearchToolMod.createMockWebSearchTool() : null; } catch (e) { webTool = null; }
-            }
+            try {
+                this._aiEngine = aiFactoryMod.createAiEngine({
+                    provider: this._injectedProvider
+                });
+            } catch (e) {}
+            return;
         }
-        if (!webTool && webSearchToolMod && typeof webSearchToolMod.createMockWebSearchTool === 'function') {
-            try { webTool = webSearchToolMod.createMockWebSearchTool(); } catch (e) {}
-        }
-        // fallback if webSearchTool still missing
-        if (!webTool) webTool = { search: (q, c, cb) => { const e = new Error('Web search unavailable'); e.code = 'web_search_unavailable'; if (typeof c === 'function') c(e); else if (cb) cb(e); } };
         try {
-            this._aiEngine = aiSearchEngineMod.createAISearchEngine({ provider, webSearchTool: webTool });
+            this._aiEngine = aiFactoryMod.createAiEngine({
+                baseUrl: this.ai_base_url,
+                apiKey: this.ai_api_key,
+                model: this.ai_model
+            });
         } catch (e) {}
     }
 
     _rebuildAiEngine() {
+        const wasLoading = !!this._aiLoading;
         if (this._aiEngine) { try { this._aiEngine.cancel(); } catch (e) {} }
         this._aiGen++;
+        // P1-2: cancel+gen invalidates old callbacks; clear stale UI so Thinking... never sticks
+        this._aiLoading = false;
+        this._aiError = null;
         this._createAiEngine();
         if (this._mode === 'ai') {
-            // if currently in AI mode, resync UI (keeps pill correct) and keep loading state consistent
             try { this._syncModeUI(); } catch (e) {}
+            try { this._renderAIState(); } catch (e) {}
+        } else if (wasLoading) {
+            // pending while in search: ensure no stale loading leaks into next ai open
+            try { this._renderAIState(); } catch (e) {}
         }
     }
 

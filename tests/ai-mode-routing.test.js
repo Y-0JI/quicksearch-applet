@@ -533,13 +533,16 @@ test('23 stylesheet has mode button & AI states', () => {
 });
 
 test('24 applet does not contain direct 9router HTTP', () => {
-    // forbidden: applet -> HTTP/fetch/Soup -> 9router
-    // check no Soup, fetch, httpFetch, chat/completions in applet.js (only via provider)
+    // P1-1: applet must not require concrete provider, only factory
     assert.ok(!APPLET_SRC.includes('Soup'), 'no Soup in applet');
-    // allow mention of createNineRouterProvider (allowed via AIProvider) but not raw fetch
     const hasRawHttp = APPLET_SRC.includes('httpFetch') || APPLET_SRC.includes('chat/completions');
     assert.equal(hasRawHttp, false, 'no raw http in applet');
-    assert.ok(APPLET_SRC.includes('aiSearchEngineMod') || APPLET_SRC.includes('AISearchEngine'), 'must use AISearchEngine');
+    // boundary: only factory, not concrete provider
+    assert.ok(APPLET_SRC.includes('aiFactory') || APPLET_SRC.includes('createAiEngine'), 'must use aiFactory abstraction');
+    assert.ok(!APPLET_SRC.includes("require('./ai/nineRouterProvider"), 'no direct NineRouterProvider require');
+    assert.ok(!APPLET_SRC.includes("require('./ai/aiProvider"), 'no direct aiProvider require');
+    assert.ok(!APPLET_SRC.includes("require('./ai/webSearchTool"), 'no direct webSearchTool require (P2-1)');
+    assert.ok(!APPLET_SRC.includes('createNineRouterProvider'), 'no concrete provider creation in applet');
 });
 
 test('25 existing providers unchanged', () => {
@@ -576,4 +579,184 @@ test('placeholder and labels follow spec', () => {
     assert.equal(a._overlay.modeLabel, 'AI ON');
     a._toggleMode();
     assert.equal(a._overlay.modeLabel, '✨ Mode AI');
+});
+
+// ── P1-1 factory boundary ──
+test('P1-1 factory exists and encapsulates provider', () => {
+    const fPath = path.join(ROOT, 'ai/aiFactory.js');
+    assert.ok(fs.existsSync(fPath), 'aiFactory.js exists');
+    const src = fs.readFileSync(fPath, 'utf8');
+    assert.ok(src.includes('createNineRouterProvider') || src.includes('nineRouterProvider'), 'factory wires NineRouterProvider');
+    assert.ok(src.includes('createAISearchEngine') || src.includes('aiSearchEngine'), 'factory wires AISearchEngine');
+    assert.ok(src.includes('createAiEngine'), 'factory exports createAiEngine');
+    // applet only sees factory
+    assert.ok(APPLET_SRC.includes("require('./ai/aiFactory"), 'applet requires factory');
+    assert.ok(!APPLET_SRC.includes('webSearchToolMod'), 'no webSearchToolMod in applet');
+});
+
+// ── P1-2 rebuild while pending ──
+test('P1-2 rebuild pending clears Thinking and ignores late', () => {
+    const deps = makeMockDeps();
+    // FakeApplet with real rebuild logic
+    class A extends FakeApplet {
+        _rebuildAiEngine() {
+            const wasLoading = !!this._aiLoading;
+            if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
+            this._aiGen++;
+            this._aiLoading = false;
+            this._aiError = null;
+            this._createAiEngine();
+            if (this._mode === 'ai') {
+                try { this._syncModeUI(); } catch (e) {}
+                try { this._renderAIState(); } catch (e) {}
+            } else if (wasLoading) {
+                try { this._renderAIState(); } catch (e) {}
+            }
+        }
+    }
+    const a = new A(deps);
+    let held = null;
+    a._injectedProvider = deps.createMockAiProvider({ handler: (req, cb) => { held = cb; } });
+    a._createAiEngine = function () {
+        const { createAISearchEngine } = require('../ai/aiSearchEngine.js');
+        this._aiEngine = createAISearchEngine({ provider: this._injectedProvider, webSearchTool: deps.createMockWebSearchTool() });
+    };
+    a._createAiEngine();
+    a._toggleMode();
+    a._submitAIQuery('q');
+    assert.equal(a._aiLoading, true);
+    assert.equal(a._overlay.resultsBoxChildren[0].type, 'loading');
+    // simulate settings change
+    a._rebuildAiEngine();
+    assert.equal(a._aiLoading, false, 'loading cleared after rebuild');
+    assert.equal(a._overlay.resultsBoxChildren.length, 0, 'Thinking... hilang');
+    assert.equal(a._aiError, null);
+    if (held) held(null, { type: 'answer', text: 'late' });
+    assert.equal(a._aiAnswer, '', 'late ignored');
+    // next request uses new engine
+    let secondCalls = 0;
+    a._injectedProvider = deps.createMockAiProvider({ handler: (req, cb) => { secondCalls++; cb(null, { type: 'answer', text: 'new' }); } });
+    a._createAiEngine();
+    a._submitAIQuery('q2');
+    assert.equal(a._aiAnswer, 'new');
+    assert.equal(secondCalls, 1);
+});
+
+test('P1-2 rebuild does not surface stale error', () => {
+    const deps = makeMockDeps();
+    class A extends FakeApplet {
+        _rebuildAiEngine() {
+            if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
+            this._aiGen++;
+            this._aiLoading = false;
+            this._aiError = null;
+            this._createAiEngine();
+            if (this._mode === 'ai') { try { this._renderAIState(); } catch (e) {} }
+        }
+    }
+    const a = new A(deps);
+    let held = null;
+    a._injectedProvider = deps.createMockAiProvider({ handler: (req, cb) => { held = cb; } });
+    a._createAiEngine = function () {
+        const { createAISearchEngine } = require('../ai/aiSearchEngine.js');
+        this._aiEngine = createAISearchEngine({ provider: this._injectedProvider, webSearchTool: deps.createMockWebSearchTool() });
+    };
+    a._createAiEngine();
+    a._toggleMode();
+    a._submitAIQuery('q');
+    assert.equal(a._aiLoading, true);
+    a._rebuildAiEngine();
+    assert.equal(a._aiError, null);
+    assert.equal(a._overlay.resultsBoxChildren.length, 0);
+    if (held) { const e = new Error('fail'); e.code = 'provider_error'; held(e); }
+    assert.equal(a._aiError, null, 'stale error not surfaced');
+    assert.equal(a._aiLoading, false);
+});
+
+test('P1-2 rebuild in ai mode keeps mode and indicator', () => {
+    const deps = makeMockDeps();
+    class A extends FakeApplet {
+        _rebuildAiEngine() {
+            if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
+            this._aiGen++;
+            this._aiLoading = false;
+            this._aiError = null;
+            this._createAiEngine();
+            if (this._mode === 'ai') { try { this._syncModeUI(); } catch (e) {} try { this._renderAIState(); } catch (e) {} }
+        }
+    }
+    const a = new A(deps);
+    a._toggleMode();
+    assert.equal(a._mode, 'ai');
+    assert.equal(a._overlay.modeLabel, 'AI ON');
+    assert.equal(a._overlay.hint_text, 'Ask AI...');
+    a._aiLoading = true;
+    a._overlay.resultsBoxChildren = [{ type: 'loading', text: 'Thinking...' }];
+    a._rebuildAiEngine();
+    assert.equal(a._mode, 'ai', 'mode stays ai');
+    assert.equal(a._overlay.modeLabel, 'AI ON');
+    assert.equal(a._overlay.hint_text, 'Ask AI...');
+    assert.equal(a._aiLoading, false);
+    // entry still usable: next query works
+    let called = false;
+    a._injectedProvider = deps.createMockAiProvider({ handler: (req, cb) => { called = true; cb(null, { type: 'answer', text: 'ok' }); } });
+    a._createAiEngine();
+    a._overlay.setText('next');
+    a._submitAIQuery('next');
+    assert.equal(called, true, 'next request works');
+    assert.equal(a._aiAnswer, 'ok');
+});
+
+test('P1-2 file guards: rebuild clears loading', () => {
+    assert.ok(APPLET_SRC.includes('_rebuildAiEngine'), 'has rebuild');
+    assert.ok(APPLET_SRC.includes('this._aiLoading = false'), 'rebuild clears loading');
+    // rebuild should bump gen and cancel
+    assert.ok(APPLET_SRC.includes('this._aiGen++'), 'rebuild bumps gen');
+    assert.ok(APPLET_SRC.includes('this._aiEngine.cancel()'), 'rebuild cancels');
+    assert.ok(APPLET_SRC.includes('_renderAIState()'), 'rebuild re-renders');
+});
+
+// ── P2-1 no WebSearchTool wiring ──
+test('P2-1 basic query works without WebSearchTool', () => {
+    // AISearchEngine should stub webSearchTool when not provided
+    const { createAISearchEngine } = require('../ai/aiSearchEngine.js');
+    const { createMockAiProvider } = require('../ai/aiProvider.js');
+    const provider = createMockAiProvider({ handler: (req, cb) => cb(null, { type: 'answer', text: 'basic ok' }) });
+    const engine = createAISearchEngine({ provider }); // no webSearchTool
+    let got = null;
+    engine.search('hello', { onAnswer: d => { got = d; } });
+    assert.equal(got.text, 'basic ok');
+});
+
+test('P2-1 factory without webTool still works', () => {
+    const { createAiEngine } = require('../ai/aiFactory.js');
+    const { createMockAiProvider } = require('../ai/aiProvider.js');
+    const provider = createMockAiProvider({ handler: (req, cb) => cb(null, { type: 'answer', text: 'factory basic' }) });
+    const engine = createAiEngine({ provider }); // no webSearchTool
+    let got = null;
+    engine.search('q', { onAnswer: d => { got = d; } });
+    assert.equal(got.text, 'factory basic');
+});
+
+test('P2-1 applet has no webSearchTool wiring', () => {
+    assert.ok(!APPLET_SRC.includes("webSearchTool.js"), 'no webSearchTool.js require');
+    assert.ok(!APPLET_SRC.includes('createMockWebSearchTool'), 'no mock web tool in applet');
+});
+
+// ── P2-2 POT coverage ──
+test('P2-2 POT coverage includes AI strings', () => {
+    const pot = fs.readFileSync(path.join(ROOT, 'po/quicksearch@yoji.pot'), 'utf8');
+    const en = fs.readFileSync(path.join(ROOT, 'po/en.po'), 'utf8');
+    const id = fs.readFileSync(path.join(ROOT, 'po/id.po'), 'utf8');
+    for (const s of ['Ask AI...', '✨ Mode AI', 'AI ON', 'Thinking...', 'Unable to get an AI response.']) {
+        assert.ok(pot.includes(s), `pot has ${s}`);
+        assert.ok(en.includes(s), `en has ${s}`);
+        assert.ok(id.includes(s), `id has ${s}`);
+    }
+    for (const s of ['AI Search', 'AI base URL', 'AI API key', 'AI model']) {
+        assert.ok(pot.includes(s), `pot has ${s}`);
+    }
+    // applet still uses _()
+    assert.ok(APPLET_SRC.includes('_("Ask AI...")') || APPLET_SRC.includes("_('Ask AI"), 'applet uses gettext for Ask AI');
+    assert.ok(APPLET_SRC.includes('Thinking...') && APPLET_SRC.includes('_('), 'applet uses gettext for Thinking');
 });
