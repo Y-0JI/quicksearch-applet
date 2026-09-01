@@ -352,6 +352,126 @@ test('secret safety: errors never contain apiKey', async () => {
     }
 });
 
+// ── Final Gate mandatory: hanging cancel, destroy, AbortError ──
+test('gate: hanging transport immediate cancelled on cancel, late success ignored', async () => {
+    let resolveFetch;
+    let rejectFetch;
+    const hangingFetch = () => new Promise((res, rej) => { resolveFetch = res; rejectFetch = rej; });
+    const cancellable = { _c: false, is_cancelled() { return this._c; }, cancel() { this._c = true; } };
+    const provider = createNineRouterProvider({
+        baseUrl: 'http://localhost:3000', apiKey: FAKE_KEY, model: FAKE_MODEL,
+        timeoutMs: 5000,
+        httpFetch: hangingFetch
+    });
+    let cbCalls = 0;
+    let cbErr = null;
+    provider.request({ query: 'q' }, cancellable, (err, res) => { cbCalls++; cbErr = err || res; });
+    await new Promise(r => setTimeout(r, 10));
+    assert.equal(cbCalls, 0, 'not yet completed before cancel');
+    cancellable.cancel();
+    // must settle promptly, not wait for timeout (5000ms) — give 80ms budget
+    await new Promise(r => setTimeout(r, 40));
+    assert.equal(cbCalls, 1, 'cancel delivers exactly once promptly');
+    assert.equal(cbErr.code, 'cancelled');
+    // late fetch success must not produce second callback or success
+    if (resolveFetch) resolveFetch({ status: 200, bodyText: okBody('late-should-be-ignored') });
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(cbCalls, 1, 'late success ignored after cancel');
+});
+
+test('gate: Gio Cancellable connect path immediate cancelled', async () => {
+    let handler = null;
+    let handlerId = 0;
+    let cancelled = false;
+    const gioCancel = {
+        is_cancelled() { return cancelled; },
+        connect(sig, cb) { assert.equal(sig, 'cancelled'); handler = cb; return ++handlerId; },
+        disconnect(id) { if (id === handlerId) handler = null; },
+        cancel() { cancelled = true; if (handler) handler(); }
+    };
+    const provider = createNineRouterProvider({
+        baseUrl: 'http://localhost:3000', apiKey: FAKE_KEY, model: FAKE_MODEL,
+        timeoutMs: 5000,
+        httpFetch: () => new Promise(() => {})
+    });
+    let errCode = null;
+    provider.request({ query: 'q' }, gioCancel, (err) => { errCode = err && err.code; });
+    await new Promise(r => setTimeout(r, 5));
+    gioCancel.cancel();
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(errCode, 'cancelled');
+});
+
+test('gate: destroy pending late response ignored', async () => {
+    let resolveFetch;
+    const provider = createNineRouterProvider({
+        baseUrl: 'http://localhost:3000', apiKey: FAKE_KEY, model: FAKE_MODEL,
+        timeoutMs: 5000,
+        httpFetch: () => new Promise(res => { resolveFetch = res; })
+    });
+    let cbCalls = 0;
+    provider.request({ query: 'q' }, (err) => { cbCalls++; });
+    provider.destroy();
+    if (resolveFetch) resolveFetch({ status: 200, bodyText: okBody('late-after-destroy') });
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(cbCalls, 0, 'destroy silently drops pending — no success, no callback');
+    assert.doesNotThrow(() => provider.destroy(), 'double-destroy after pending must not throw');
+    await assert.rejects(requestAsync(provider, { query: 'q2' }), err => { assert.equal(err.code, 'provider_error'); return true; });
+});
+
+test('gate: double destroy idempotent no throw no double callback', () => {
+    const provider = createNineRouterProvider({
+        baseUrl: 'http://localhost:3000', apiKey: FAKE_KEY, model: FAKE_MODEL,
+        httpFetch: makeFetchMock({ bodyText: okBody('x') })
+    });
+    assert.doesNotThrow(() => provider.destroy());
+    assert.doesNotThrow(() => provider.destroy());
+    assert.doesNotThrow(() => provider.destroy());
+});
+
+test('gate: fetch AbortError mapped to cancelled not network_error', async () => {
+    const abortErr = Object.assign(new Error('AbortError'), { name: 'AbortError' });
+    const provider = createNineRouterProvider({
+        baseUrl: 'http://localhost:3000', apiKey: FAKE_KEY, model: FAKE_MODEL,
+        httpFetch: () => Promise.reject(abortErr)
+    });
+    await assert.rejects(requestAsync(provider, { query: 'q' }), err => {
+        assert.equal(err.code, 'cancelled', 'AbortError must become cancelled');
+        return true;
+    });
+});
+
+test('gate: aborted message substring also maps to cancelled', async () => {
+    const provider = createNineRouterProvider({
+        baseUrl: 'http://localhost:3000', apiKey: FAKE_KEY, model: FAKE_MODEL,
+        httpFetch: () => Promise.reject(new Error('aborted by signal'))
+    });
+    await assert.rejects(requestAsync(provider, { query: 'q' }), err => {
+        assert.equal(err.code, 'cancelled');
+        return true;
+    });
+});
+
+test('gate: one-shot completion — cancel wins over late timeout', async () => {
+    let resolveFetch;
+    const cancellable = { _c: false, is_cancelled() { return this._c; }, cancel() { this._c = true; } };
+    const provider = createNineRouterProvider({
+        baseUrl: 'http://localhost:3000', apiKey: FAKE_KEY, model: FAKE_MODEL,
+        timeoutMs: 40,
+        httpFetch: () => new Promise(res => { resolveFetch = res; })
+    });
+    let codes = [];
+    provider.request({ query: 'q' }, cancellable, (err) => { if (err) codes.push(err.code); else codes.push('success'); });
+    await new Promise(r => setTimeout(r, 5));
+    cancellable.cancel();
+    await new Promise(r => setTimeout(r, 70));
+    assert.equal(codes.length, 1, 'exactly one terminal');
+    assert.equal(codes[0], 'cancelled', 'cancel must win, not timeout');
+    if (resolveFetch) resolveFetch({ status: 200, bodyText: okBody('late') });
+    await new Promise(r => setTimeout(r, 10));
+    assert.equal(codes.length, 1, 'late ignored after cancel+timeout race');
+});
+
 // ── buildRequestBody shape ──
 test('buildRequestBody: contains model, messages, stream false', () => {
     const json = buildRequestBody('m', 'sys', 'user q');

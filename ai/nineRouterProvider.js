@@ -29,7 +29,6 @@ function buildChatCompletionsUrl(baseUrl) {
     if (!raw) throw new Error('baseUrl required');
     raw = raw.replace(/\/+$/, '');
     if (raw.endsWith('/v1')) raw = raw.slice(0, -3);
-    // after stripping /v1, there may be trailing slash left e.g. "http://x/v1/" already trimmed but double-case
     raw = raw.replace(/\/+$/, '');
     return raw + '/v1/chat/completions';
 }
@@ -42,17 +41,14 @@ function buildRequestBody(model, systemPrompt, userContent) {
 }
 
 function parseResponseText(text, status) {
-    // status already checked for non-2xx before calling; but handle error payload shape
     let data;
     try { data = JSON.parse(text); } catch (e) {
         const err = new Error('Invalid AI response');
         err.code = 'invalid_response';
         throw err;
     }
-    // provider error payload even on 2xx?
     if (data && typeof data === 'object' && data.error) {
         const err = new Error('AI provider error');
-        // let caller map by status; here we treat as provider_error unless status says otherwise
         err.code = 'provider_error';
         err._status = status;
         throw err;
@@ -74,7 +70,6 @@ function parseResponseText(text, status) {
         err.code = 'invalid_response';
         throw err;
     }
-    // empty string is valid answer (test expects distinct handling but still answer)
     return { type: 'answer', text: content };
 }
 
@@ -85,7 +80,6 @@ function httpStatusToCode(status) {
 }
 
 function createDefaultHttpFetch() {
-    // Cinnamon Soup-based fetch
     if (Soup && GLib) {
         let session = null;
         function ensureSession() {
@@ -113,7 +107,16 @@ function createDefaultHttpFetch() {
                         }
                     } catch (e) {}
                     const cancellable = opts.cancellable || null;
+                    const signal = opts.signal || null;
+                    // if native AbortSignal provided and Soup not cancellable, wire it
+                    let abortHandler = null;
+                    if (signal && !cancellable) {
+                        if (signal.aborted) return reject(Object.assign(new Error('AbortError'), { name: 'AbortError' }));
+                        abortHandler = () => reject(Object.assign(new Error('AbortError'), { name: 'AbortError' }));
+                        try { signal.addEventListener('abort', abortHandler); } catch (e) {}
+                    }
                     s.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, cancellable, (sess, res) => {
+                        try { if (signal && abortHandler) try { signal.removeEventListener('abort', abortHandler); } catch (e) {} } catch (e) {}
                         try {
                             const bytes = sess.send_and_read_finish(res);
                             let text = '';
@@ -126,15 +129,15 @@ function createDefaultHttpFetch() {
             });
         };
     }
-    // Node / fetch fallback
     if (typeof fetch === 'function') {
         return async function fetchFetch(url, opts) {
-            const res = await fetch(url, { method: opts.method || 'POST', headers: opts.headers || {}, body: opts.body });
+            const init = { method: opts.method || 'POST', headers: opts.headers || {}, body: opts.body };
+            if (opts.signal) init.signal = opts.signal;
+            const res = await fetch(url, init);
             const text = await res.text();
             return { status: res.status, bodyText: text, body: text };
         };
     }
-    // No transport
     return function noFetch() {
         return Promise.reject(new Error('no http transport'));
     };
@@ -150,31 +153,53 @@ function createNineRouterProvider(opts) {
 
     if (!baseUrl) throw new Error('NineRouterProvider: baseUrl required');
     if (!model) throw new Error('NineRouterProvider: model required');
-    // apiKey may be empty — handled per-request as auth_error without network
 
     let destroyed = false;
+    const activeRequests = new Set();
+
+    function sanitizeError(err) {
+        if (!err || !apiKey) return err;
+        try {
+            if (err.message && String(err.message).includes(String(apiKey))) {
+                err.message = String(err.message).split(String(apiKey)).join('[REDACTED]');
+            }
+            if (err.cause && err.cause.message && String(err.cause.message).includes(String(apiKey))) {
+                err.cause.message = String(err.cause.message).split(String(apiKey)).join('[REDACTED]');
+            }
+            // also sanitize any stringified stack that might contain key
+            if (err.stack && String(err.stack).includes(String(apiKey))) {
+                err.stack = String(err.stack).split(String(apiKey)).join('[REDACTED]');
+            }
+        } catch (e) {}
+        return err;
+    }
 
     function request(payload, cancellable, cb) {
-        // overload: request(payload, cb)
         if (typeof cancellable === 'function' && cb === undefined) {
             cb = cancellable;
             cancellable = null;
         }
-        // also support payload being string query (legacy)
         if (typeof payload === 'string') payload = { query: payload };
         payload = payload || {};
 
         if (destroyed) {
             const e = new Error('AI provider unavailable');
             e.code = 'provider_error';
+            sanitizeError(e);
             if (cb) return cb(e);
             return;
         }
 
-        // secret never in error message — generic only
         if (!apiKey) {
             const e = new Error('AI provider auth error');
             e.code = 'auth_error';
+            if (cb) return cb(e);
+            return;
+        }
+
+        if (_isCancelled(cancellable)) {
+            const e = new Error('cancelled');
+            e.code = 'cancelled';
             if (cb) return cb(e);
             return;
         }
@@ -184,7 +209,6 @@ function createNineRouterProvider(opts) {
         if (typeof payload.query === 'string') userContent = payload.query;
         else if (typeof payload.userContent === 'string') userContent = payload.userContent;
         else if (payload.messages) {
-            // if caller already built messages, extract last user — but spec says provider builds messages
             userContent = String(payload.query || '');
         }
         if (payload.groundingContext) {
@@ -205,77 +229,131 @@ function createNineRouterProvider(opts) {
             'Authorization': 'Bearer ' + apiKey
         };
 
-        let settled = false;
-        let timeoutId = null;
+        // per-request state for one-shot completion
+        const state = {
+            settled: false,
+            timeoutId: null,
+            cancelHandlerId: null,
+            originalCancel: null,
+            cancellable: cancellable,
+            abortController: null,
+            cb: cb
+        };
+        activeRequests.add(state);
 
-        function done(err, result) {
-            if (settled) return;
-            settled = true;
-            if (timeoutId) _cancelTimeout(timeoutId);
-            if (_isCancelled(cancellable)) {
-                const ce = new Error('cancelled');
-                ce.code = 'cancelled';
-                if (cb) return cb(ce);
-                return;
+        // AbortController for native fetch fallback
+        try {
+            if (typeof AbortController !== 'undefined') {
+                state.abortController = new AbortController();
             }
-            if (err) {
-                // ensure no secret in message
-                if (err.message && String(err.message).includes(String(apiKey))) {
-                    err.message = String(err.message).replace(String(apiKey), '[REDACTED]');
-                }
-                if (cb) return cb(err);
-                return;
+        } catch (e) {}
+
+        function cleanup() {
+            if (state.timeoutId) { _cancelTimeout(state.timeoutId); state.timeoutId = null; }
+            // disconnect GIO cancellable handler
+            if (state.cancelHandlerId != null && state.cancellable) {
+                try {
+                    if (typeof state.cancellable.disconnect === 'function') state.cancellable.disconnect(state.cancelHandlerId);
+                } catch (e) {}
+                state.cancelHandlerId = null;
             }
-            if (cb) return cb(null, result);
+            // restore patched cancel
+            if (state.originalCancel && state.cancellable) {
+                try { state.cancellable.cancel = state.originalCancel; } catch (e) {}
+                state.originalCancel = null;
+            }
+            activeRequests.delete(state);
         }
 
-        timeoutId = _scheduleTimeout(timeoutMs, () => {
-            if (settled) return;
-            settled = true;
-            // try to cancel underlying Soup message
-            try { if (cancellable && typeof cancellable.cancel === 'function') cancellable.cancel(); } catch (e) {}
+        function complete(err, result) {
+            if (state.settled) return;
+            state.settled = true;
+            cleanup();
+            // abort fetch if still pending
+            if (state.abortController) {
+                try { state.abortController.abort(); } catch (e) {}
+            }
+            if (err) {
+                sanitizeError(err);
+                // never expose headers/body containing secret — err is generic
+                if (state.cb) return state.cb(err);
+                return;
+            }
+            if (state.cb) return state.cb(null, result);
+        }
+
+        const cancelledError = Object.assign(new Error('cancelled'), { code: 'cancelled' });
+
+        // register immediate cancellation handler
+        if (cancellable) {
+            // GIO Cancellable path: connect signal
+            if (typeof cancellable.connect === 'function') {
+                try {
+                    state.cancelHandlerId = cancellable.connect('cancelled', () => {
+                        complete(cancelledError);
+                    });
+                } catch (e) {}
+            } else if (typeof cancellable.cancel === 'function') {
+                // fake cancellable: patch cancel() to trigger immediate complete
+                try {
+                    state.originalCancel = cancellable.cancel.bind(cancellable);
+                    const orig = state.originalCancel;
+                    cancellable.cancel = function patchedCancel() {
+                        try { orig(); } catch (e) {}
+                        complete(cancelledError);
+                    };
+                } catch (e) {}
+            }
+            // also check already-cancelled race after registration
+            if (_isCancelled(cancellable)) {
+                return complete(cancelledError);
+            }
+        }
+
+        state.timeoutId = _scheduleTimeout(timeoutMs, () => {
+            if (state.settled) return;
             const e = new Error('AI request timeout');
             e.code = 'timeout';
-            if (cb) cb(e);
+            complete(e);
         });
 
         let fetchPromise;
         try {
-            // httpFetch may be (url, opts) => Promise or (url, opts, callback)
+            const fetchOpts = { method: 'POST', headers, body, cancellable: cancellable, timeoutMs };
+            // provide AbortSignal to fetch fallback so it can be aborted
+            if (state.abortController) fetchOpts.signal = state.abortController.signal;
+            // also pass abortController itself for transports that want it
+            fetchOpts.abortController = state.abortController;
             if (httpFetch.length >= 3) {
-                // callback style — not expected but handle
                 fetchPromise = new Promise((resolve, reject) => {
                     try {
-                        httpFetch(url, { method: 'POST', headers, body, cancellable }, (err, res) => {
+                        httpFetch(url, fetchOpts, (err, res) => {
                             if (err) reject(err);
                             else resolve(res);
                         });
                     } catch (e) { reject(e); }
                 });
             } else {
-                const maybe = httpFetch(url, { method: 'POST', headers, body, cancellable, timeoutMs });
-                // handle both {status, bodyText} and {status, body} and raw string
+                const maybe = httpFetch(url, fetchOpts);
                 if (maybe && typeof maybe.then === 'function') fetchPromise = maybe;
                 else fetchPromise = Promise.resolve(maybe);
             }
         } catch (e) {
-            done(e);
+            complete(sanitizeError(e));
             return;
         }
 
         fetchPromise.then(res => {
-            if (settled) return;
-            // cancelled already?
+            if (state.settled) return;
             if (_isCancelled(cancellable)) {
-                return done(Object.assign(new Error('cancelled'), { code: 'cancelled' }));
+                return complete(cancelledError);
             }
-            // normalize response shape
             let status = 200;
             let text = '';
             if (res == null) {
                 const e = new Error('Invalid AI response');
                 e.code = 'invalid_response';
-                return done(e);
+                return complete(e);
             }
             if (typeof res === 'string') {
                 text = res;
@@ -288,7 +366,6 @@ function createNineRouterProvider(opts) {
                 else if (typeof res.text === 'string') text = res.text;
                 else if (typeof res.data === 'string') text = res.data;
                 else text = typeof res.bodyText !== 'undefined' ? String(res.bodyText) : '';
-                // if body is object already parsed
                 if (!text && res.body && typeof res.body === 'object') {
                     try { text = JSON.stringify(res.body); } catch (e) {}
                 }
@@ -298,33 +375,59 @@ function createNineRouterProvider(opts) {
                 const e = new Error(code === 'auth_error' ? 'AI provider auth error' : code === 'rate_limited' ? 'AI rate limited' : 'AI provider unavailable');
                 e.code = code;
                 e.status = status;
-                return done(e);
+                return complete(e);
             }
             try {
                 const parsed = parseResponseText(text, status);
-                return done(null, parsed);
+                return complete(null, parsed);
             } catch (e) {
-                // map provider error payload status if present
                 if (e._status) e.code = httpStatusToCode(e._status);
-                return done(e);
+                return complete(e);
             }
         }).catch(e => {
-            if (settled) return;
-            if (_isCancelled(cancellable)) {
-                const ce = new Error('cancelled');
-                ce.code = 'cancelled';
-                return done(ce);
+            if (state.settled) return;
+            // AbortError from fetch -> cancelled, not network_error (§7)
+            if (e && (e.name === 'AbortError' || String(e.message).includes('AbortError') || String(e.message).includes('aborted'))) {
+                return complete(cancelledError);
             }
-            // network error
+            if (_isCancelled(cancellable)) {
+                return complete(cancelledError);
+            }
             const ne = new Error('AI network error');
             ne.code = 'network_error';
-            ne.cause = e;
-            return done(ne);
+            // do not expose raw cause message that might contain secret
+            // keep cause sanitized or omit
+            try { ne.cause = sanitizeError(e); } catch (ex) {}
+            sanitizeError(ne);
+            return complete(ne);
         });
     }
 
     function destroy() {
+        if (destroyed) return;
         destroyed = true;
+        const pending = Array.from(activeRequests);
+        for (const state of pending) {
+            if (state.settled) continue;
+            state.settled = true;
+            if (state.timeoutId) { _cancelTimeout(state.timeoutId); state.timeoutId = null; }
+            if (state.cancelHandlerId != null && state.cancellable) {
+                try { if (typeof state.cancellable.disconnect === 'function') state.cancellable.disconnect(state.cancelHandlerId); } catch (e2) {}
+                state.cancelHandlerId = null;
+            }
+            // propagate cancel to Gio/fake cancellable so external holder sees cancelled
+            try {
+                if (state.originalCancel) state.originalCancel();
+                else if (state.cancellable && typeof state.cancellable.cancel === 'function') state.cancellable.cancel();
+            } catch (e2) {}
+            if (state.originalCancel && state.cancellable) {
+                try { state.cancellable.cancel = state.originalCancel; } catch (e2) {}
+                state.originalCancel = null;
+            }
+            if (state.abortController) { try { state.abortController.abort(); } catch (e2) {} }
+            activeRequests.delete(state);
+            // silent cancel — late fetch .then sees settled and drops, no cb success
+        }
     }
 
     return { request, destroy, _buildUrl: buildChatCompletionsUrl };
