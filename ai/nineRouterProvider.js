@@ -237,7 +237,8 @@ function createNineRouterProvider(opts) {
             originalCancel: null,
             cancellable: cancellable,
             abortController: null,
-            cb: cb
+            cb: cb,
+            complete: null
         };
         activeRequests.add(state);
 
@@ -281,6 +282,7 @@ function createNineRouterProvider(opts) {
             }
             if (state.cb) return state.cb(null, result);
         }
+        state.complete = complete;
 
         const cancelledError = Object.assign(new Error('cancelled'), { code: 'cancelled' });
 
@@ -407,26 +409,32 @@ function createNineRouterProvider(opts) {
         if (destroyed) return;
         destroyed = true;
         const pending = Array.from(activeRequests);
+        const cancelledErr = Object.assign(new Error('cancelled'), { code: 'cancelled' });
         for (const state of pending) {
             if (state.settled) continue;
-            state.settled = true;
-            if (state.timeoutId) { _cancelTimeout(state.timeoutId); state.timeoutId = null; }
+            // disconnect GIO handler before external cancel to avoid double complete via signal
             if (state.cancelHandlerId != null && state.cancellable) {
                 try { if (typeof state.cancellable.disconnect === 'function') state.cancellable.disconnect(state.cancelHandlerId); } catch (e2) {}
                 state.cancelHandlerId = null;
             }
-            // propagate cancel to Gio/fake cancellable so external holder sees cancelled
+            // propagate to external cancellable so holder sees cancelled
             try {
                 if (state.originalCancel) state.originalCancel();
                 else if (state.cancellable && typeof state.cancellable.cancel === 'function') state.cancellable.cancel();
             } catch (e2) {}
-            if (state.originalCancel && state.cancellable) {
-                try { state.cancellable.cancel = state.originalCancel; } catch (e2) {}
-                state.originalCancel = null;
-            }
-            if (state.abortController) { try { state.abortController.abort(); } catch (e2) {} }
-            activeRequests.delete(state);
-            // silent cancel — late fetch .then sees settled and drops, no cb success
+            // one-shot completion — guarantees callback, timeout cleanup, abort, activeRequests removal
+            try {
+                if (typeof state.complete === 'function') state.complete(cancelledErr);
+                else {
+                    // fallback if complete not yet wired
+                    state.settled = true;
+                    if (state.timeoutId) { _cancelTimeout(state.timeoutId); state.timeoutId = null; }
+                    if (state.originalCancel && state.cancellable) { try { state.cancellable.cancel = state.originalCancel; } catch (e2) {} state.originalCancel = null; }
+                    if (state.abortController) { try { state.abortController.abort(); } catch (e2) {} }
+                    activeRequests.delete(state);
+                    if (state.cb) { try { sanitizeError(cancelledErr); state.cb(cancelledErr); } catch (e2) {} }
+                }
+            } catch (e2) {}
         }
     }
 

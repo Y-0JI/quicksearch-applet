@@ -402,6 +402,21 @@ test('gate: Gio Cancellable connect path immediate cancelled', async () => {
     assert.equal(errCode, 'cancelled');
 });
 
+test('gate: destroy pending must await completion cancelled (Promise)', async () => {
+    const provider = createNineRouterProvider({
+        baseUrl: 'http://localhost:3000', apiKey: FAKE_KEY, model: FAKE_MODEL,
+        timeoutMs: 5000,
+        httpFetch: () => new Promise(() => {}) // hanging forever
+    });
+    const p = requestAsync(provider, { query: 'q' });
+    // destroy while pending — must settle the awaiting Promise, not hang
+    setTimeout(() => provider.destroy(), 10);
+    await assert.rejects(p, err => { assert.equal(err.code, 'cancelled'); return true; });
+    // second destroy + next request still provider_error
+    assert.doesNotThrow(() => provider.destroy());
+    await assert.rejects(requestAsync(provider, { query: 'q2' }), err => { assert.equal(err.code, 'provider_error'); return true; });
+});
+
 test('gate: destroy pending late response ignored', async () => {
     let resolveFetch;
     const provider = createNineRouterProvider({
@@ -410,11 +425,15 @@ test('gate: destroy pending late response ignored', async () => {
         httpFetch: () => new Promise(res => { resolveFetch = res; })
     });
     let cbCalls = 0;
-    provider.request({ query: 'q' }, (err) => { cbCalls++; });
+    let cbErr = null;
+    provider.request({ query: 'q' }, (err) => { cbCalls++; cbErr = err; });
     provider.destroy();
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(cbCalls, 1, 'destroy must complete pending with cancelled');
+    assert.equal(cbErr && cbErr.code, 'cancelled');
     if (resolveFetch) resolveFetch({ status: 200, bodyText: okBody('late-after-destroy') });
     await new Promise(r => setTimeout(r, 20));
-    assert.equal(cbCalls, 0, 'destroy silently drops pending — no success, no callback');
+    assert.equal(cbCalls, 1, 'late success ignored after destroy');
     assert.doesNotThrow(() => provider.destroy(), 'double-destroy after pending must not throw');
     await assert.rejects(requestAsync(provider, { query: 'q2' }), err => { assert.equal(err.code, 'provider_error'); return true; });
 });
