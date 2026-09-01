@@ -55,6 +55,52 @@ function normalizeSource(entry, id) {
     return out;
 }
 
+// Lightweight URL normalization for dedupe only — does not rewrite destination semantics.
+// - trim
+// - lowercase protocol + hostname
+// - normalize empty path "/" consistently (https://example.com vs https://example.com/ are duplicates)
+// Does NOT strip querystring, fragment, or tracking params.
+function normalizeDedupeKey(url) {
+    const raw = String(url || '').trim();
+    try {
+        const u = new URL(raw);
+        const protocol = u.protocol.toLowerCase(); // "https:" / "http:"
+        const hostname = u.hostname.toLowerCase();
+        const port = u.port ? ':' + u.port : '';
+        // pathname: treat "" and "/" as same; keep other paths as-is
+        let pathname = u.pathname || '/';
+        if (pathname === '/') pathname = '/';
+        // search + hash preserved verbatim
+        return protocol + '//' + hostname + port + pathname + u.search + u.hash;
+    } catch (e) {
+        // fallback: trimmed lowercased
+        return raw.toLowerCase();
+    }
+}
+
+function isCanonicalSource(entry) {
+    if (!entry || typeof entry !== 'object') return false;
+    if (typeof entry.id !== 'string' || !entry.id.trim()) return false;
+    if (!/^web-\d+$/.test(entry.id.trim())) return false;
+    if (typeof entry.title !== 'string' || !entry.title.trim()) return false;
+    if (entry.title.length > 200) return false;
+    if (typeof entry.url !== 'string' || !isValidHttpUrl(entry.url)) return false;
+    if (typeof entry.snippet !== 'string') return false;
+    if (entry.snippet.length > 500) return false;
+    return true;
+}
+
+function validateSources(sources) {
+    if (!Array.isArray(sources)) return { valid: [], invalid: [] };
+    const valid = [];
+    const invalid = [];
+    for (const s of sources) {
+        if (isCanonicalSource(s)) valid.push(s);
+        else invalid.push(s);
+    }
+    return { valid, invalid };
+}
+
 function normalizeSources(raw, maxResults) {
     if (!Array.isArray(raw)) return [];
     const max = normalizeMaxResults(maxResults);
@@ -63,7 +109,7 @@ function normalizeSources(raw, maxResults) {
     for (const entry of raw) {
         const n = normalizeSource(entry);
         if (!n) continue;
-        const key = n.url.trim();
+        const key = normalizeDedupeKey(n.url);
         if (seen.has(key)) continue;
         seen.add(key);
         tmp.push(n);
@@ -74,26 +120,113 @@ function normalizeSources(raw, maxResults) {
 
 function createToolResult(query, sources) {
     const q = typeof query === 'string' ? query.trim() : String(query || '').trim();
-    const src = Array.isArray(sources) ? sources : [];
+    // Defensive: sources MUST be canonical. Filter invalid silently so canonical object never carries arbitrary shape.
+    // Caller should use normalizeSources() or ensure canonical via isCanonicalSource(); builder enforces defensively.
+    let src = [];
+    if (Array.isArray(sources)) {
+        const filtered = [];
+        for (const s of sources) {
+            if (isCanonicalSource(s)) filtered.push(s);
+            else {
+                // also accept raw source that can be normalized (e.g. missing id but valid url/title)
+                const n = normalizeSource(s);
+                if (n) {
+                    // assign provisional id, will be re-idded? keep as-is with new id
+                    filtered.push({ id: `web-${filtered.length + 1}`, title: n.title, url: n.url, snippet: n.snippet });
+                }
+            }
+        }
+        // Re-id to ensure sequential web-N ids and dedupe by normalized URL
+        const deduped = [];
+        const seen = new Set();
+        for (const s of filtered) {
+            const key = normalizeDedupeKey(s.url);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            deduped.push(s);
+        }
+        src = deduped.map((s, i) => ({ id: `web-${i + 1}`, title: s.title, url: s.url, snippet: s.snippet }));
+    }
     return { type: 'tool_result', tool: TOOL_NAME, query: q, sources: src };
 }
 
 function createToolError(code, message) {
     const allowed = ['invalid_query', 'backend_unavailable', 'request_failed', 'cancelled', 'invalid_response'];
     const c = allowed.includes(code) ? code : 'request_failed';
-    const msg = typeof message === 'string' && message.trim() ? message.trim() : 'Web search error';
+    const msg = typeof message === 'string' && message.trim() ? message.trim().split('\n')[0].slice(0, 200) : 'Web search error';
     return { type: 'tool_error', tool: TOOL_NAME, code: c, message: msg };
+}
+
+// Canonical error → callback Error instance boundary.
+// Pure contract is {type:'tool_error',...}; Node callback expects Error with code/type/tool fields.
+function toCallbackError(toolError) {
+    const e = new Error(toolError.message || 'Web search error');
+    e.code = toolError.code;
+    e.type = toolError.type;
+    e.tool = toolError.tool;
+    e.message = toolError.message;
+    Object.assign(e, toolError);
+    return e;
+}
+
+function fromCallbackError(err) {
+    if (!err) return createToolError('request_failed', 'Web search error');
+    if (err.type === 'tool_error' && err.code && err.tool) return { type: err.type, tool: err.tool, code: err.code, message: err.message };
+    const code = err.code;
+    const msg = typeof err.message === 'string' ? err.message.split('\n')[0].slice(0, 200) : 'Web search error';
+    if (code === 'invalid_query' || code === 'backend_unavailable' || code === 'request_failed' || code === 'cancelled' || code === 'invalid_response') {
+        return createToolError(code, msg);
+    }
+    return createToolError('request_failed', msg);
 }
 
 function createGroundingContext(query, sources) {
     const q = typeof query === 'string' ? query.trim() : String(query || '').trim();
-    const src = Array.isArray(sources) ? sources : [];
+    let src = [];
+    if (Array.isArray(sources)) {
+        const filtered = [];
+        for (const s of sources) {
+            if (isCanonicalSource(s)) filtered.push(s);
+            else {
+                const n = normalizeSource(s);
+                if (n) filtered.push({ id: `web-${filtered.length + 1}`, title: n.title, url: n.url, snippet: n.snippet });
+            }
+        }
+        const seen = new Set();
+        const deduped = [];
+        for (const s of filtered) {
+            const key = normalizeDedupeKey(s.url);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            deduped.push(s);
+        }
+        src = deduped.map((s, i) => ({ id: `web-${i + 1}`, title: s.title, url: s.url, snippet: s.snippet }));
+    }
     return { type: 'grounding_context', query: q, sources: src };
 }
 
 function createGroundedAnswer(text, sources) {
     const t = String(text || '');
-    const src = Array.isArray(sources) ? sources : [];
+    let src = [];
+    if (Array.isArray(sources)) {
+        const filtered = [];
+        for (const s of sources) {
+            if (isCanonicalSource(s)) filtered.push(s);
+            else {
+                const n = normalizeSource(s);
+                if (n) filtered.push({ id: `web-${filtered.length + 1}`, title: n.title, url: n.url, snippet: n.snippet });
+            }
+        }
+        const seen = new Set();
+        const deduped = [];
+        for (const s of filtered) {
+            const key = normalizeDedupeKey(s.url);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            deduped.push(s);
+        }
+        src = deduped.map((s, i) => ({ id: `web-${i + 1}`, title: s.title, url: s.url, snippet: s.snippet }));
+    }
     const grounded = src.length > 0;
     return { type: 'answer', text: t, grounded, sources: src };
 }
@@ -110,12 +243,17 @@ function validateRequest(req) {
 
 function normalizeToolCall(raw) {
     if (!raw || typeof raw !== 'object') return { type: 'unsupported_tool', tool: String(raw && raw.tool || '') };
-    if (raw.type === 'tool_call' && raw.tool === TOOL_NAME) {
+    if (raw.type === 'tool_call') {
+        if (raw.tool !== TOOL_NAME) {
+            return { type: 'unsupported_tool', tool: String(raw.tool || '') };
+        }
+        // known tool web_search — validate arguments
         const q = raw.arguments && raw.arguments.query;
-        if (typeof q === 'string' && q.trim()) return { type: 'tool_call', tool: TOOL_NAME, arguments: { query: q.trim() } };
-        return { type: 'unsupported_tool', tool: raw.tool };
+        if (typeof q !== 'string' || !q.trim()) {
+            return createToolError('invalid_query', 'Invalid search query');
+        }
+        return { type: 'tool_call', tool: TOOL_NAME, arguments: { query: q.trim() } };
     }
-    if (raw.type === 'tool_call') return { type: 'unsupported_tool', tool: String(raw.tool || '') };
     return { type: 'unsupported_tool', tool: String(raw.tool || '') };
 }
 
@@ -129,8 +267,13 @@ module.exports = {
     normalizeMaxResults,
     normalizeSource,
     normalizeSources,
+    normalizeDedupeKey,
+    isCanonicalSource,
+    validateSources,
     createToolResult,
     createToolError,
+    toCallbackError,
+    fromCallbackError,
     createGroundingContext,
     createGroundedAnswer,
     validateRequest,
