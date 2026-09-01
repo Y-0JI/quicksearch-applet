@@ -51,6 +51,7 @@ function createAISearchEngine(deps) {
     deps = deps || {};
     const provider = deps.provider;
     let webSearchTool = deps.webSearchTool;
+    const enableGrounding = !!deps.enableGrounding;
     const promptBuilder = deps.promptBuilder || promptBuilderMod;
     const sourceFormatter = deps.sourceFormatter || sourceFormatterMod;
 
@@ -71,6 +72,7 @@ function createAISearchEngine(deps) {
     let gen = 0;
     let currentCancellable = null;
     let destroyed = false;
+    let providerDestroyed = false;
 
     function _stale(myGen) { return myGen !== gen; }
 
@@ -126,8 +128,10 @@ function createAISearchEngine(deps) {
         try { systemPrompt = promptBuilder.buildSystemPrompt(); } catch (e) { systemPrompt = ''; }
 
         // first provider call — pass cancellable if provider supports it (§12)
+        // AI-2: basic answer mode does not advertise web_search tool; grounding enabled only when explicitly requested (AI-3)
         try {
-            provider.request({ query: q, systemPrompt, tools: ['web_search'] }, myCancellable, (err, res) => {
+            const firstPayload = enableGrounding ? { query: q, systemPrompt, tools: ['web_search'] } : { query: q, systemPrompt };
+            provider.request(firstPayload, myCancellable, (err, res) => {
                 if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
                 if (err) {
                     const n = _normalizeProviderError(err);
@@ -141,6 +145,9 @@ function createAISearchEngine(deps) {
                     return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
                 }
                 if (res.type === 'tool_call') {
+                    if (!enableGrounding) {
+                        return _deliverError(myGen, myCancellable, callbacks, 'unsupported_tool', ERROR_MESSAGES.unsupported_tool);
+                    }
                     if (res.tool !== 'web_search') {
                         return _deliverError(myGen, myCancellable, callbacks, 'unsupported_tool', ERROR_MESSAGES.unsupported_tool);
                     }
@@ -199,8 +206,13 @@ function createAISearchEngine(deps) {
     }
 
     function destroy() {
+        if (destroyed) return;
         destroyed = true;
         cancel();
+        if (!providerDestroyed && provider && typeof provider.destroy === 'function') {
+            providerDestroyed = true;
+            try { provider.destroy(); } catch (e) {}
+        }
     }
 
     return { search, cancel, destroy, _gen: () => gen };

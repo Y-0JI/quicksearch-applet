@@ -540,9 +540,14 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     _rebuildAiEngine() {
         const wasLoading = !!this._aiLoading;
-        if (this._aiEngine) { try { this._aiEngine.cancel(); } catch (e) {} }
+        // P1: destroy old engine so owned provider resources are released
+        const oldEngine = this._aiEngine;
+        this._aiEngine = null;
+        if (oldEngine) {
+            try { oldEngine.cancel(); } catch (e) {}
+            try { oldEngine.destroy(); } catch (e) {}
+        }
         this._aiGen++;
-        // P1-2: cancel+gen invalidates old callbacks; clear stale UI so Thinking... never sticks
         this._aiLoading = false;
         this._aiError = null;
         this._createAiEngine();
@@ -550,7 +555,6 @@ class QuickSearchApplet extends Applet.IconApplet {
             try { this._syncModeUI(); } catch (e) {}
             try { this._renderAIState(); } catch (e) {}
         } else if (wasLoading) {
-            // pending while in search: ensure no stale loading leaks into next ai open
             try { this._renderAIState(); } catch (e) {}
         }
     }

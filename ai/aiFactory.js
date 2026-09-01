@@ -73,8 +73,6 @@ function createAiEngine(opts) {
                     if (typeof timeoutMs === 'number') pOpts.timeoutMs = timeoutMs;
                     if (opts.httpFetch) pOpts.httpFetch = opts.httpFetch;
                     provider = nineRouterProviderMod.createNineRouterProvider(pOpts);
-                } else if (aiProviderMod && typeof aiProviderMod.createMockAiProvider === 'function') {
-                    provider = aiProviderMod.createMockAiProvider({ handler: (req, cb) => cb(null, { type: 'answer', text: 'mock' }) });
                 } else {
                     provider = _makeProviderErrorProvider();
                 }
@@ -87,7 +85,8 @@ function createAiEngine(opts) {
     if (!aiSearchEngineMod || typeof aiSearchEngineMod.createAISearchEngine !== 'function') {
         throw new Error('aiFactory: AISearchEngine unavailable');
     }
-    const engineOpts = { provider, promptBuilder: opts.promptBuilder, sourceFormatter: opts.sourceFormatter };
+    const enableGrounding = !!opts.enableGrounding;
+    const engineOpts = { provider, promptBuilder: opts.promptBuilder, sourceFormatter: opts.sourceFormatter, enableGrounding };
     // Only forward webSearchTool if caller explicitly provided it (test injection).
     // Otherwise let AISearchEngine stub it — AI-2 has no real grounding.
     if (webSearchTool !== undefined) engineOpts.webSearchTool = webSearchTool;

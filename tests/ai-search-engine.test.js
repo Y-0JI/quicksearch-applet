@@ -40,7 +40,7 @@ test('engine: valid tool_call invokes WebSearchTool', () => {
     });
     let toolCalled = false;
     const tool = createMockWebSearchTool({ handler: (q, c, cb) => { toolCalled = true; assert.equal(q, 'bmri'); cb(null, [{ title: 't', url: 'https://example.com', snippet: 's' }]); } });
-    const engine = createAISearchEngine({ provider, webSearchTool: tool });
+    const engine = createAISearchEngine({ provider, webSearchTool: tool, enableGrounding: true });
     let got = null;
     engine.search('q', { onAnswer: d => { got = d; } });
     assert.equal(toolCalled, true);
@@ -58,7 +58,7 @@ test('engine: grounding passes sources to provider and delivers them', () => {
         }
     });
     const tool = createMockWebSearchTool({ handler: (q, c, cb) => cb(null, [{ title: 'Title', url: 'https://example.com/a', snippet: 'snip' }]) });
-    const engine = createAISearchEngine({ provider, webSearchTool: tool });
+    const engine = createAISearchEngine({ provider, webSearchTool: tool, enableGrounding: true });
     let got = null;
     engine.search('q', { onAnswer: d => { got = d; } });
     assert.ok(secondReq.groundingContext.includes('https://example.com/a'));
@@ -97,7 +97,7 @@ test('engine: web search error normalized', () => {
         }
     });
     const tool = createMockWebSearchTool({ handler: (q, c, cb) => { const e = new Error('fail'); e.code = 'web_search_unavailable'; cb(e); } });
-    const engine = createAISearchEngine({ provider, webSearchTool: tool });
+    const engine = createAISearchEngine({ provider, webSearchTool: tool, enableGrounding: true });
     let err = null;
     engine.search('q', { onError: e => { err = e; } });
     assert.equal(err.code, 'web_search_unavailable');
@@ -166,7 +166,7 @@ test('engine: stale on grounding leg ignored', () => {
         }
     });
     const tool = createMockWebSearchTool({ handler: (q, c, cb) => { webCb = cb; } });
-    const engine = createAISearchEngine({ provider, webSearchTool: tool });
+    const engine = createAISearchEngine({ provider, webSearchTool: tool, enableGrounding: true });
     let delivered = false;
     engine.search('first', { onAnswer: () => { delivered = true; } });
     // second search invalidates first before webSearch returns
