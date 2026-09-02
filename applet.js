@@ -440,6 +440,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         // _mode kept as legacy alias; _searchMode is canonical per spec.
         this._mode = 'search';
         this._aiLoading = false;
+        this._aiStreaming = false;
         this._aiAnswer = '';
         this._aiSources = [];
         this._aiError = null;
@@ -563,6 +564,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         }
         this._aiGen++;
         this._aiLoading = false;
+        this._aiStreaming = false;
         this._aiError = null;
         this._createAiEngine();
         if (this._mode === 'ai') {
@@ -623,6 +625,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
             this._aiGen++;
             this._aiLoading = false;
+            this._aiStreaming = false;
             this._aiError = null;
             this._aiAnswer = '';
             this._aiSources = [];
@@ -674,6 +677,7 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     _clearAIState() {
         this._aiLoading = false;
+        this._aiStreaming = false;
         this._aiAnswer = '';
         this._aiSources = [];
         this._aiError = null;
@@ -681,6 +685,7 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     _clearAIStateVisualOnly() {
         this._aiLoading = false;
+        this._aiStreaming = false;
         this._aiAnswer = '';
         this._aiSources = [];
         this._aiError = null;
@@ -703,7 +708,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._rows = [];
         this._selIdx = -1;
         this._sortedResults = [];
-        if (this._aiLoading) {
+        if (this._aiLoading || (this._aiStreaming && !this._aiAnswer)) {
             try {
                 const lbl = new St.Label({ text: _("Thinking..."), style_class: "quicksearch-ai-loading" });
                 try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
@@ -712,10 +717,24 @@ class QuickSearchApplet extends Applet.IconApplet {
             } catch (e) {}
         } else if (this._aiError) {
             try {
-                const msg = _("Unable to get an AI response.");
-                const lbl = new St.Label({ text: msg, style_class: "quicksearch-ai-error" });
-                try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
-                ov.resultsBox.add_child(lbl);
+                // AI-6 §15: if partial answer exists, show it with error indication
+                if (this._aiAnswer) {
+                    const lbl = new St.Label({ text: String(this._aiAnswer), style_class: "quicksearch-ai-answer" });
+                    try {
+                        const ct = lbl.get_clutter_text();
+                        ct.set_line_wrap(true);
+                        if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
+                    } catch (e) {}
+                    ov.resultsBox.add_child(lbl);
+                    const errLbl = new St.Label({ text: _("\u26a0 Interrupted"), style_class: "quicksearch-ai-error" });
+                    try { errLbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+                    ov.resultsBox.add_child(errLbl);
+                } else {
+                    const msg = _("Unable to get an AI response.");
+                    const lbl = new St.Label({ text: msg, style_class: "quicksearch-ai-error" });
+                    try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+                    ov.resultsBox.add_child(lbl);
+                }
                 ov._scroll.visible = true;
             } catch (e) {}
         } else if (this._aiAnswer) {
@@ -791,6 +810,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiLoading = true;
         this._aiAnswer = '';
         this._aiError = null;
+        this._aiSources = [];
+        this._aiStreaming = false;
         this._renderAIState();
         if (!this._aiEngine) this._createAiEngine();
         if (!this._aiEngine) {
@@ -800,49 +821,96 @@ class QuickSearchApplet extends Applet.IconApplet {
             this._renderAIState();
             return;
         }
+
+        const self = this;
+        function _check() { return myGen !== self._aiGen || self._mode !== 'ai'; }
+        function _render() { if (!_check()) self._renderAIState(); }
+        function _cancelRender() { if (!_check()) { self._aiLoading = false; _render(); } }
+
+        // Try streaming path first
+        if (typeof this._aiEngine.searchStream === 'function') {
+            try {
+                this._aiEngine.searchStream(q, {
+                    onStart: function() {
+                        if (_check()) return;
+                        self._aiLoading = false;
+                        self._aiStreaming = true;
+                        _render();
+                    },
+                    onDelta: function(chunk, fullText) {
+                        if (_check()) return;
+                        self._aiLoading = false;
+                        self._aiStreaming = true;
+                        self._aiAnswer = fullText || '';
+                        _render();
+                    },
+                    onComplete: function(data) {
+                        if (_check()) return;
+                        self._aiLoading = false;
+                        self._aiStreaming = false;
+                        self._aiAnswer = data && typeof data.text === 'string' ? data.text : String((data && data.text) || '');
+                        self._aiSources = Array.isArray(data && data.sources) ? data.sources : [];
+                        self._aiError = null;
+                        _render();
+                    },
+                    onError: function(err) {
+                        if (_check()) return;
+                        var code = err && err.code ? err.code : 'provider_error';
+                        if (code === 'cancelled') { _cancelRender(); return; }
+                        self._aiLoading = false;
+                        self._aiStreaming = false;
+                        self._aiError = err || { code: code };
+                        self._aiAnswer = '';
+                        _render();
+                    }
+                });
+            } catch (e) {
+                if (_check()) return;
+                self._aiLoading = false;
+                self._aiError = { code: 'provider_error', message: e && e.message };
+                _render();
+            }
+            return;
+        }
+
+        // Fallback: non-streaming path (existing behavior)
         const cbs = {
             onAnswer: (data) => {
-                if (myGen !== this._aiGen || this._mode !== 'ai') return;
-                this._aiLoading = false;
-                this._aiAnswer = data && typeof data.text === 'string' ? data.text : String((data && data.text) || '');
-                this._aiSources = Array.isArray(data && data.sources) ? data.sources : [];
-                this._aiError = null;
-                this._renderAIState();
+                if (_check()) return;
+                self._aiLoading = false;
+                self._aiAnswer = data && typeof data.text === 'string' ? data.text : String((data && data.text) || '');
+                self._aiSources = Array.isArray(data && data.sources) ? data.sources : [];
+                self._aiError = null;
+                _render();
             },
             onError: (err) => {
-                if (myGen !== this._aiGen || this._mode !== 'ai') return;
+                if (_check()) return;
                 const code = err && err.code ? err.code : 'provider_error';
-                if (code === 'cancelled') {
-                    this._aiLoading = false;
-                    this._renderAIState();
-                    return;
-                }
-                this._aiLoading = false;
-                this._aiError = err || { code };
-                this._aiAnswer = '';
-                this._renderAIState();
+                if (code === 'cancelled') { _cancelRender(); return; }
+                self._aiLoading = false;
+                self._aiError = err || { code };
+                self._aiAnswer = '';
+                _render();
             },
             onDone: (err, data) => {
-                if (myGen !== this._aiGen || this._mode !== 'ai') return;
+                if (_check()) return;
                 if (err) {
                     const code = err.code || 'provider_error';
-                    if (code === 'cancelled') { this._aiLoading = false; this._renderAIState(); return; }
-                    this._aiLoading = false; this._aiError = err; this._aiAnswer = ''; this._aiSources = []; this._renderAIState();
+                    if (code === 'cancelled') { _cancelRender(); return; }
+                    self._aiLoading = false; self._aiError = err; self._aiAnswer = ''; self._aiSources = []; _render();
                 } else if (data) {
-                    this._aiLoading = false; this._aiAnswer = data.text || ''; this._aiSources = Array.isArray(data.sources) ? data.sources : []; this._aiError = null; this._renderAIState();
+                    self._aiLoading = false; self._aiAnswer = data.text || ''; self._aiSources = Array.isArray(data.sources) ? data.sources : []; self._aiError = null; _render();
                 }
             }
         };
         try {
-            // support both callback signatures
             const maybe = this._aiEngine.search(q, cbs);
-            // also handle function-callback overload via second attempt if needed
             void maybe;
         } catch (e) {
-            if (myGen !== this._aiGen || this._mode !== 'ai') return;
-            this._aiLoading = false;
-            this._aiError = { code: 'provider_error', message: e && e.message };
-            this._renderAIState();
+            if (_check()) return;
+            self._aiLoading = false;
+            self._aiError = { code: 'provider_error', message: e && e.message };
+            _render();
         }
     }
 
@@ -912,6 +980,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiGen++;
         this._aiLoading = false;
+        this._aiStreaming = false;
         this._cancelPopupHide();
         this._ptrInEntry = false;
         this._ptrInPopup = false;

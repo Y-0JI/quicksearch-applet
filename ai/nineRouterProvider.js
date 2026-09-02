@@ -143,6 +143,155 @@ function createDefaultHttpFetch() {
     };
 }
 
+function createDefaultStreamingHttpFetch() {
+    // Streaming HTTP fetch: calls onChunk(text) for each SSE text chunk, onDone(err) when finished.
+    if (Soup && GLib) {
+        let session = null;
+        function ensureSession() {
+            if (!session) {
+                session = new Soup.Session();
+                session.timeout = 30;
+            }
+            return session;
+        }
+        return function soupStreamFetch(url, opts, onChunk, onDone) {
+            try {
+                const s = ensureSession();
+                const msg = Soup.Message.new('POST', url);
+                if (!msg) { onDone(new Error('bad url')); return; }
+                const headers = opts.headers || {};
+                for (const k in headers) {
+                    try { msg.request_headers.append(k, headers[k]); } catch (e) {}
+                }
+                const body = opts.body || '';
+                try {
+                    if (GLib && GLib.Bytes) {
+                        try { msg.set_request_body_from_bytes('application/json', GLib.Bytes.new(String(body))); }
+                        catch (e) { msg.set_request_body_from_bytes('application/json', new GLib.Bytes(String(body))); }
+                    }
+                } catch (e) {}
+                const cancellable = opts.cancellable || null;
+                // send() returns InputStream for chunked reading
+                if (typeof s.send === 'function') {
+                    s.send(msg, cancellable, (sess, res) => {
+                        try {
+                            const inputStream = sess.send_finish(res);
+                            if (!inputStream) { onDone(new Error('no input stream')); return; }
+                            _readStreamChunks(inputStream, onChunk, onDone);
+                        } catch (e) {
+                            const status = typeof msg.get_status === 'function' ? msg.get_status() : (msg.status_code || 0);
+                            if (status >= 200 && status < 300) {
+                                // send failed but status OK — fallback to full read
+                                _fallbackFullRead(s, msg, onChunk, onDone);
+                            } else {
+                                onDone(e);
+                            }
+                        }
+                    });
+                } else {
+                    // Fallback: full read then split into chunks
+                    _fallbackFullRead(s, msg, onChunk, onDone);
+                }
+            } catch (e) { onDone(e); }
+        };
+    }
+    if (typeof fetch === 'function') {
+        return function fetchStreamFetch(url, opts, onChunk, onDone) {
+            const init = { method: opts.method || 'POST', headers: opts.headers || {}, body: opts.body };
+            if (opts.signal) init.signal = opts.signal;
+            fetch(url, init).then(async (res) => {
+                if (!res.ok) {
+                    const err = new Error('HTTP ' + res.status);
+                    err.status = res.status;
+                    return onDone(err);
+                }
+                const reader = res.body && typeof res.body.getReader === 'function' ? res.body.getReader() : null;
+                if (!reader) {
+                    // No streaming body support — read full response
+                    const text = await res.text();
+                    onChunk(text);
+                    onDone(null);
+                    return;
+                }
+                const decoder = new TextDecoder();
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        const text = decoder.decode(value, { stream: true });
+                        if (text) onChunk(text);
+                    }
+                    onDone(null);
+                } catch (e) {
+                    onDone(e);
+                }
+            }).catch(e => onDone(e));
+        };
+    }
+    return function noStreamFetch(url, opts, onChunk, onDone) {
+        onDone(new Error('no http transport'));
+    };
+}
+
+// Read chunks from a GIO InputStream (Soup streaming path)
+function _readStreamChunks(inputStream, onChunk, onDone) {
+    const bufferSize = 4096;
+    let finished = false;
+    function readNext() {
+        if (finished) return;
+        try {
+            inputStream.read_bytes_async(bufferSize, GLib.PRIORITY_DEFAULT, null, (stream, result) => {
+                if (finished) return;
+                try {
+                    const bytes = stream.read_bytes_finish(result);
+                    if (!bytes || bytes.get_size() === 0) {
+                        finished = true;
+                        try { inputStream.close(null); } catch (e) {}
+                        onDone(null);
+                        return;
+                    }
+                    let text = '';
+                    try { text = new TextDecoder().decode(bytes.get_data()); } catch (e) { text = String(bytes.get_data()); }
+                    if (text) onChunk(text);
+                    readNext();
+                } catch (e) {
+                    if (!finished) {
+                        finished = true;
+                        onDone(e);
+                    }
+                }
+            });
+        } catch (e) {
+            if (!finished) {
+                finished = true;
+                onDone(e);
+            }
+        }
+    }
+    readNext();
+}
+
+// Fallback: full read then deliver as one chunk
+function _fallbackFullRead(session, msg, onChunk, onDone) {
+    try {
+        session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null, (sess, res) => {
+            try {
+                const bytes = sess.send_and_read_finish(res);
+                let text = '';
+                try { text = new TextDecoder().decode(bytes.get_data()); } catch (e) { text = String(bytes.get_data()); }
+                const status = typeof msg.get_status === 'function' ? msg.get_status() : (msg.status_code || 200);
+                if (status < 200 || status >= 300) {
+                    const err = new Error('HTTP ' + status);
+                    err.status = status;
+                    return onDone(err);
+                }
+                if (text) onChunk(text);
+                onDone(null);
+            } catch (e) { onDone(e); }
+        });
+    } catch (e) { onDone(e); }
+}
+
 function createNineRouterProvider(opts) {
     opts = opts || {};
     const baseUrl = opts.baseUrl;
@@ -405,6 +554,199 @@ function createNineRouterProvider(opts) {
         });
     }
 
+    // Streaming request: sends stream:true, delivers SSE chunks via onEvent callback.
+    // onEvent receives normalized events from streamParser: { type: 'start'|'delta'|'complete'|'error', ... }
+    function streamRequest(payload, cancellable, onEvent) {
+        if (typeof cancellable === 'function' && onEvent === undefined) {
+            onEvent = cancellable;
+            cancellable = null;
+        }
+        if (typeof payload === 'string') payload = { query: payload };
+        payload = payload || {};
+
+        if (destroyed) {
+            const e = new Error('AI provider unavailable');
+            e.code = 'provider_error';
+            sanitizeError(e);
+            if (onEvent) return onEvent({ type: 'error', error: { code: e.code, message: e.message } });
+            return;
+        }
+
+        if (!apiKey) {
+            const e = new Error('AI provider auth error');
+            e.code = 'auth_error';
+            if (onEvent) return onEvent({ type: 'error', error: { code: e.code, message: e.message } });
+            return;
+        }
+
+        if (_isCancelled(cancellable)) {
+            return; // silent cancel per spec
+        }
+
+        const systemPrompt = payload.systemPrompt || '';
+        let userContent = '';
+        if (typeof payload.query === 'string') userContent = payload.query;
+        else if (typeof payload.userContent === 'string') userContent = payload.userContent;
+        if (payload.groundingContext) {
+            userContent = (userContent ? userContent + '\n\n' : '') + String(payload.groundingContext);
+        }
+
+        let url;
+        try { url = buildChatCompletionsUrl(baseUrl); } catch (e) {
+            if (onEvent) return onEvent({ type: 'error', error: { code: 'invalid_response', message: 'Invalid AI response' } });
+            return;
+        }
+
+        const messages = [];
+        if (systemPrompt) messages.push({ role: 'system', content: String(systemPrompt) });
+        messages.push({ role: 'user', content: String(userContent || '') });
+        const body = JSON.stringify({ model: String(model), messages, stream: true });
+        const headers = {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + apiKey
+        };
+
+        // per-request state
+        const state = {
+            settled: false,
+            timeoutId: null,
+            cancelHandlerId: null,
+            originalCancel: null,
+            cancellable: cancellable,
+            abortController: null,
+            onEvent: onEvent,
+            complete: null
+        };
+        activeRequests.add(state);
+
+        try {
+            if (typeof AbortController !== 'undefined') {
+                state.abortController = new AbortController();
+            }
+        } catch (e) {}
+
+        let parser = null;
+        try {
+            const sp = require('./streamParser.js');
+            parser = sp.createStreamParser({
+                onEvent: (evt) => {
+                    if (state.settled || _isCancelled(cancellable)) return;
+                    if (state.onEvent) state.onEvent(evt);
+                }
+            });
+        } catch (e) {}
+
+        function cleanup() {
+            if (state.timeoutId) { _cancelTimeout(state.timeoutId); state.timeoutId = null; }
+            if (state.cancelHandlerId != null && state.cancellable) {
+                try {
+                    if (typeof state.cancellable.disconnect === 'function') state.cancellable.disconnect(state.cancelHandlerId);
+                } catch (e) {}
+                state.cancelHandlerId = null;
+            }
+            if (state.originalCancel && state.cancellable) {
+                try { state.cancellable.cancel = state.originalCancel; } catch (e) {}
+                state.originalCancel = null;
+            }
+            activeRequests.delete(state);
+        }
+
+        function settle(err) {
+            if (state.settled) return;
+            state.settled = true;
+            cleanup();
+            if (state.abortController) {
+                try { state.abortController.abort(); } catch (e) {}
+            }
+            if (err && state.onEvent) {
+                const code = err.code || 'provider_error';
+                if (code !== 'cancelled') {
+                    state.onEvent({ type: 'error', error: { code, message: err.message || code } });
+                }
+            }
+        }
+        state.complete = settle;
+
+        const cancelledError = Object.assign(new Error('cancelled'), { code: 'cancelled' });
+
+        // register cancellation handler
+        if (cancellable) {
+            if (typeof cancellable.connect === 'function') {
+                try {
+                    state.cancelHandlerId = cancellable.connect('cancelled', () => {
+                        settle(cancelledError);
+                    });
+                } catch (e) {}
+            } else if (typeof cancellable.cancel === 'function') {
+                try {
+                    state.originalCancel = cancellable.cancel.bind(cancellable);
+                    const orig = state.originalCancel;
+                    cancellable.cancel = function patchedCancel() {
+                        try { orig(); } catch (e) {}
+                        settle(cancelledError);
+                    };
+                } catch (e) {}
+            }
+            if (_isCancelled(cancellable)) {
+                return settle(cancelledError);
+            }
+        }
+
+        state.timeoutId = _scheduleTimeout(timeoutMs, () => {
+            if (state.settled) return;
+            const e = new Error('AI request timeout');
+            e.code = 'timeout';
+            settle(e);
+        });
+
+        const httpStreamFetch = opts.httpStreamFetch || createDefaultStreamingHttpFetch();
+        let fetchAbortHandler = null;
+        if (state.abortController && !cancellable) {
+            fetchAbortHandler = () => settle(cancelledError);
+            try { state.abortController.signal.addEventListener('abort', fetchAbortHandler); } catch (e) {}
+        }
+
+        httpStreamFetch(url, {
+            method: 'POST',
+            headers: headers,
+            body: body,
+            cancellable: cancellable,
+            signal: state.abortController ? state.abortController.signal : undefined
+        },
+        // onChunk: feed raw SSE text to parser
+        function onChunk(rawText) {
+            if (state.settled || _isCancelled(cancellable)) return;
+            if (parser) {
+                parser.feed(rawText);
+            }
+        },
+        // onDone: stream finished
+        function onDone(err) {
+            if (state.settled) return;
+            if (_isCancelled(cancellable)) {
+                return settle(cancelledError);
+            }
+            if (err) {
+                if (err.name === 'AbortError' || String(err.message).includes('AbortError') || String(err.message).includes('aborted')) {
+                    return settle(cancelledError);
+                }
+                const code = (typeof err.status === 'number') ? httpStatusToCode(err.status) : 'network_error';
+                const message = code === 'auth_error' ? 'AI provider auth error' : code === 'rate_limited' ? 'AI rate limited' : 'AI network error';
+                const e = new Error(message);
+                e.code = code;
+                return settle(e);
+            }
+            // Flush parser — triggers complete event if not already done
+            if (parser && !parser.isDone()) {
+                parser.flush();
+            }
+            // If parser never emitted complete (e.g., no data received), settle without error
+            if (!state.settled) {
+                settle(null);
+            }
+        });
+    }
+
     function destroy() {
         if (destroyed) return;
         destroyed = true;
@@ -438,7 +780,7 @@ function createNineRouterProvider(opts) {
         }
     }
 
-    return { request, destroy, _buildUrl: buildChatCompletionsUrl };
+    return { request, streamRequest, destroy, _buildUrl: buildChatCompletionsUrl };
 }
 
 module.exports = { createNineRouterProvider, NineRouterProvider: createNineRouterProvider, buildChatCompletionsUrl, buildRequestBody, parseResponseText, DEFAULT_TIMEOUT_MS };

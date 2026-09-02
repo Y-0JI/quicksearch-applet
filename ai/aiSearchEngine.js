@@ -264,6 +264,235 @@ function createAISearchEngine(deps) {
         }
     }
 
+    // Streaming search: delivers progressive text via streaming callbacks.
+    // callbacks: { onStart, onDelta, onComplete, onError }
+    // Supports grounding: first call may return tool_call → web search → second streaming call.
+    function searchStream(query, cancellable, callbacks) {
+        if (callbacks === undefined && cancellable != null) {
+            if (typeof cancellable === 'function' || (typeof cancellable === 'object' && (cancellable.onStart || cancellable.onDelta || cancellable.onComplete || cancellable.onError))) {
+                callbacks = cancellable;
+                cancellable = null;
+            }
+        }
+        if (destroyed) return;
+        if (!provider || typeof provider.streamRequest !== 'function') {
+            // Fallback: non-streaming provider → use search() with single completion
+            return search(query, cancellable, {
+                onAnswer: callbacks && callbacks.onComplete ? callbacks.onComplete : (callbacks && callbacks.onDone),
+                onError: callbacks && callbacks.onError,
+                onDone: callbacks && callbacks.onDone
+            });
+        }
+        gen++;
+        const myGen = gen;
+        if (currentCancellable) {
+            try { if (typeof currentCancellable.cancel === 'function') currentCancellable.cancel(); } catch (e) {}
+        }
+        currentCancellable = _makeCancellable(cancellable);
+        const myCancellable = currentCancellable;
+
+        const q = String(query || '').trim();
+        if (!q) {
+            if (callbacks && typeof callbacks.onError === 'function') {
+                callbacks.onError({ code: 'invalid_response', message: ERROR_MESSAGES.invalid_response });
+            }
+            return;
+        }
+
+        let systemPrompt = '';
+        try { systemPrompt = promptBuilder.buildSystemPrompt(); } catch (e) { systemPrompt = ''; }
+
+        let accumulatedText = '';
+
+        function _stale() { return myGen !== gen; }
+
+        // Streaming event handler for provider streamRequest
+        function handleStreamEvent(evt) {
+            if (_stale() || _isCancelled(myCancellable) || destroyed) return;
+            if (!evt || typeof evt !== 'object') return;
+
+            if (evt.type === 'start') {
+                if (callbacks && typeof callbacks.onStart === 'function') callbacks.onStart();
+                return;
+            }
+
+            if (evt.type === 'delta') {
+                const chunk = typeof evt.text === 'string' ? evt.text : '';
+                accumulatedText += chunk;
+                if (callbacks && typeof callbacks.onDelta === 'function') callbacks.onDelta(chunk, accumulatedText);
+                return;
+            }
+
+            if (evt.type === 'complete') {
+                // Text may arrive via deltas or in the complete result
+                const finalText = (evt.result && typeof evt.result.text === 'string') ? evt.result.text : accumulatedText;
+                const sources = (evt.result && Array.isArray(evt.result.sources)) ? evt.result.sources : [];
+                if (callbacks && typeof callbacks.onComplete === 'function') {
+                    // Build AI-5 canonical result
+                    let payload;
+                    if (Gt && typeof Gt.createGroundedAnswer === 'function') {
+                        payload = Gt.createGroundedAnswer(finalText, sources);
+                    } else {
+                        const normalizedSources = sourceFormatter.formatSources(sources);
+                        payload = { type: 'answer', text: finalText, grounded: normalizedSources.length > 0, sources: normalizedSources };
+                    }
+                    callbacks.onComplete(payload);
+                }
+                return;
+            }
+
+            if (evt.type === 'error') {
+                const code = (evt.error && evt.error.code) || 'provider_error';
+                const message = (evt.error && evt.error.message) || ERROR_MESSAGES[code] || ERROR_MESSAGES.provider_error;
+                if (code === 'cancelled') return;
+                if (callbacks && typeof callbacks.onError === 'function') {
+                    callbacks.onError({ code, message });
+                }
+                return;
+            }
+        }
+
+        // First provider call — check for grounding tool_call
+        try {
+            const firstPayload = enableGrounding
+                ? { query: q, systemPrompt, tools: ['web_search'] }
+                : { query: q, systemPrompt };
+
+            // Use non-streaming request first to check for tool_call
+            provider.request(firstPayload, myCancellable, (err, res) => {
+                if (_stale() || _isCancelled(myCancellable) || destroyed) return;
+                if (err) {
+                    const n = _normalizeProviderError(err);
+                    if (n.code === 'cancelled') return;
+                    if (callbacks && typeof callbacks.onError === 'function') {
+                        callbacks.onError({ code: n.code, message: n.message });
+                    }
+                    return;
+                }
+                if (!res || typeof res !== 'object') {
+                    if (callbacks && typeof callbacks.onError === 'function') {
+                        callbacks.onError({ code: 'invalid_response', message: ERROR_MESSAGES.invalid_response });
+                    }
+                    return;
+                }
+
+                // Direct answer — stream it
+                if (res.type === 'answer') {
+                    if (callbacks && typeof callbacks.onStart === 'function') callbacks.onStart();
+                    if (callbacks && typeof callbacks.onDelta === 'function') callbacks.onDelta(res.text, res.text);
+                    accumulatedText = res.text;
+                    if (callbacks && typeof callbacks.onComplete === 'function') {
+                        let payload;
+                        if (Gt && typeof Gt.createGroundedAnswer === 'function') {
+                            payload = Gt.createGroundedAnswer(res.text, []);
+                        } else {
+                            payload = { type: 'answer', text: res.text, grounded: false, sources: [] };
+                        }
+                        callbacks.onComplete(payload);
+                    }
+                    return;
+                }
+
+                // Tool call — do grounding, then stream the second call
+                if (res.type === 'tool_call') {
+                    if (!enableGrounding) {
+                        if (callbacks && typeof callbacks.onError === 'function') {
+                            callbacks.onError({ code: 'unsupported_tool', message: ERROR_MESSAGES.unsupported_tool });
+                        }
+                        return;
+                    }
+                    let normalized = null;
+                    if (Gt && typeof Gt.normalizeToolCall === 'function') {
+                        normalized = Gt.normalizeToolCall(res);
+                        if (normalized.type === 'unsupported_tool') {
+                            if (callbacks && typeof callbacks.onError === 'function') {
+                                callbacks.onError({ code: 'unsupported_tool', message: ERROR_MESSAGES.unsupported_tool });
+                            }
+                            return;
+                        }
+                        if (normalized.type === 'tool_error') {
+                            const te = normalized;
+                            if (callbacks && typeof callbacks.onError === 'function') {
+                                callbacks.onError({ code: te.code || 'invalid_query', message: te.message || ERROR_MESSAGES.invalid_response });
+                            }
+                            return;
+                        }
+                    } else {
+                        if (res.tool !== 'web_search') {
+                            if (callbacks && typeof callbacks.onError === 'function') {
+                                callbacks.onError({ code: 'unsupported_tool', message: ERROR_MESSAGES.unsupported_tool });
+                            }
+                            return;
+                        }
+                    }
+                    const toolQuery = normalized ? normalized.arguments.query : (res.arguments && res.arguments.query && res.arguments.query.trim());
+                    try {
+                        const wsRequest = Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number'
+                            ? { query: toolQuery, maxResults: Gt.DEFAULT_MAX_RESULTS }
+                            : { query: toolQuery, maxResults: 5 };
+                        webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
+                            if (_stale() || _isCancelled(myCancellable) || destroyed) return;
+                            if (wErr) {
+                                const n2 = _normalizeWebError(wErr);
+                                if (n2.code === 'cancelled') return;
+                                if (callbacks && typeof callbacks.onError === 'function') {
+                                    callbacks.onError({ code: n2.code, message: n2.message });
+                                }
+                                return;
+                            }
+                            if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources)) {
+                                if (callbacks && typeof callbacks.onError === 'function') {
+                                    callbacks.onError({ code: 'invalid_response', message: ERROR_MESSAGES.invalid_response });
+                                }
+                                return;
+                            }
+                            const sources = wResults.sources;
+                            if (sources.length === 0) {
+                                if (callbacks && typeof callbacks.onError === 'function') {
+                                    callbacks.onError({ code: 'no_results', message: ERROR_MESSAGES.no_results });
+                                }
+                                return;
+                            }
+                            let _groundingContextObj = null;
+                            if (Gt && typeof Gt.createGroundingContext === 'function') {
+                                try { _groundingContextObj = Gt.createGroundingContext(wResults.query || toolQuery, sources); } catch (e) {}
+                            }
+                            let groundingContext = '';
+                            try { groundingContext = promptBuilder.buildGroundingContext(sources); } catch (e) { groundingContext = ''; }
+                            // Second call — streaming this time
+                            try {
+                                provider.streamRequest(
+                                    { query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: sources, tools: [] },
+                                    myCancellable,
+                                    handleStreamEvent
+                                );
+                            } catch (e) {
+                                if (callbacks && typeof callbacks.onError === 'function') {
+                                    callbacks.onError({ code: 'provider_error', message: ERROR_MESSAGES.provider_error });
+                                }
+                            }
+                        });
+                    } catch (e) {
+                        if (callbacks && typeof callbacks.onError === 'function') {
+                            callbacks.onError({ code: 'grounding_error', message: ERROR_MESSAGES.grounding_error });
+                        }
+                    }
+                    return;
+                }
+
+                // Unknown response type
+                if (callbacks && typeof callbacks.onError === 'function') {
+                    callbacks.onError({ code: 'invalid_response', message: ERROR_MESSAGES.invalid_response });
+                }
+            });
+        } catch (e) {
+            const n = _normalizeProviderError(e);
+            if (callbacks && typeof callbacks.onError === 'function') {
+                callbacks.onError({ code: n.code, message: n.message });
+            }
+        }
+    }
+
     function cancel() {
         gen++;
         if (currentCancellable) {
@@ -282,7 +511,7 @@ function createAISearchEngine(deps) {
         }
     }
 
-    return { search, cancel, destroy, _gen: () => gen };
+    return { search, searchStream, cancel, destroy, _gen: () => gen };
 }
 
 module.exports = { createAISearchEngine };
