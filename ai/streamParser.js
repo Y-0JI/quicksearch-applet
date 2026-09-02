@@ -40,6 +40,7 @@ function createStreamParser(opts) {
     // Accumulated tool_call arguments (OpenAI streams tool_calls incrementally)
     let pendingToolCall = null;
     let toolCallId = null;
+    let toolCallEmitted = false;
 
     function feed(rawChunk) {
         if (done) return;
@@ -122,6 +123,7 @@ function createStreamParser(opts) {
             // Try tool_calls first (streaming tool_call path)
             const tc = _extractToolCallDelta(payload);
             if (tc !== null) {
+                if (toolCallEmitted) return;
                 // Accumulate incremental tool_call arguments
                 if (!pendingToolCall) {
                     pendingToolCall = { tool: tc.name || 'web_search', argumentsStr: '' };
@@ -138,6 +140,8 @@ function createStreamParser(opts) {
                 // For incremental streaming, emit once we have a parseable complete arguments
                 const query = _tryExtractQuery(pendingToolCall.argumentsStr);
                 if (query !== null) {
+                    if (toolCallEmitted) return;
+                    toolCallEmitted = true;
                     // Emit tool_call event; engine will handle grounding
                     _emit({ type: 'tool_call', tool: pendingToolCall.tool, arguments: { query: query } });
                     // Don't duplicate emit on DONE; pending handled
@@ -148,7 +152,9 @@ function createStreamParser(opts) {
             // Also check non-streaming tool_calls format (message.tool_calls)
             const tcMsg = _extractToolCallMessage(payload);
             if (tcMsg !== null) {
+                if (toolCallEmitted) return;
                 if (!started) { started = true; _emit({ type: 'start' }); }
+                toolCallEmitted = true;
                 _emit({ type: 'tool_call', tool: tcMsg.tool, arguments: tcMsg.arguments });
                 return;
             }
@@ -293,10 +299,11 @@ function createStreamParser(opts) {
             _emit({ type: 'start' });
         }
         // If pending tool_call was accumulated but never emitted (e.g., arguments completed exactly at DONE),
-        // emit it now if valid, instead of empty complete
-        if (pendingToolCall && pendingToolCall.argumentsStr) {
+        // emit it now if valid, instead of empty complete — but at most once per stream
+        if (!toolCallEmitted && pendingToolCall && pendingToolCall.argumentsStr) {
             const q = _tryExtractQuery(pendingToolCall.argumentsStr);
             if (q !== null) {
+                toolCallEmitted = true;
                 _emit({ type: 'tool_call', tool: pendingToolCall.tool, arguments: { query: q } });
                 // Still emit complete with empty text for streaming harness to settle
                 // The engine will handle tool_call prior to complete

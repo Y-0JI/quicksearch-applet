@@ -200,3 +200,72 @@ test('A18: [DONE] without prior data emits start+complete', () => {
     assert.ok(types.includes('complete'), 'should emit complete');
     assert.equal(events.find(e => e.type === 'complete').result.text, '');
 });
+
+// ── P2 duplicate tool_call prevention (AI-6 audit) ──
+function sseToolDelta(name, argsFrag, id) {
+    return sseData({ choices: [{ delta: { tool_calls: [{ id: id || 'call_1', function: { name, arguments: argsFrag } }] } }] });
+}
+
+test('P2-1: single tool_call emits exactly once', () => {
+    const { parser, events } = collect();
+    parser.feed(sseToolDelta('web_search', '{"query":"hello world"}'));
+    parser.flush();
+    const tcs = events.filter(e => e.type === 'tool_call');
+    assert.equal(tcs.length, 1);
+    assert.equal(tcs[0].tool, 'web_search');
+    assert.equal(tcs[0].arguments.query, 'hello world');
+});
+
+test('P2-2: duplicate tool data does not emit second tool_call', () => {
+    const { parser, events } = collect();
+    parser.feed(sseToolDelta('web_search', '{"query":"first"}'));
+    parser.feed(sseToolDelta('web_search', '{"query":"second"}'));
+    // also duplicate metadata-only fragment after valid
+    parser.feed(sseToolDelta('web_search', ''));
+    parser.flush();
+    const tcs = events.filter(e => e.type === 'tool_call');
+    assert.equal(tcs.length, 1, 'must remain 1 even after duplicate provider metadata');
+    assert.equal(tcs[0].arguments.query, 'first');
+});
+
+test('P2-3: fragmented tool arguments emit once when valid then no duplicate', () => {
+    const { parser, events } = collect();
+    parser.feed(sseToolDelta('web_search', '{"query": "'));
+    assert.equal(events.filter(e => e.type === 'tool_call').length, 0, 'not yet valid');
+    parser.feed(sseToolDelta('web_search', 'hello"}'));
+    assert.equal(events.filter(e => e.type === 'tool_call').length, 1, 'valid after second fragment');
+    parser.feed(sseToolDelta('web_search', '{"query":"another"}'));
+    parser.feed(sseData({ choices: [{ delta: { content: 'extra delta' } }] }));
+    parser.feed(sseDone());
+    const tcs = events.filter(e => e.type === 'tool_call');
+    assert.equal(tcs.length, 1, 'fragmented must stay 1 even after DONE/delta');
+});
+
+test('P2-4: parser reset/new instance can emit tool_call again', () => {
+    const { parser: p1, events: e1 } = collect();
+    p1.feed(sseToolDelta('web_search', '{"query":"q1"}'));
+    p1.flush();
+    assert.equal(e1.filter(e => e.type === 'tool_call').length, 1);
+    const { parser: p2, events: e2 } = collect();
+    p2.feed(sseToolDelta('web_search', '{"query":"q2"}'));
+    p2.flush();
+    assert.equal(e2.filter(e => e.type === 'tool_call').length, 1);
+    assert.equal(e2.find(e => e.type === 'tool_call').arguments.query, 'q2');
+});
+
+test('P2-5: message.tool_calls also limited to one', () => {
+    const { parser, events } = collect();
+    parser.feed(sseData({ choices: [{ message: { tool_calls: [{ function: { name: 'web_search', arguments: '{"query":"a"}' } }] } }] }));
+    parser.feed(sseData({ choices: [{ message: { tool_calls: [{ function: { name: 'web_search', arguments: '{"query":"b"}' } }] } }] }));
+    parser.flush();
+    assert.equal(events.filter(e => e.type === 'tool_call').length, 1);
+});
+
+test('P2-6: tool_call emitted does not re-emit on _emitComplete', () => {
+    const { parser, events } = collect();
+    parser.feed(sseToolDelta('web_search', '{"query":"q"}'));
+    parser.feed(sseDone());
+    parser.flush();
+    // must be exactly one tool_call, not one during delta plus one during DONE
+    assert.equal(events.filter(e => e.type === 'tool_call').length, 1);
+});
