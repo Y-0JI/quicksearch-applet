@@ -107,6 +107,11 @@
         "description": "AI model (e.g. gpt-4o-mini, coba9router)",
         "default": ""
     },
+    "ai-debug-mode": {
+        "type": "switch",
+        "description": "AI Debug Mode (show diagnostic Stage/Error/Status)",
+        "default": false
+    },
     "sec-advanced": {
         "type": "section",
         "description": "Advanced"

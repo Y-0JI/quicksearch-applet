@@ -419,6 +419,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.settings.bind("ai-base-url", "ai_base_url", () => this._rebuildAiEngine());
         this.settings.bind("ai-api-key", "ai_api_key", () => this._rebuildAiEngine());
         this.settings.bind("ai-model", "ai_model", () => this._rebuildAiEngine());
+        this.ai_debug_mode = false;
+        this.settings.bind("ai-debug-mode", "ai_debug_mode");
 
         this._applySearchEngineSetting();
 
@@ -698,6 +700,40 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { this._syncRegionGeometry(); } catch (e) {}
     }
 
+    _buildAiDiagnosticText(err) {
+        try {
+            const stage = (err && (err.stage || err._stage)) ? String(err.stage || err._stage) : 'unknown';
+            let status = null;
+            try { status = (err && err.status != null) ? err.status : (err && err.httpStatus != null ? err.httpStatus : null); } catch (e) {}
+            const code = (err && err.code) ? String(err.code) : '';
+            const name = (err && err.name && String(err.name) !== 'Error') ? String(err.name) : '';
+            let msg = (err && err.message) ? String(err.message) : (code || 'unknown error');
+            try {
+                const key = this.ai_api_key ? String(this.ai_api_key) : '';
+                if (key && key.length >= 4) {
+                    const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    try { msg = msg.replace(new RegExp(esc, 'g'), '[REDACTED]'); } catch (e) {}
+                }
+                msg = msg.replace(/Bearer\s+[A-Za-z0-9._\-~+\/]+=*/gi, 'Bearer [REDACTED]');
+                msg = msg.replace(/api[_-]?key\s*[:=]\s*\S+/gi, 'api_key=[REDACTED]');
+            } catch (e2) {}
+            let out = 'AI request failed';
+            out += '\nStage: ' + stage;
+            if (name) out += '\nError: ' + name + ': ' + msg;
+            else out += '\nError: ' + msg;
+            if (code) out += ' (' + code + ')';
+            out += '\nHTTP status: ' + (status != null ? String(status) : '-');
+            try {
+                out = out.replace(/Bearer\s+[A-Za-z0-9._\-~+\/]+=*/gi, 'Bearer [REDACTED]');
+                if (this.ai_api_key && String(this.ai_api_key).length >= 4) {
+                    const k2 = String(this.ai_api_key).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    try { out = out.replace(new RegExp(k2, 'g'), '[REDACTED]'); } catch (e) {}
+                }
+            } catch (e) {}
+            return out;
+        } catch (e) { return 'AI request failed'; }
+    }
+
     _renderAIState() {
         const ov = this._overlay;
         if (!ov || !ov.resultsBox) return;
@@ -717,6 +753,8 @@ class QuickSearchApplet extends Applet.IconApplet {
             } catch (e) {}
         } else if (this._aiError) {
             try {
+                const _diagOn = !!this.ai_debug_mode;
+                const _diagText = _diagOn ? this._buildAiDiagnosticText(this._aiError) : null;
                 // AI-6 §15: if partial answer exists, show it with error indication
                 if (this._aiAnswer) {
                     const lbl = new St.Label({ text: String(this._aiAnswer), style_class: "quicksearch-ai-answer" });
@@ -726,13 +764,22 @@ class QuickSearchApplet extends Applet.IconApplet {
                         if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
                     } catch (e) {}
                     ov.resultsBox.add_child(lbl);
-                    const errLbl = new St.Label({ text: _("\u26a0 Interrupted"), style_class: "quicksearch-ai-error" });
-                    try { errLbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+                    const errText = _diagOn ? _diagText : _("\u26a0 Interrupted");
+                    const errLbl = new St.Label({ text: errText, style_class: "quicksearch-ai-error" });
+                    try {
+                        const ect = errLbl.get_clutter_text();
+                        ect.set_line_wrap(true);
+                        if (typeof ect.set_selectable === 'function') try { ect.set_selectable(true); } catch (e2) {}
+                    } catch (e) {}
                     ov.resultsBox.add_child(errLbl);
                 } else {
-                    const msg = _("Unable to get an AI response.");
+                    const msg = _diagOn ? _diagText : _("Unable to get an AI response.");
                     const lbl = new St.Label({ text: msg, style_class: "quicksearch-ai-error" });
-                    try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+                    try {
+                        const ct2 = lbl.get_clutter_text();
+                        ct2.set_line_wrap(true);
+                        if (typeof ct2.set_selectable === 'function') try { ct2.set_selectable(true); } catch (e2) {}
+                    } catch (e) {}
                     ov.resultsBox.add_child(lbl);
                 }
                 ov._scroll.visible = true;

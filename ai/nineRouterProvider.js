@@ -6,7 +6,7 @@ try { Gio = require('gi.Gio'); } catch (e) {}
 try { GLib = require('gi.GLib'); } catch (e) {}
 try { Soup = require('gi.Soup'); } catch (e) {}
 
-const DEFAULT_TIMEOUT_MS = 15000;
+const DEFAULT_TIMEOUT_MS = 30000; // ponytail: reasoning_content adds ~3-6s before first delta; 15s margin too tight (measured 13.6s). Upgrade via setting when needed.
 const _knownApiKeys = new Set();
 function _redactKnownKeys(str) {
     let s = String(str);
@@ -96,17 +96,19 @@ function createDefaultHttpFetch() {
         let session = null;
         function ensureSession() {
             if (!session) {
-                session = new Soup.Session();
-                session.timeout = 30;
+                try { session = new Soup.Session(); } catch (e) { throw _attachStage(e, 'soup_session_create'); }
+                try { session.timeout = 30; } catch (e) {}
             }
             return session;
         }
         return function soupFetch(url, opts) {
             return new Promise((resolve, reject) => {
+                let bridgeCleanup = function() {};
                 try {
-                    const s = ensureSession();
+                    let s;
+                    try { s = ensureSession(); } catch (e) { return reject(_attachStage(e, 'soup_session_create')); }
                     const msg = Soup.Message.new('POST', url);
-                    if (!msg) return reject(new Error('bad url'));
+                    if (!msg) return reject(_attachStage(new Error('bad url'), 'request_build'));
                     const headers = opts.headers || {};
                     for (const k in headers) {
                         try { msg.request_headers.append(k, headers[k]); } catch (e) {}
@@ -117,12 +119,12 @@ function createDefaultHttpFetch() {
                             try { msg.set_request_body_from_bytes('application/json', GLib.Bytes.new(String(body))); }
                             catch (e) { msg.set_request_body_from_bytes('application/json', new GLib.Bytes(String(body))); }
                         }
-                    } catch (e) {}
+                    } catch (e) { return reject(_attachStage(e, 'request_build')); }
                     const appCancellable = opts.cancellable || null;
                     const signal = opts.signal || null;
                     const resolvedSoup = _resolveSoupCancellable(appCancellable);
                     const soupCancellable = resolvedSoup.soupCancellable;
-                    const bridgeCleanup = resolvedSoup.bridgeCleanup;
+                    bridgeCleanup = resolvedSoup.bridgeCleanup;
                     if (Gio && Gio.Cancellable) {
                         if (_isGioCancellable(appCancellable)) _aiLog('transport: Soup native cancellable (already Gio) request URL:', _sanitizeUrl(url));
                         else if (appCancellable) { _aiLog('native cancellable created'); _aiLog('transport: Soup request URL:', _sanitizeUrl(url)); }
@@ -130,11 +132,11 @@ function createDefaultHttpFetch() {
                     } else {
                         _aiLog('transport: fallback (no Gio) request URL:', _sanitizeUrl(url));
                     }
-                    // if native AbortSignal provided and Soup not cancellable, wire it
+                    _aiLog('transport: Soup');
                     let abortHandler = null;
                     if (signal && !soupCancellable) {
-                        if (signal.aborted) return reject(Object.assign(new Error('AbortError'), { name: 'AbortError' }));
-                        abortHandler = () => reject(Object.assign(new Error('AbortError'), { name: 'AbortError' }));
+                        if (signal.aborted) return reject(_attachStage(Object.assign(new Error('AbortError'), { name: 'AbortError' }), 'send_async'));
+                        abortHandler = () => reject(_attachStage(Object.assign(new Error('AbortError'), { name: 'AbortError' }), 'send_async'));
                         try { signal.addEventListener('abort', abortHandler); } catch (e) {}
                     } else if (signal && soupCancellable) {
                         try {
@@ -143,6 +145,7 @@ function createDefaultHttpFetch() {
                         } catch (e) {}
                     }
                     _aiLog('send_async started');
+                    try {
                     s.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, soupCancellable, (sess, res) => {
                         try { bridgeCleanup(); } catch (e) {}
                         try { if (signal && abortHandler) try { signal.removeEventListener('abort', abortHandler); } catch (e) {} } catch (e) {}
@@ -156,10 +159,13 @@ function createDefaultHttpFetch() {
                             resolve({ status, bodyText: text, body: text });
                         } catch (e) {
                             _aiLog('stream transport error:', String(e && e.message || e).slice(0, 300));
-                            reject(e);
+                            reject(_attachStage(e, 'send_finish', { status: _getSoupStatus(msg) }));
                         }
                     });
-                } catch (e) { reject(e); }
+                    } catch (e) {
+                        reject(_attachStage(e, 'send_async'));
+                    }
+                } catch (e) { try { bridgeCleanup(); } catch (e2) {} reject(_attachStage(e, 'transport_select')); }
             });
         };
     }
@@ -246,6 +252,69 @@ function _aiLog() {
     } catch (e) {}
 }
 
+function _sanitizeDiagnosticString(str) {
+    try {
+        let s = String(str || '');
+        s = _redactKnownKeys(s);
+        s = s.replace(/Bearer\s+[A-Za-z0-9._\-~+\/]+=*/gi, 'Bearer [REDACTED]');
+        s = s.replace(/api[_-]?key\s*[:=]\s*\S+/gi, 'api_key=[REDACTED]');
+        s = _redactKnownKeys(s);
+        return s;
+    } catch (e) { return String(str || ''); }
+}
+
+function _attachStage(err, stage, extra) {
+    try {
+        if (!err || typeof err !== 'object') err = new Error(String(err || 'unknown'));
+        if (!(err instanceof Error)) {
+            const m = String(err);
+            err = new Error(m);
+        }
+        if (err.message) {
+            try { err.message = _sanitizeDiagnosticString(err.message); } catch (e) {}
+        }
+        if (err.stack) {
+            try { err.stack = _sanitizeDiagnosticString(err.stack); } catch (e) {}
+        }
+        if (err.name) {
+            try { err.name = _sanitizeDiagnosticString(err.name); } catch (e2) {}
+        }
+        // preserve first stage (innermost, most specific)
+        if (!err.stage && !err._stage) {
+            err.stage = stage;
+            err._stage = stage;
+        }
+        if (extra) {
+            if (extra.status != null && err.status == null) err.status = extra.status;
+            else if (extra.status != null) err.status = err.status;
+            if (extra.httpStatus != null) { if (err.httpStatus == null) err.httpStatus = extra.httpStatus; if (err.status == null) err.status = extra.httpStatus; }
+            if (extra.code && !err.code) err.code = extra.code;
+        }
+        if (err.cause && err.cause.message) {
+            try { err.cause.message = _sanitizeDiagnosticString(err.cause.message); } catch (e) {}
+        }
+    } catch (e) {}
+    return err;
+}
+
+function _makeStagedError(message, code, stage, extra) {
+    const msg = _sanitizeDiagnosticString(message);
+    const err = new Error(msg);
+    err.code = code || 'provider_error';
+    err.stage = stage;
+    err._stage = stage;
+    if (extra) {
+        if (extra.status != null) err.status = extra.status;
+        if (extra.httpStatus != null) { err.httpStatus = extra.httpStatus; err.status = extra.httpStatus; }
+        if (extra.name) err.name = extra.name;
+    }
+    // ensure apiKey redacted via known set
+    try {
+        if (err.message) err.message = _sanitizeDiagnosticString(err.message);
+    } catch (e) {}
+    return err;
+}
+
 function _isGioCancellable(c) {
     if (!c || !Gio || !Gio.Cancellable) return false;
     try {
@@ -321,7 +390,6 @@ function _resolveSoupCancellable(appCancellable) {
 }
 
 function _collectStreamText(stream, cb) {
-    // Collect all bytes from GIO InputStream for error bodies (non-2xx)
     let acc = [];
     let totalLen = 0;
     function next() {
@@ -349,29 +417,29 @@ function _collectStreamText(stream, cb) {
                     acc.push(chunk);
                     totalLen += chunk.length;
                     next();
-                } catch (e) { cb(e); }
+                } catch (e) { cb(_attachStage(e, 'read_bytes_async')); }
             });
-        } catch (e) { cb(e); }
+        } catch (e) { cb(_attachStage(e, 'input_stream')); }
     }
     next();
 }
 
 function createDefaultStreamingHttpFetch() {
-    // Streaming HTTP fetch: calls onChunk(text) for each SSE text chunk, onDone(err) when finished.
     if (Soup && GLib) {
         let session = null;
         function ensureSession() {
             if (!session) {
-                session = new Soup.Session();
-                session.timeout = 30;
+                try { session = new Soup.Session(); } catch (e) { throw _attachStage(e, 'soup_session_create'); }
+                try { session.timeout = 30; } catch (e) {}
             }
             return session;
         }
         return function soupStreamFetch(url, opts, onChunk, onDone) {
             try {
-                const s = ensureSession();
+                let s;
+                try { s = ensureSession(); } catch (e) { return onDone(_attachStage(e, 'soup_session_create')); }
                 const msg = Soup.Message.new('POST', url);
-                if (!msg) { onDone(new Error('bad url')); return; }
+                if (!msg) { onDone(_attachStage(new Error('bad url'), 'request_build')); return; }
                 const headers = opts.headers || {};
                 for (const k in headers) {
                     try { msg.request_headers.append(k, headers[k]); } catch (e) {}
@@ -427,46 +495,58 @@ function createDefaultStreamingHttpFetch() {
                     _aiLog('HTTP status:', status);
                     _sanitizedLog('stream response status', status, 'via', sendKind || 'fallback');
                     if (status !== 0 && (status < 200 || status >= 300)) {
-                        // Do NOT feed error body into SSE parser — collect, parse, map
                         _collectStreamText(stream, (cerr, text) => {
+                            if (cerr) {
+                                const se = _attachStage(cerr, cerr.stage || 'read_bytes_async', { status: status });
+                                if (!se.code) se.code = httpStatusToCode(status);
+                                wrappedOnDone(se);
+                                return;
+                            }
                             const message = _parseErrorMessage(text, status);
                             const code = httpStatusToCode(status);
                             _sanitizedLog('stream http error', status, code, message.slice(0, 200));
                             _aiLog('stream transport error:', message.slice(0, 300));
-                            const err = new Error(message);
-                            err.code = code;
-                            err.status = status;
+                            const err = _makeStagedError(message, code, 'http_status', { status: status });
                             wrappedOnDone(err);
                         });
                         return;
                     }
-                    _readStreamChunks(stream, wrappedOnChunk, wrappedOnDone);
+                    if (!stream) {
+                        wrappedOnDone(_makeStagedError('no input stream', 'provider_error', 'input_stream', { status: status }));
+                        return;
+                    }
+                    _readStreamChunks(stream, wrappedOnChunk, function chunkDone(cerr) {
+                        if (cerr) wrappedOnDone(_attachStage(cerr, cerr.stage || 'read_bytes_async'));
+                        else wrappedOnDone(null);
+                    });
                 }
                 function handleSendError(e) {
                     const status = _getSoupStatus(msg);
                     _sanitizedLog('stream send error', String(e && e.message || e).slice(0, 300), 'status', status);
                     _aiLog('stream transport error:', String(e && e.message || e).slice(0, 300));
+                    const staged = e && e.stage ? e : _attachStage(e, 'send_finish', { status: status || undefined });
                     if (status !== 0 && (status < 200 || status >= 300)) {
                         const code = httpStatusToCode(status);
-                        const err = new Error(_parseErrorMessage(e && e.message || '', status));
-                        err.code = code;
-                        err.status = status;
+                        const msg2 = _parseErrorMessage(staged && staged.message || '', status);
+                        const err = _makeStagedError(msg2, code, 'http_status', { status: status });
+                        if (staged.stage && !err._causeStage) err._causeStage = staged.stage;
                         wrappedOnDone(err);
                         return;
                     }
                     if (status >= 200 && status < 300) {
-                        _fallbackFullRead(s, msg, wrappedOnChunk, wrappedOnDone);
+                        _fallbackFullRead(s, msg, wrappedOnChunk, function fbDone(ferr) {
+                            if (ferr) wrappedOnDone(_attachStage(ferr, ferr.stage || 'http_status'));
+                            else wrappedOnDone(null);
+                        });
                         return;
                     }
                     if (status !== 0) {
                         const code = httpStatusToCode(status);
-                        const err = new Error(_parseErrorMessage('', status));
-                        err.code = code;
-                        err.status = status;
+                        const err = _makeStagedError(_parseErrorMessage('', status), code, 'http_status', { status: status });
                         wrappedOnDone(err);
                         return;
                     }
-                    wrappedOnDone(e);
+                    wrappedOnDone(staged);
                 }
                 if (sendFn) {
                     try {
@@ -510,19 +590,16 @@ function createDefaultStreamingHttpFetch() {
             fetch(url, init).then(async (res) => {
                 if (!res.ok) {
                     let text = '';
-                    try { text = await res.text(); } catch (e) {}
+                    try { text = await res.text(); } catch (e) { onDone(_attachStage(e, 'read_bytes_async')); return; }
                     const message = _parseErrorMessage(text, res.status);
                     _sanitizedLog('stream http error', res.status, httpStatusToCode(res.status), message.slice(0, 200));
-                    const err = new Error(message);
-                    err.status = res.status;
-                    err.code = httpStatusToCode(res.status);
-                    return onDone(err);
+                    return onDone(_makeStagedError(message, httpStatusToCode(res.status), 'http_status', { status: res.status }));
                 }
                 const reader = res.body && typeof res.body.getReader === 'function' ? res.body.getReader() : null;
                 if (!reader) {
-                    // No streaming body support — read full response
-                    const text = await res.text();
-                    onChunk(text);
+                    let text = '';
+                    try { text = await res.text(); } catch (e) { return onDone(_attachStage(e, 'read_bytes_async')); }
+                    try { onChunk(text); } catch (e) { return onDone(_attachStage(e, 'stream_parse')); }
                     onDone(null);
                     return;
                 }
@@ -532,19 +609,19 @@ function createDefaultStreamingHttpFetch() {
                         const { done, value } = await reader.read();
                         if (done) break;
                         const text = decoder.decode(value, { stream: true });
-                        if (text) onChunk(text);
+                        if (text) { try { onChunk(text); } catch (e) { return onDone(_attachStage(e, 'stream_parse')); } }
                     }
                     const tail = decoder.decode();
-                    if (tail) onChunk(tail);
+                    if (tail) { try { onChunk(tail); } catch (e) { return onDone(_attachStage(e, 'stream_parse')); } }
                     onDone(null);
                 } catch (e) {
-                    onDone(e);
+                    onDone(_attachStage(e, 'read_bytes_async'));
                 }
-            }).catch(e => onDone(e));
+            }).catch(e => onDone(_attachStage(e, e && e.stage ? e.stage : 'send_finish')));
         };
     }
     return function noStreamFetch(url, opts, onChunk, onDone) {
-        onDone(new Error('no http transport'));
+        onDone(_makeStagedError('no http transport', 'provider_error', 'transport_select'));
     };
 }
 
@@ -564,14 +641,13 @@ function _readStreamChunks(inputStream, onChunk, onDone) {
                     const bytes = stream.read_bytes_finish(result);
                     if (!bytes || bytes.get_size() === 0) {
                         finished = true;
-                        // flush persistent decoder tail
                         if (decoder) {
                             try {
                                 const tail = decoder.decode();
                                 if (tail) onChunk(tail);
-                            } catch (e) {}
+                            } catch (e) { _attachStage(e, 'stream_parse'); }
                         }
-                        try { inputStream.close(null); } catch (e) {}
+                        try { inputStream.close(null); } catch (e) { _attachStage(e, 'input_stream'); }
                         onDone(null);
                         return;
                     }
@@ -582,19 +658,21 @@ function _readStreamChunks(inputStream, onChunk, onDone) {
                     } else {
                         try { text = new TextDecoder().decode(raw); } catch (e) { text = String(raw); }
                     }
-                    if (text) onChunk(text);
+                    if (text) {
+                        try { onChunk(text); } catch (e) { _attachStage(e, 'engine_callback'); throw e; }
+                    }
                     readNext();
                 } catch (e) {
                     if (!finished) {
                         finished = true;
-                        onDone(e);
+                        onDone(_attachStage(e, e && e.stage ? e.stage : 'read_bytes_async'));
                     }
                 }
             });
         } catch (e) {
             if (!finished) {
                 finished = true;
-                onDone(e);
+                onDone(_attachStage(e, 'input_stream'));
             }
         }
     }
@@ -617,13 +695,15 @@ function _fallbackFullRead(session, msg, onChunk, onDone) {
                     const err = new Error(message);
                     err.status = status;
                     err.code = code;
-                    return onDone(err);
+                    return onDone(_attachStage(err, 'http_status', { status: status }));
                 }
-                if (text && typeof onChunk === 'function') onChunk(text);
+                if (text && typeof onChunk === 'function') {
+                    try { onChunk(text); } catch (e) { return onDone(_attachStage(e, 'stream_parse')); }
+                }
                 onDone(null);
-            } catch (e) { onDone(e); }
+            } catch (e) { onDone(_attachStage(e, e && e.stage ? e.stage : 'send_finish')); }
         });
-    } catch (e) { onDone(e); }
+    } catch (e) { onDone(_attachStage(e, 'send_async')); }
 }
 
 function createNineRouterProvider(opts) {
@@ -635,8 +715,8 @@ function createNineRouterProvider(opts) {
     const timeoutMs = typeof opts.timeoutMs === 'number' ? opts.timeoutMs : DEFAULT_TIMEOUT_MS;
     const httpFetch = opts.httpFetch || createDefaultHttpFetch();
 
-    if (!baseUrl) throw new Error('NineRouterProvider: baseUrl required');
-    if (!model) throw new Error('NineRouterProvider: model required');
+    if (!baseUrl) throw _attachStage(new Error('NineRouterProvider: baseUrl required'), 'provider_create');
+    if (!model) throw _attachStage(new Error('NineRouterProvider: model required'), 'provider_create');
 
     let destroyed = false;
     const activeRequests = new Set();
@@ -667,54 +747,68 @@ function createNineRouterProvider(opts) {
         payload = payload || {};
 
         if (destroyed) {
-            const e = new Error('AI provider unavailable');
-            e.code = 'provider_error';
+            const e = _makeStagedError('AI provider unavailable', 'provider_error', 'provider_create');
             sanitizeError(e);
             if (cb) return cb(e);
             return;
         }
 
         if (!apiKey) {
-            const e = new Error('AI provider auth error');
-            e.code = 'auth_error';
+            const e = _makeStagedError('AI provider auth error', 'auth_error', 'provider_create');
             if (cb) return cb(e);
             return;
         }
 
         if (_isCancelled(cancellable)) {
-            const e = new Error('cancelled');
-            e.code = 'cancelled';
+            const e = _makeStagedError('cancelled', 'cancelled', 'provider_create');
             if (cb) return cb(e);
             return;
         }
 
-        const systemPrompt = payload.systemPrompt || '';
+        let systemPrompt = '';
+        try { systemPrompt = payload.systemPrompt || ''; } catch (e) { systemPrompt = ''; }
         let userContent = '';
-        if (typeof payload.query === 'string') userContent = payload.query;
-        else if (typeof payload.userContent === 'string') userContent = payload.userContent;
-        else if (payload.messages) {
-            userContent = String(payload.query || '');
-        }
-        if (payload.groundingContext) {
-            userContent = (userContent ? userContent + '\n\n' : '') + String(payload.groundingContext);
+        try {
+            if (typeof payload.query === 'string') userContent = payload.query;
+            else if (typeof payload.userContent === 'string') userContent = payload.userContent;
+            else if (payload.messages) {
+                userContent = String(payload.query || '');
+            }
+            if (payload.groundingContext) {
+                userContent = (userContent ? userContent + '\n\n' : '') + String(payload.groundingContext);
+            }
+        } catch (e) {
+            const se = _attachStage(e, 'request_build');
+            if (cb) return cb(_makeStagedError(se.message || 'Invalid AI response', 'invalid_response', 'request_build'));
+            return;
         }
 
         let url;
         try { url = buildChatCompletionsUrl(baseUrl); } catch (e) {
-            const err = new Error('Invalid AI response');
-            err.code = 'invalid_response';
+            const err = _makeStagedError('Invalid AI response', 'invalid_response', 'request_build');
+            _attachStage(err, 'request_build');
+            if (e && e.message) try { err.cause = _sanitizeDiagnosticString(e.message); } catch (ee) {}
             if (cb) return cb(err);
             return;
         }
 
-        const body = buildRequestBody(model, systemPrompt, userContent);
+        let body;
+        try { body = buildRequestBody(model, systemPrompt, userContent); } catch (e) {
+            const se = _attachStage(e, 'request_build');
+            if (cb) return cb(_makeStagedError(se.message || 'request_build failed', se.code || 'invalid_response', 'request_build'));
+            return;
+        }
         const headers = {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer ' + apiKey
         };
 
-        // Gio/Soup bridge: ensure Soup receives a real Gio.Cancellable, not plain JS object
-        const resolvedReq = _resolveSoupCancellable(cancellable);
+        let resolvedReq;
+        try { resolvedReq = _resolveSoupCancellable(cancellable); } catch (e) {
+            const se = _attachStage(e, 'transport_select');
+            if (cb) return cb(se);
+            return;
+        }
         const soupCancellable = resolvedReq.soupCancellable;
         const bridgeCleanupReq = resolvedReq.bridgeCleanup;
         if (Gio && Gio.Cancellable) {
@@ -837,8 +931,7 @@ function createNineRouterProvider(opts) {
         state.timeoutId = _scheduleTimeout(timeoutMs, () => {
             if (state.settled) return;
             try { if (state.soupCancellable && state.soupCancellable !== state.cancellable && typeof state.soupCancellable.cancel === 'function') state.soupCancellable.cancel(); } catch (e) {}
-            const e = new Error('AI request timeout');
-            e.code = 'timeout';
+            const e = _makeStagedError('AI request timeout', 'timeout', 'send_async');
             complete(e);
         });
 
@@ -876,8 +969,7 @@ function createNineRouterProvider(opts) {
             let status = 200;
             let text = '';
             if (res == null) {
-                const e = new Error('Invalid AI response');
-                e.code = 'invalid_response';
+                const e = _makeStagedError('Invalid AI response', 'invalid_response', 'stream_parse');
                 return complete(e);
             }
             if (typeof res === 'string') {
@@ -902,9 +994,7 @@ function createNineRouterProvider(opts) {
                 const fallback = code === 'auth_error' ? 'AI provider auth error' : code === 'rate_limited' ? 'AI rate limited' : 'AI provider unavailable';
                 const message = isGenericHttp ? fallback : providerMsg;
                 _sanitizedLog('request http error', status, code, String(message).slice(0, 200));
-                const e = new Error(message);
-                e.code = code;
-                e.status = status;
+                const e = _makeStagedError(message, code, 'http_status', { status: status });
                 return complete(e);
             }
             try {
@@ -912,24 +1002,24 @@ function createNineRouterProvider(opts) {
                 return complete(null, parsed);
             } catch (e) {
                 if (e._status) e.code = httpStatusToCode(e._status);
+                _attachStage(e, 'stream_parse');
                 try { sanitizeError(e); } catch (ex) {}
                 _sanitizedLog('request parse error', e.code || 'invalid_response', String(e.message).slice(0, 300));
                 return complete(e);
             }
         }).catch(e => {
             if (state.settled) return;
-            // AbortError from fetch -> cancelled, not network_error (§7)
             if (e && (e.name === 'AbortError' || String(e.message).includes('AbortError') || String(e.message).includes('aborted'))) {
                 return complete(cancelledError);
             }
             if (_isCancelled(cancellable)) {
                 return complete(cancelledError);
             }
-            const ne = new Error('AI network error');
-            ne.code = 'network_error';
-            // do not expose raw cause message that might contain secret
-            // keep cause sanitized or omit
+            if (e && e.stage) return complete(_attachStage(e, e.stage));
+            if (e && typeof e.status === 'number') return complete(_attachStage(e, 'http_status'));
+            const ne = _makeStagedError('AI network error', 'network_error', 'send_finish');
             try { ne.cause = sanitizeError(e); } catch (ex) {}
+            if (e && e.message) try { ne._rawCause = _sanitizeDiagnosticString(e.message).slice(0, 200); } catch (ex) {}
             sanitizeError(ne);
             return complete(ne);
         });
@@ -946,17 +1036,15 @@ function createNineRouterProvider(opts) {
         payload = payload || {};
 
         if (destroyed) {
-            const e = new Error('AI provider unavailable');
-            e.code = 'provider_error';
+            const e = _makeStagedError('AI provider unavailable', 'provider_error', 'provider_create');
             sanitizeError(e);
-            if (onEvent) return onEvent({ type: 'error', error: { code: e.code, message: e.message } });
+            if (onEvent) return onEvent({ type: 'error', error: { code: e.code, message: e.message, stage: e.stage, status: e.status } });
             return;
         }
 
         if (!apiKey) {
-            const e = new Error('AI provider auth error');
-            e.code = 'auth_error';
-            if (onEvent) return onEvent({ type: 'error', error: { code: e.code, message: e.message } });
+            const e = _makeStagedError('AI provider auth error', 'auth_error', 'provider_create');
+            if (onEvent) return onEvent({ type: 'error', error: { code: e.code, message: e.message, stage: e.stage, status: e.status } });
             return;
         }
 
@@ -964,31 +1052,52 @@ function createNineRouterProvider(opts) {
             return; // silent cancel per spec
         }
 
-        const systemPrompt = payload.systemPrompt || '';
+        let systemPrompt = '';
+        try { systemPrompt = payload.systemPrompt || ''; } catch (e) { systemPrompt = ''; }
         let userContent = '';
-        if (typeof payload.query === 'string') userContent = payload.query;
-        else if (typeof payload.userContent === 'string') userContent = payload.userContent;
-        if (payload.groundingContext) {
-            userContent = (userContent ? userContent + '\n\n' : '') + String(payload.groundingContext);
+        try {
+            if (typeof payload.query === 'string') userContent = payload.query;
+            else if (typeof payload.userContent === 'string') userContent = payload.userContent;
+            if (payload.groundingContext) {
+                userContent = (userContent ? userContent + '\n\n' : '') + String(payload.groundingContext);
+            }
+        } catch (e) {
+            const se = _attachStage(e, 'request_build');
+            if (onEvent) return onEvent({ type: 'error', error: { code: se.code || 'invalid_response', message: _sanitizeDiagnosticString(se.message || 'Invalid AI response'), stage: se.stage, status: se.status } });
+            return;
         }
 
         let url;
         try { url = buildChatCompletionsUrl(baseUrl); } catch (e) {
-            if (onEvent) return onEvent({ type: 'error', error: { code: 'invalid_response', message: 'Invalid AI response' } });
+            const se = _makeStagedError('Invalid AI response', 'invalid_response', 'request_build');
+            if (e && e.message) try { se.cause = _sanitizeDiagnosticString(e.message); } catch (ee) {}
+            if (onEvent) return onEvent({ type: 'error', error: { code: se.code, message: se.message, stage: se.stage, status: se.status } });
             return;
         }
 
-        const messages = [];
-        if (systemPrompt) messages.push({ role: 'system', content: String(systemPrompt) });
-        messages.push({ role: 'user', content: String(userContent || '') });
-        const body = JSON.stringify({ model: String(model), messages, stream: true });
+        let messages;
+        let body;
+        try {
+            messages = [];
+            if (systemPrompt) messages.push({ role: 'system', content: String(systemPrompt) });
+            messages.push({ role: 'user', content: String(userContent || '') });
+            body = JSON.stringify({ model: String(model), messages, stream: true });
+        } catch (e) {
+            const se = _attachStage(e, 'request_build');
+            if (onEvent) return onEvent({ type: 'error', error: { code: se.code || 'invalid_response', message: _sanitizeDiagnosticString(se.message || 'request_build failed'), stage: se.stage } });
+            return;
+        }
         const headers = {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer ' + apiKey
         };
 
-        // Gio/Soup bridge: ensure Soup receives a real Gio.Cancellable, not plain JS object
-        const resolvedStream = _resolveSoupCancellable(cancellable);
+        let resolvedStream;
+        try { resolvedStream = _resolveSoupCancellable(cancellable); } catch (e) {
+            const se = _attachStage(e, 'transport_select');
+            if (onEvent) return onEvent({ type: 'error', error: { code: se.code || 'provider_error', message: _sanitizeDiagnosticString(se.message), stage: se.stage } });
+            return;
+        }
         const soupCancellable = resolvedStream.soupCancellable;
         const bridgeCleanupOuter = resolvedStream.bridgeCleanup;
         if (Gio && Gio.Cancellable) {
@@ -1053,6 +1162,8 @@ function createNineRouterProvider(opts) {
 
         function settle(err) {
             if (state.settled) return;
+            if (err && !err.stage && !err._stage) _attachStage(err, 'engine_callback');
+            if (err) try { err.message = _sanitizeDiagnosticString(err.message); } catch (e2) {}
             state.settled = true;
             if (err && state.soupCancellable) {
                 try {
@@ -1068,10 +1179,11 @@ function createNineRouterProvider(opts) {
             }
             if (err && state.onEvent) {
                 try { sanitizeError(err); } catch (e) {}
+                try { err.message = _sanitizeDiagnosticString(err.message); } catch (e) {}
                 const code = err.code || 'provider_error';
                 if (code !== 'cancelled') {
-                    try { _aiLog('stream transport error:', String(err.message || code).slice(0, 300)); } catch (e) {}
-                    state.onEvent({ type: 'error', error: { code, message: err.message || code } });
+                    try { _aiLog('stream transport error:', String(err.message || code).slice(0, 300), 'stage:', err.stage || err._stage || 'unknown'); } catch (e) {}
+                    state.onEvent({ type: 'error', error: { code, message: err.message || code, stage: err.stage || err._stage || 'engine_callback', status: err.status, httpStatus: err.httpStatus || err.status, name: err.name, _stage: err.stage || err._stage } });
                 }
             } else if (!err) {
                 try { _aiLog('stream completed'); } catch (e) {}
@@ -1111,8 +1223,7 @@ function createNineRouterProvider(opts) {
         state.timeoutId = _scheduleTimeout(timeoutMs, () => {
             if (state.settled) return;
             try { if (state.soupCancellable && typeof state.soupCancellable.cancel === 'function') state.soupCancellable.cancel(); } catch (e) {}
-            const e = new Error('AI request timeout');
-            e.code = 'timeout';
+            const e = _makeStagedError('AI request timeout', 'timeout', 'send_async');
             settle(e);
         });
 
@@ -1135,7 +1246,7 @@ function createNineRouterProvider(opts) {
         function onChunk(rawText) {
             if (state.settled || _isCancelled(cancellable)) return;
             if (parser) {
-                parser.feed(rawText);
+                try { parser.feed(rawText); } catch (e) { return settle(_attachStage(e, 'stream_parse')); }
             }
         },
         // onDone: stream finished
@@ -1148,31 +1259,26 @@ function createNineRouterProvider(opts) {
                 if (err.name === 'AbortError' || String(err.message).includes('AbortError') || String(err.message).includes('aborted')) {
                     return settle(cancelledError);
                 }
-                // Preserve provider message; map code from status or keep err.code if already normalized
                 let code = err.code;
                 if (!code || code === 'provider_error' || code === 'network_error') {
                     if (typeof err.status === 'number') code = httpStatusToCode(err.status);
                     else if (!code) code = 'network_error';
                 } else if (typeof err.status === 'number') {
                     const mapped = httpStatusToCode(err.status);
-                    // status-derived auth/rate takes precedence over generic provider_error
                     if (mapped === 'auth_error' || mapped === 'rate_limited') code = mapped;
                 }
                 const rawMsg = (err.message && String(err.message).trim()) ? String(err.message).trim() : '';
                 const fallback = code === 'auth_error' ? 'AI provider auth error' : code === 'rate_limited' ? 'AI rate limited' : (code === 'timeout' ? 'AI request timeout' : 'AI network error');
-                // If provider gave a specific message (not just "HTTP 401"), keep it; else use fallback
-                const message = (rawMsg && !/^HTTP\s+\d+$/i.test(rawMsg)) ? rawMsg : fallback;
+                const message = (rawMsg && !/^HTTP\s+\d+$/i.test(rawMsg)) ? _sanitizeDiagnosticString(rawMsg) : fallback;
                 _sanitizedLog('stream onDone error', code, String(message).slice(0, 300));
-                const e = new Error(message);
-                e.code = code;
-                if (typeof err.status === 'number') e.status = err.status;
+                const e = _makeStagedError(message, code, err.stage || err._stage || (typeof err.status === 'number' ? 'http_status' : 'send_finish'), { status: err.status });
                 return settle(e);
             }
-            // Flush parser — triggers complete event if not already done
-            if (parser && !parser.isDone()) {
-                parser.flush();
-            }
-            // If parser never emitted complete (e.g., no data received), settle without error
+            try {
+                if (parser && !parser.isDone()) {
+                    parser.flush();
+                }
+            } catch (e) { return settle(_attachStage(e, 'parser_flush')); }
             if (!state.settled) {
                 settle(null);
             }

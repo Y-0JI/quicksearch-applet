@@ -35,17 +35,27 @@ function _makeCancellable(external) {
 }
 
 function _normalizeProviderError(err) {
-    if (!err) return { code: 'provider_error', message: ERROR_MESSAGES.provider_error };
-    if (err.code === 'invalid_query') return { code: 'invalid_query', message: err.message || ERROR_MESSAGES.invalid_query };
-    if (err.code === 'unsupported_tool') return { code: 'unsupported_tool', message: ERROR_MESSAGES.unsupported_tool };
-    if (err.code === 'invalid_response') return { code: 'invalid_response', message: ERROR_MESSAGES.invalid_response };
-    if (err.code === 'no_results') return { code: 'no_results', message: err.message || ERROR_MESSAGES.no_results };
-    if (err.code === 'timeout') return { code: 'timeout', message: ERROR_MESSAGES.timeout };
-    if (err.code === 'auth_error') return { code: 'auth_error', message: ERROR_MESSAGES.auth_error };
-    if (err.code === 'rate_limited') return { code: 'rate_limited', message: ERROR_MESSAGES.rate_limited };
-    if (err.code === 'network_error') return { code: 'network_error', message: ERROR_MESSAGES.network_error };
-    if (err.code === 'cancelled') return { code: 'cancelled', message: null };
-    return { code: 'provider_error', message: ERROR_MESSAGES.provider_error };
+    const stage = (err && (err.stage || err._stage)) || null;
+    const status = (err && (err.status != null ? err.status : err.httpStatus)) || null;
+    const name = (err && err.name) || null;
+    function withMeta(obj) {
+        if (stage) { obj.stage = stage; obj._stage = stage; }
+        if (status != null) { obj.status = status; obj.httpStatus = status; }
+        if (name) obj.name = name;
+        // sanitize message already done at provider; keep defensive
+        return obj;
+    }
+    if (!err) return withMeta({ code: 'provider_error', message: ERROR_MESSAGES.provider_error });
+    if (err.code === 'invalid_query') return withMeta({ code: 'invalid_query', message: err.message || ERROR_MESSAGES.invalid_query });
+    if (err.code === 'unsupported_tool') return withMeta({ code: 'unsupported_tool', message: ERROR_MESSAGES.unsupported_tool });
+    if (err.code === 'invalid_response') return withMeta({ code: 'invalid_response', message: ERROR_MESSAGES.invalid_response });
+    if (err.code === 'no_results') return withMeta({ code: 'no_results', message: err.message || ERROR_MESSAGES.no_results });
+    if (err.code === 'timeout') return withMeta({ code: 'timeout', message: ERROR_MESSAGES.timeout });
+    if (err.code === 'auth_error') return withMeta({ code: 'auth_error', message: ERROR_MESSAGES.auth_error });
+    if (err.code === 'rate_limited') return withMeta({ code: 'rate_limited', message: ERROR_MESSAGES.rate_limited });
+    if (err.code === 'network_error') return withMeta({ code: 'network_error', message: ERROR_MESSAGES.network_error });
+    if (err.code === 'cancelled') return withMeta({ code: 'cancelled', message: null });
+    return withMeta({ code: 'provider_error', message: ERROR_MESSAGES.provider_error });
 }
 
 function _normalizeWebError(err) {
@@ -116,18 +126,31 @@ function createAISearchEngine(deps) {
         if (callbacks && typeof callbacks.onDone === 'function') return callbacks.onDone(null, payload);
     }
 
-    function _deliverError(myGen, cancellable, callbacks, code, message) {
+    function _deliverError(myGen, cancellable, callbacks, code, message, extra) {
         if (_stale(myGen) || _isCancelled(cancellable) || destroyed) return;
         if (code === 'cancelled') return;
+        extra = extra || {};
         if (typeof callbacks === 'function') {
             const e = new Error(message || code);
             e.code = code;
+            if (extra.stage) { e.stage = extra.stage; e._stage = extra.stage; }
+            if (extra.status != null) { e.status = extra.status; e.httpStatus = extra.status; }
+            if (extra.name) e.name = extra.name;
             return callbacks(e);
         }
-        if (callbacks && typeof callbacks.onError === 'function') return callbacks.onError({ code, message: message || code });
+        if (callbacks && typeof callbacks.onError === 'function') {
+            const payload = { code, message: message || code };
+            if (extra.stage) { payload.stage = extra.stage; payload._stage = extra.stage; }
+            if (extra.status != null) { payload.status = extra.status; payload.httpStatus = extra.status; }
+            if (extra.name) payload.name = extra.name;
+            return callbacks.onError(payload);
+        }
         if (callbacks && typeof callbacks.onDone === 'function') {
             const e = new Error(message || code);
             e.code = code;
+            if (extra.stage) { e.stage = extra.stage; e._stage = extra.stage; }
+            if (extra.status != null) { e.status = extra.status; e.httpStatus = extra.status; }
+            if (extra.name) e.name = extra.name;
             return callbacks.onDone(e);
         }
     }
@@ -164,7 +187,7 @@ function createAISearchEngine(deps) {
                 if (err) {
                     const n = _normalizeProviderError(err);
                     if (n.code === 'cancelled') return;
-                    return _deliverError(myGen, myCancellable, callbacks, n.code, n.message);
+                    return _deliverError(myGen, myCancellable, callbacks, n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
                 }
                 if (!res || typeof res !== 'object') {
                     return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
@@ -230,7 +253,7 @@ function createAISearchEngine(deps) {
                                     if (err2) {
                                         const n3 = _normalizeProviderError(err2);
                                         if (n3.code === 'cancelled') return;
-                                        return _deliverError(myGen, myCancellable, callbacks, n3.code, n3.message);
+                                        return _deliverError(myGen, myCancellable, callbacks, n3.code, n3.message, { stage: n3.stage, status: n3.status, name: n3.name });
                                     }
                                     if (res2 && res2.type === 'tool_call') {
                                         return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
@@ -253,7 +276,7 @@ function createAISearchEngine(deps) {
             });
         } catch (e) {
             const n = _normalizeProviderError(e);
-            return _deliverError(myGen, myCancellable, callbacks, n.code, n.message);
+            return _deliverError(myGen, myCancellable, callbacks, n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
         }
     }
 
@@ -342,12 +365,17 @@ function createAISearchEngine(deps) {
             }
         }
 
-        function emitError(code, message) {
+        function emitError(code, message, extra) {
             if (settled || _staleS() || _isCancelled(myCancellable) || destroyed) return;
             settled = true;
             if (code === 'cancelled') return;
+            extra = extra || {};
             if (callbacks && typeof callbacks.onError === 'function') {
-                callbacks.onError({ code, message });
+                const payload = { code, message };
+                if (extra.stage) { payload.stage = extra.stage; payload._stage = extra.stage; }
+                if (extra.status != null) { payload.status = extra.status; payload.httpStatus = extra.status; }
+                if (extra.name) payload.name = extra.name;
+                callbacks.onError(payload);
             }
         }
 
@@ -379,7 +407,7 @@ function createAISearchEngine(deps) {
             if (evt.type === 'error') {
                 const code = (evt.error && evt.error.code) || 'provider_error';
                 const message = (evt.error && evt.error.message) || ERROR_MESSAGES[code] || ERROR_MESSAGES.provider_error;
-                emitError(code, message);
+                emitError(code, message, { stage: evt.error && (evt.error.stage || evt.error._stage), status: evt.error && (evt.error.status != null ? evt.error.status : evt.error.httpStatus), name: evt.error && evt.error.name });
                 return;
             }
         }
@@ -490,10 +518,10 @@ function createAISearchEngine(deps) {
             }
 
             if (evt.type === 'error') {
-                if (toolCallPending) return; // second leg owns error after tool routing
+                if (toolCallPending) return;
                 const code = (evt.error && evt.error.code) || 'provider_error';
                 const message = (evt.error && evt.error.message) || ERROR_MESSAGES[code] || ERROR_MESSAGES.provider_error;
-                emitError(code, message);
+                emitError(code, message, { stage: evt.error && (evt.error.stage || evt.error._stage), status: evt.error && (evt.error.status != null ? evt.error.status : evt.error.httpStatus), name: evt.error && evt.error.name });
                 return;
             }
         }
@@ -505,7 +533,7 @@ function createAISearchEngine(deps) {
             provider.streamRequest(firstPayload, myCancellable, handleFirstStreamEvent);
         } catch (e) {
             const n = _normalizeProviderError(e);
-            emitError(n.code, n.message);
+            emitError(n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
         }
     }
 
