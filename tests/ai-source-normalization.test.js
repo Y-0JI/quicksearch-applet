@@ -36,9 +36,27 @@ test('normalizeSource: empty URL returns null', () => {
     assert.equal(normalizeSource({ title: 'Missing', url: undefined }), null);
 });
 
-test('normalizeSource: missing title returns null', () => {
-    assert.equal(normalizeSource({ url: 'https://example.com' }), null);
-    assert.equal(normalizeSource({ title: '', url: 'https://example.com' }), null);
+test('normalizeSource: missing title falls back to domain (AI-5 §4)', () => {
+    const r1 = normalizeSource({ url: 'https://example.com' });
+    assert.ok(r1);
+    assert.equal(r1.title, 'example.com');
+    assert.equal(r1.domain, 'example.com');
+    assert.equal(r1.url, 'https://example.com');
+    const r2 = normalizeSource({ title: '', url: 'https://example.com/path' });
+    assert.ok(r2);
+    assert.equal(r2.title, 'example.com');
+    assert.equal(r2.domain, 'example.com');
+    // explicit whitespace title also falls back
+    const r3 = normalizeSource({ title: '   ', url: 'https://fallback.test/a' });
+    assert.ok(r3);
+    assert.equal(r3.title, 'fallback.test');
+});
+
+test('normalizeSource: missing title with domain fallback preserves snippet', () => {
+    const r = normalizeSource({ url: 'https://example.com/article', snippet: 's' });
+    assert.ok(r);
+    assert.equal(r.title, 'example.com');
+    assert.equal(r.domain, 'example.com');
 });
 
 test('formatSources: multiple sources with domains', () => {
@@ -54,7 +72,7 @@ test('formatSources: multiple sources with domains', () => {
     assert.equal(result[2].domain, 'third.net');
 });
 
-test('formatSources: invalid sources filtered out', () => {
+test('formatSources: invalid sources filtered out (fallback counts)', () => {
     const input = [
         { title: 'Valid', url: 'https://valid.com', snippet: '' },
         { title: 'Bad URL', url: 'ftp://invalid.com', snippet: '' },
@@ -63,9 +81,12 @@ test('formatSources: invalid sources filtered out', () => {
         { title: 'Also Valid', url: 'https://also-valid.com', snippet: '' }
     ];
     const result = formatSources(input);
-    assert.equal(result.length, 2);
+    // '' title falls back to domain per AI-5 §4, so 3 valid
+    assert.equal(result.length, 3);
     assert.equal(result[0].domain, 'valid.com');
-    assert.equal(result[1].domain, 'also-valid.com');
+    assert.equal(result[1].domain, 'no-title.com');
+    assert.equal(result[1].title, 'no-title.com');
+    assert.equal(result[2].domain, 'also-valid.com');
 });
 
 test('formatSources: non-array returns empty array', () => {
@@ -121,7 +142,7 @@ test('normalizeSource: title truncation at 200 chars', () => {
     assert.equal(result.title.length, 200);
 });
 
-test('formatSources: handles mixed valid and invalid', () => {
+test('formatSources: handles mixed valid and invalid (fallback counts)', () => {
     const input = [
         { title: 'Valid 1', url: 'https://valid1.com', snippet: '' },
         { title: 'Invalid', url: 'javascript:alert(1)', snippet: '' },
@@ -130,8 +151,85 @@ test('formatSources: handles mixed valid and invalid', () => {
         { title: 'Valid 3', url: 'https://valid3.com', snippet: '' }
     ];
     const result = formatSources(input);
-    assert.equal(result.length, 3);
+    // empty title falls back to domain, so 4 valid (js: filtered)
+    assert.equal(result.length, 4);
     assert.equal(result[0].title, 'Valid 1');
     assert.equal(result[1].title, 'Valid 2');
-    assert.equal(result[2].title, 'Valid 3');
+    assert.equal(result[2].title, 'no-title.com');
+    assert.equal(result[2].domain, 'no-title.com');
+    assert.equal(result[3].title, 'Valid 3');
+});
+
+test('formatSources: deduplicates duplicate URLs (AI-5 §4)', () => {
+    const dup = 'https://example.com/article';
+    const out = formatSources([
+        { title: 'First', url: dup, snippet: 'a' },
+        { title: 'Second', url: dup, snippet: 'b' },
+        { title: 'Third', url: 'https://example.com/other', snippet: 'c' }
+    ]);
+    assert.equal(out.length, 2);
+    assert.equal(out[0].title, 'First');
+    assert.equal(out[0].url, dup);
+    assert.equal(out[1].url, 'https://example.com/other');
+});
+
+test('formatSources: dedupe is case-insensitive on host/protocol preserves first title', () => {
+    const out = formatSources([
+        { title: 'A', url: 'https://Example.COM/article', snippet: '' },
+        { title: 'B', url: 'https://example.com/article', snippet: '' },
+        { title: 'C', url: 'HTTPS://example.com/article', snippet: '' }
+    ]);
+    assert.equal(out.length, 1);
+    assert.equal(out[0].title, 'A');
+});
+
+test('formatSources: dedupe keeps distinct paths separate', () => {
+    const out = formatSources([
+        { title: 'A', url: 'https://example.com/a', snippet: '' },
+        { title: 'B', url: 'https://example.com/b', snippet: '' },
+        { title: 'A dup', url: 'https://example.com/a', snippet: '' }
+    ]);
+    assert.equal(out.length, 2);
+});
+
+test('normalizeSource: rejects javascript/data/file/ftp per URL rules', () => {
+    assert.equal(normalizeSource({ title: 'x', url: 'javascript:alert(1)' }), null);
+    assert.equal(normalizeSource({ title: 'x', url: 'data:text/html,hi' }), null);
+    assert.equal(normalizeSource({ title: 'x', url: 'file:///etc/passwd' }), null);
+    assert.equal(normalizeSource({ title: 'x', url: 'ftp://example.com' }), null);
+    // also via formatSources
+    const out = formatSources([
+        { title: 'a', url: 'javascript:alert(1)' },
+        { title: 'b', url: 'data:text/html,x' },
+        { title: 'c', url: 'file:///tmp/x' },
+        { title: 'ok', url: 'https://example.com/ok' }
+    ]);
+    assert.equal(out.length, 1);
+    assert.equal(out[0].url, 'https://example.com/ok');
+});
+
+test('formatSources: valid answer with invalid source still returns valid entries', () => {
+    const out = formatSources([
+        { title: 'Good', url: 'https://good.com', snippet: 'ok' },
+        { title: 'Bad', url: 'javascript:alert(1)', snippet: '' },
+        { title: 'Also Bad', url: '' },
+        { title: 'Good2', url: 'https://good2.com', snippet: '' }
+    ]);
+    assert.equal(out.length, 2);
+    assert.equal(out[0].title, 'Good');
+    assert.equal(out[1].title, 'Good2');
+});
+
+test('normalizeSource: normalized shape is {title,url,domain,snippet} only', () => {
+    const r = normalizeSource({ title: 'T', url: 'https://example.com/a', snippet: 's', extra: 'x', provider: 'y' });
+    assert.ok(r);
+    assert.equal(typeof r.title, 'string');
+    assert.equal(typeof r.url, 'string');
+    assert.equal(typeof r.domain, 'string');
+    assert.equal(typeof r.snippet, 'string');
+    // no raw provider fields leak
+    assert.equal(r.extra, undefined);
+    assert.equal(r.provider, undefined);
+    const out = formatSources([{ title: 'T', url: 'https://example.com/a', snippet: 's', raw: 1 }]);
+    assert.equal(out[0].raw, undefined);
 });

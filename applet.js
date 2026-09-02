@@ -752,8 +752,21 @@ class QuickSearchApplet extends Applet.IconApplet {
                             const url = src.url;
                             srcRow.connect("clicked", () => {
                                 try {
-                                    if (Util) Util.spawnCommandLine('xdg-open ' + GLib.shell_quote(url));
-                                    else if (imports.misc.util) imports.misc.util.spawnCommandLine('xdg-open ' + GLib.shell_quote(url));
+                                    const trimmed = String(url || "").trim();
+                                    if (!/^https?:\/\/.+/i.test(trimmed)) return;
+                                    try {
+                                        const parsed = new URL(trimmed);
+                                        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
+                                    } catch (e) { return; }
+                                    try {
+                                        if (Gio && Gio.AppInfo && typeof Gio.AppInfo.launch_default_for_uri_async === 'function') {
+                                            Gio.AppInfo.launch_default_for_uri_async(trimmed, null, null, null);
+                                            return;
+                                        }
+                                    } catch (e) {}
+                                    const q = GLib.shell_quote(trimmed);
+                                    if (Util) Util.spawnCommandLine('xdg-open ' + q);
+                                    else if (imports.misc.util) imports.misc.util.spawnCommandLine('xdg-open ' + q);
                                 } catch (e) {}
                             });
                             ov.resultsBox.add_child(srcRow);
