@@ -66,7 +66,7 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         const entryRow = new St.BoxLayout({ style_class: "quicksearch-entry-row" });
         this._entryRow = entryRow;
         entryRow.add(this._entry, { expand: true });
-        // AI mode control lives inside the existing searchbox pill (Phase AI-2).
+        // AI mode control lives inside the existing searchbox pill (Phase AI-4).
         // Single overlay, single searchbox — toggle does not create a second searchbox.
         this._modeButton = new St.Button({
             style_class: "quicksearch-mode-button",
