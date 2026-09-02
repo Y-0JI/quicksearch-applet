@@ -435,12 +435,13 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._sortedResults = [];
         this._contextMenu = null;
 
-        // ---- AI Search mode state (Phase AI-4) ----
+        // ---- AI Search mode state (Phase AI-4/AI-5) ----
         // Spec AI-4 §4.2: explicit _searchMode = 'normal' | 'ai' (alias to _mode='search'|'ai' for compat)
         // _mode kept as legacy alias; _searchMode is canonical per spec.
         this._mode = 'search';
         this._aiLoading = false;
         this._aiAnswer = '';
+        this._aiSources = [];
         this._aiError = null;
         this._aiGen = 0;
         this._aiEngine = null;
@@ -624,6 +625,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             this._aiLoading = false;
             this._aiError = null;
             this._aiAnswer = '';
+            this._aiSources = [];
             this._mode = 'search';
             this._syncModeUI();
             // clear AI visuals
@@ -673,12 +675,14 @@ class QuickSearchApplet extends Applet.IconApplet {
     _clearAIState() {
         this._aiLoading = false;
         this._aiAnswer = '';
+        this._aiSources = [];
         this._aiError = null;
     }
 
     _clearAIStateVisualOnly() {
         this._aiLoading = false;
         this._aiAnswer = '';
+        this._aiSources = [];
         this._aiError = null;
         const ov = this._overlay;
         if (!ov || !ov.resultsBox) return;
@@ -723,6 +727,52 @@ class QuickSearchApplet extends Applet.IconApplet {
                     if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
                 } catch (e) {}
                 ov.resultsBox.add_child(lbl);
+                // Phase AI-5: Sources section — only when sources exist
+                if (Array.isArray(this._aiSources) && this._aiSources.length > 0) {
+                    try {
+                        const srcLabel = new St.Label({ text: _("Sources"), style_class: "quicksearch-ai-sources-label" });
+                        ov.resultsBox.add_child(srcLabel);
+                        for (const src of this._aiSources) {
+                            if (!src || typeof src.url !== 'string' || !src.url) continue;
+                            const srcTitle = typeof src.title === 'string' && src.title.trim() ? src.title.trim() : (src.domain || src.url);
+                            const srcDomain = typeof src.domain === 'string' && src.domain.trim() ? src.domain : '';
+                            const displayText = srcDomain ? srcTitle + ' — ' + srcDomain : srcTitle;
+                            const srcRow = new St.Button({
+                                style_class: "quicksearch-ai-source-row",
+                                reactive: true,
+                                track_hover: true
+                            });
+                            const srcRowLabel = new St.Label({ text: displayText, style_class: "quicksearch-ai-source-title" });
+                            try {
+                                const ct = srcRowLabel.get_clutter_text();
+                                ct.set_line_wrap(false);
+                                if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.END);
+                            } catch (e) {}
+                            srcRow.set_child(srcRowLabel);
+                            const url = src.url;
+                            srcRow.connect("clicked", () => {
+                                try {
+                                    const trimmed = String(url || "").trim();
+                                    if (!/^https?:\/\/.+/i.test(trimmed)) return;
+                                    try {
+                                        const parsed = new URL(trimmed);
+                                        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
+                                    } catch (e) { return; }
+                                    try {
+                                        if (Gio && Gio.AppInfo && typeof Gio.AppInfo.launch_default_for_uri_async === 'function') {
+                                            Gio.AppInfo.launch_default_for_uri_async(trimmed, null, null, null);
+                                            return;
+                                        }
+                                    } catch (e) {}
+                                    const q = GLib.shell_quote(trimmed);
+                                    if (Util) Util.spawnCommandLine('xdg-open ' + q);
+                                    else if (imports.misc.util) imports.misc.util.spawnCommandLine('xdg-open ' + q);
+                                } catch (e) {}
+                            });
+                            ov.resultsBox.add_child(srcRow);
+                        }
+                    } catch (e) {}
+                }
                 ov._scroll.visible = true;
             } catch (e) {}
         } else {
@@ -755,6 +805,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 if (myGen !== this._aiGen || this._mode !== 'ai') return;
                 this._aiLoading = false;
                 this._aiAnswer = data && typeof data.text === 'string' ? data.text : String((data && data.text) || '');
+                this._aiSources = Array.isArray(data && data.sources) ? data.sources : [];
                 this._aiError = null;
                 this._renderAIState();
             },
@@ -776,9 +827,9 @@ class QuickSearchApplet extends Applet.IconApplet {
                 if (err) {
                     const code = err.code || 'provider_error';
                     if (code === 'cancelled') { this._aiLoading = false; this._renderAIState(); return; }
-                    this._aiLoading = false; this._aiError = err; this._aiAnswer = ''; this._renderAIState();
+                    this._aiLoading = false; this._aiError = err; this._aiAnswer = ''; this._aiSources = []; this._renderAIState();
                 } else if (data) {
-                    this._aiLoading = false; this._aiAnswer = data.text || ''; this._aiError = null; this._renderAIState();
+                    this._aiLoading = false; this._aiAnswer = data.text || ''; this._aiSources = Array.isArray(data.sources) ? data.sources : []; this._aiError = null; this._renderAIState();
                 }
             }
         };
@@ -835,6 +886,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._mode = 'search';
         this._aiLoading = false;
         this._aiAnswer = '';
+        this._aiSources = [];
         this._aiError = null;
         if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiGen++;

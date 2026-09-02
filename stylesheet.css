@@ -121,3 +121,28 @@
 .quicksearch-mode-active { border-color: rgba(255,255,255,0.18); }
 .quicksearch-ai-loading, .quicksearch-ai-answer, .quicksearch-ai-error { padding: 10px 8px; font-size: 10pt; }
 .quicksearch-ai-error { color: rgba(255,120,120,0.95); }
+
+/* Phase AI-5: Sources UI */
+.quicksearch-ai-sources-label {
+    padding: 12px 8px 4px 8px;
+    font-size: 8.5pt;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.45);
+    border-top: 1px solid rgba(255, 255, 255, 0.09);
+    margin-top: 8px;
+}
+
+.quicksearch-ai-source-row {
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.quicksearch-ai-source-row:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.quicksearch-ai-source-title {
+    font-size: 9pt;
+    color: rgba(100, 160, 255, 0.95);
+}

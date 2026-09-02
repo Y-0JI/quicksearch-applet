@@ -37,9 +37,12 @@ function normalizeSource(entry, id) {
     const urlRaw = typeof entry.url === 'string' ? entry.url.trim() : '';
     if (!isValidHttpUrl(urlRaw)) return null;
     const url = urlRaw;
+    let domain = '';
+    try { domain = new URL(url).hostname || ''; } catch (e) { domain = ''; }
     let title = typeof entry.title === 'string' ? entry.title.trim() : '';
     if (!title) {
-        try { title = new URL(url).hostname || url; } catch (e) { title = url; }
+        if (domain) title = domain;
+        else title = url;
         title = String(title).trim();
         if (!title) return null;
     }
@@ -50,7 +53,7 @@ function normalizeSource(entry, id) {
     else snippet = '';
     snippet = String(snippet).slice(0, 500);
     title = title.slice(0, 200);
-    const out = { title, url, snippet };
+    const out = { title, url, domain, snippet };
     if (id) out.id = id;
     return out;
 }
@@ -85,6 +88,7 @@ function isCanonicalSource(entry) {
     if (typeof entry.url !== 'string' || !isValidHttpUrl(entry.url)) return false;
     if (typeof entry.snippet !== 'string') return false;
     if (entry.snippet.length > 500) return false;
+    if (entry.domain !== undefined && typeof entry.domain !== 'string') return false;
     return true;
 }
 
@@ -115,7 +119,7 @@ function normalizeSources(raw, maxResults) {
         tmp.push(n);
         if (tmp.length >= max) break;
     }
-    return tmp.map((s, i) => ({ id: `web-${i + 1}`, title: s.title, url: s.url, snippet: s.snippet }));
+    return tmp.map((s, i) => ({ id: `web-${i + 1}`, title: s.title, url: s.url, domain: s.domain, snippet: s.snippet }));
 }
 
 // Internal single canonical path — normalize raw, validate, dedupe, re-id.
@@ -127,7 +131,7 @@ function canonicalizeSources(sources) {
         if (isCanonicalSource(s)) filtered.push(s);
         else {
             const n = normalizeSource(s);
-            if (n) filtered.push({ id: `web-${filtered.length + 1}`, title: n.title, url: n.url, snippet: n.snippet });
+            if (n) filtered.push({ id: `web-${filtered.length + 1}`, title: n.title, url: n.url, domain: n.domain, snippet: n.snippet });
         }
     }
     const seen = new Set();
@@ -138,7 +142,7 @@ function canonicalizeSources(sources) {
         seen.add(key);
         deduped.push(s);
     }
-    return deduped.map((s, i) => ({ id: `web-${i + 1}`, title: s.title, url: s.url, snippet: s.snippet }));
+    return deduped.map((s, i) => ({ id: `web-${i + 1}`, title: s.title, url: s.url, domain: s.domain || '', snippet: s.snippet }));
 }
 
 function createToolResult(query, sources) {
