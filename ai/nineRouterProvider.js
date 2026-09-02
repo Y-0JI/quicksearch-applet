@@ -7,6 +7,14 @@ try { GLib = require('gi.GLib'); } catch (e) {}
 try { Soup = require('gi.Soup'); } catch (e) {}
 
 const DEFAULT_TIMEOUT_MS = 15000;
+const _knownApiKeys = new Set();
+function _redactKnownKeys(str) {
+    let s = String(str);
+    for (const k of _knownApiKeys) {
+        if (k && s.includes(k)) s = s.split(k).join('[REDACTED]');
+    }
+    return s;
+}
 
 function _scheduleTimeout(ms, fn) {
     if (GLib && typeof GLib.timeout_add === 'function') {
@@ -48,7 +56,11 @@ function parseResponseText(text, status) {
         throw err;
     }
     if (data && typeof data === 'object' && data.error) {
-        const err = new Error('AI provider error');
+        let msg = 'AI provider error';
+        if (typeof data.error === 'string' && data.error.trim()) msg = data.error.trim();
+        else if (data.error && typeof data.error.message === 'string' && data.error.message.trim()) msg = data.error.message.trim();
+        else if (typeof data.message === 'string' && data.message.trim()) msg = data.message.trim();
+        const err = new Error(msg);
         err.code = 'provider_error';
         err._status = status;
         throw err;
@@ -143,6 +155,85 @@ function createDefaultHttpFetch() {
     };
 }
 
+function _getSoupStatus(msg) {
+    try {
+        if (msg && typeof msg.get_status === 'function') return msg.get_status();
+        if (msg && typeof msg.get_status_code === 'function') return msg.get_status_code();
+        if (msg && typeof msg.status_code === 'number') return msg.status_code;
+        if (msg && typeof msg.statusCode === 'number') return msg.statusCode;
+    } catch (e) {}
+    return 0;
+}
+
+function _parseErrorMessage(text, fallbackStatus) {
+    if (!text) return 'HTTP ' + fallbackStatus;
+    try {
+        const data = JSON.parse(text);
+        if (data && typeof data === 'object') {
+            if (data.error && typeof data.error === 'object' && typeof data.error.message === 'string' && data.error.message.trim()) return data.error.message.trim();
+            if (typeof data.error === 'string' && data.error.trim()) return data.error.trim();
+            if (typeof data.message === 'string' && data.message.trim()) return data.message.trim();
+        }
+    } catch (e) {}
+    const t = String(text).trim();
+    if (t.length > 0 && t.length < 500) return t;
+    return 'HTTP ' + fallbackStatus;
+}
+
+function _sanitizedLog() {
+    try {
+        const args = Array.prototype.slice.call(arguments);
+        // never log auth headers / api keys — strip bearer tokens and any known apiKey values
+        const line = args.map(a => {
+            let s = String(a);
+            s = _redactKnownKeys(s);
+            s = s.replace(/Bearer\s+[A-Za-z0-9._\-~+\/]+=*/gi, 'Bearer [REDACTED]');
+            s = s.replace(/api[_-]?key\s*[:=]\s*\S+/gi, 'api_key=[REDACTED]');
+            s = _redactKnownKeys(s);
+            return s;
+        }).join(' ');
+        const msg = '[quicksearch] ' + line;
+        if (typeof global !== 'undefined' && global && typeof global.log === 'function') global.log(msg);
+        else if (typeof console !== 'undefined' && typeof console.log === 'function') console.log(msg);
+    } catch (e) {}
+}
+
+function _collectStreamText(stream, cb) {
+    // Collect all bytes from GIO InputStream for error bodies (non-2xx)
+    let acc = [];
+    let totalLen = 0;
+    function next() {
+        try {
+            stream.read_bytes_async(8192, GLib.PRIORITY_DEFAULT, null, (s, res) => {
+                try {
+                    const bytes = s.read_bytes_finish(res);
+                    if (!bytes || bytes.get_size() === 0) {
+                        try { stream.close(null); } catch (e2) {}
+                        let text = '';
+                        if (acc.length > 0) {
+                            const combined = new Uint8Array(totalLen);
+                            let off = 0;
+                            for (let i = 0; i < acc.length; i++) { combined.set(acc[i], off); off += acc[i].length; }
+                            try { text = new TextDecoder().decode(combined); } catch (e) { text = String(combined); }
+                        }
+                        cb(null, text);
+                        return;
+                    }
+                    const raw = bytes.get_data();
+                    let chunk;
+                    if (raw instanceof Uint8Array) chunk = raw;
+                    else if (raw && typeof raw.length === 'number') chunk = new Uint8Array(raw);
+                    else chunk = new Uint8Array(0);
+                    acc.push(chunk);
+                    totalLen += chunk.length;
+                    next();
+                } catch (e) { cb(e); }
+            });
+        } catch (e) { cb(e); }
+    }
+    next();
+}
+
 function createDefaultStreamingHttpFetch() {
     // Streaming HTTP fetch: calls onChunk(text) for each SSE text chunk, onDone(err) when finished.
     if (Soup && GLib) {
@@ -171,25 +262,83 @@ function createDefaultStreamingHttpFetch() {
                     }
                 } catch (e) {}
                 const cancellable = opts.cancellable || null;
-                // send() returns InputStream for chunked reading
-                if (typeof s.send === 'function') {
-                    s.send(msg, cancellable, (sess, res) => {
-                        try {
-                            const inputStream = sess.send_finish(res);
-                            if (!inputStream) { onDone(new Error('no input stream')); return; }
-                            _readStreamChunks(inputStream, onChunk, onDone);
-                        } catch (e) {
-                            const status = typeof msg.get_status === 'function' ? msg.get_status() : (msg.status_code || 0);
-                            if (status >= 200 && status < 300) {
-                                // send failed but status OK — fallback to full read
-                                _fallbackFullRead(s, msg, onChunk, onDone);
-                            } else {
-                                onDone(e);
-                            }
+                _sanitizedLog('stream start', url);
+                // Resolve async send method compat: libsoup 3 uses send_async/send_finish, older also send_async
+                let sendFn = null;
+                let sendKind = '';
+                if (typeof s.send_async === 'function') { sendFn = s.send_async.bind(s); sendKind = 'send_async'; }
+                else if (typeof s.sendAsync === 'function') { sendFn = s.sendAsync.bind(s); sendKind = 'sendAsync'; }
+                else if (typeof s.send === 'function') { sendFn = s.send.bind(s); sendKind = 'send'; }
+                function handleStream(stream) {
+                    const status = _getSoupStatus(msg);
+                    _sanitizedLog('stream response status', status, 'via', sendKind || 'fallback');
+                    if (status !== 0 && (status < 200 || status >= 300)) {
+                        // Do NOT feed error body into SSE parser — collect, parse, map
+                        _collectStreamText(stream, (cerr, text) => {
+                            const message = _parseErrorMessage(text, status);
+                            const code = httpStatusToCode(status);
+                            _sanitizedLog('stream http error', status, code, message.slice(0, 200));
+                            const err = new Error(message);
+                            err.code = code;
+                            err.status = status;
+                            onDone(err);
+                        });
+                        return;
+                    }
+                    _readStreamChunks(stream, onChunk, onDone);
+                }
+                function handleSendError(e) {
+                    const status = _getSoupStatus(msg);
+                    _sanitizedLog('stream send error', String(e && e.message || e).slice(0, 300), 'status', status);
+                    if (status !== 0 && (status < 200 || status >= 300)) {
+                        const code = httpStatusToCode(status);
+                        const err = new Error(_parseErrorMessage(e && e.message || '', status));
+                        err.code = code;
+                        err.status = status;
+                        onDone(err);
+                        return;
+                    }
+                    if (status >= 200 && status < 300) {
+                        _fallbackFullRead(s, msg, onChunk, onDone);
+                        return;
+                    }
+                    if (status !== 0) {
+                        const code = httpStatusToCode(status);
+                        const err = new Error(_parseErrorMessage('', status));
+                        err.code = code;
+                        err.status = status;
+                        onDone(err);
+                        return;
+                    }
+                    onDone(e);
+                }
+                if (sendFn) {
+                    try {
+                        // send_async signature: (msg, priority, cancellable, callback) vs send: (msg, cancellable, callback)
+                        if (sendKind === 'send_async' || sendKind === 'sendAsync') {
+                            sendFn(msg, GLib.PRIORITY_DEFAULT, cancellable, (sess, res) => {
+                                try {
+                                    const finish = sess.send_finish || sess.sendFinish || sess.send_finish_async;
+                                    const inputStream = (typeof sess.send_finish === 'function') ? sess.send_finish(res)
+                                        : (typeof sess.sendFinish === 'function') ? sess.sendFinish(res)
+                                        : null;
+                                    if (!inputStream) { onDone(new Error('no input stream')); return; }
+                                    handleStream(inputStream);
+                                } catch (e) { handleSendError(e); }
+                            });
+                        } else {
+                            // s.send(msg, cancellable, cb) — older GI binding
+                            s.send(msg, cancellable, (sess, res) => {
+                                try {
+                                    const inputStream = sess.send_finish(res);
+                                    if (!inputStream) { onDone(new Error('no input stream')); return; }
+                                    handleStream(inputStream);
+                                } catch (e) { handleSendError(e); }
+                            });
                         }
-                    });
+                    } catch (e) { handleSendError(e); }
                 } else {
-                    // Fallback: full read then split into chunks
+                    // Fallback: full read then deliver as one chunk (will validate status)
                     _fallbackFullRead(s, msg, onChunk, onDone);
                 }
             } catch (e) { onDone(e); }
@@ -201,8 +350,13 @@ function createDefaultStreamingHttpFetch() {
             if (opts.signal) init.signal = opts.signal;
             fetch(url, init).then(async (res) => {
                 if (!res.ok) {
-                    const err = new Error('HTTP ' + res.status);
+                    let text = '';
+                    try { text = await res.text(); } catch (e) {}
+                    const message = _parseErrorMessage(text, res.status);
+                    _sanitizedLog('stream http error', res.status, httpStatusToCode(res.status), message.slice(0, 200));
+                    const err = new Error(message);
                     err.status = res.status;
+                    err.code = httpStatusToCode(res.status);
                     return onDone(err);
                 }
                 const reader = res.body && typeof res.body.getReader === 'function' ? res.body.getReader() : null;
@@ -296,13 +450,17 @@ function _fallbackFullRead(session, msg, onChunk, onDone) {
                 const bytes = sess.send_and_read_finish(res);
                 let text = '';
                 try { text = new TextDecoder().decode(bytes.get_data()); } catch (e) { text = String(bytes.get_data()); }
-                const status = typeof msg.get_status === 'function' ? msg.get_status() : (msg.status_code || 200);
+                const status = _getSoupStatus(msg) || 200;
                 if (status < 200 || status >= 300) {
-                    const err = new Error('HTTP ' + status);
+                    const message = _parseErrorMessage(text, status);
+                    const code = httpStatusToCode(status);
+                    _sanitizedLog('fallback http error', status, code, message.slice(0, 200));
+                    const err = new Error(message);
                     err.status = status;
+                    err.code = code;
                     return onDone(err);
                 }
-                if (text) onChunk(text);
+                if (text && typeof onChunk === 'function') onChunk(text);
                 onDone(null);
             } catch (e) { onDone(e); }
         });
@@ -313,6 +471,7 @@ function createNineRouterProvider(opts) {
     opts = opts || {};
     const baseUrl = opts.baseUrl;
     const apiKey = opts.apiKey;
+    if (apiKey) try { _knownApiKeys.add(String(apiKey)); } catch (e) {}
     const model = opts.model;
     const timeoutMs = typeof opts.timeoutMs === 'number' ? opts.timeoutMs : DEFAULT_TIMEOUT_MS;
     const httpFetch = opts.httpFetch || createDefaultHttpFetch();
@@ -540,7 +699,12 @@ function createNineRouterProvider(opts) {
             }
             if (status < 200 || status >= 300) {
                 const code = httpStatusToCode(status);
-                const e = new Error(code === 'auth_error' ? 'AI provider auth error' : code === 'rate_limited' ? 'AI rate limited' : 'AI provider unavailable');
+                const providerMsg = _parseErrorMessage(text, status);
+                const isGenericHttp = /^HTTP\s+\d+$/i.test(providerMsg);
+                const fallback = code === 'auth_error' ? 'AI provider auth error' : code === 'rate_limited' ? 'AI rate limited' : 'AI provider unavailable';
+                const message = isGenericHttp ? fallback : providerMsg;
+                _sanitizedLog('request http error', status, code, String(message).slice(0, 200));
+                const e = new Error(message);
                 e.code = code;
                 e.status = status;
                 return complete(e);
@@ -550,6 +714,8 @@ function createNineRouterProvider(opts) {
                 return complete(null, parsed);
             } catch (e) {
                 if (e._status) e.code = httpStatusToCode(e._status);
+                try { sanitizeError(e); } catch (ex) {}
+                _sanitizedLog('request parse error', e.code || 'invalid_response', String(e.message).slice(0, 300));
                 return complete(e);
             }
         }).catch(e => {
@@ -676,6 +842,7 @@ function createNineRouterProvider(opts) {
                 try { state.abortController.abort(); } catch (e) {}
             }
             if (err && state.onEvent) {
+                try { sanitizeError(err); } catch (e) {}
                 const code = err.code || 'provider_error';
                 if (code !== 'cancelled') {
                     state.onEvent({ type: 'error', error: { code, message: err.message || code } });
@@ -747,10 +914,24 @@ function createNineRouterProvider(opts) {
                 if (err.name === 'AbortError' || String(err.message).includes('AbortError') || String(err.message).includes('aborted')) {
                     return settle(cancelledError);
                 }
-                const code = (typeof err.status === 'number') ? httpStatusToCode(err.status) : 'network_error';
-                const message = code === 'auth_error' ? 'AI provider auth error' : code === 'rate_limited' ? 'AI rate limited' : 'AI network error';
+                // Preserve provider message; map code from status or keep err.code if already normalized
+                let code = err.code;
+                if (!code || code === 'provider_error' || code === 'network_error') {
+                    if (typeof err.status === 'number') code = httpStatusToCode(err.status);
+                    else if (!code) code = 'network_error';
+                } else if (typeof err.status === 'number') {
+                    const mapped = httpStatusToCode(err.status);
+                    // status-derived auth/rate takes precedence over generic provider_error
+                    if (mapped === 'auth_error' || mapped === 'rate_limited') code = mapped;
+                }
+                const rawMsg = (err.message && String(err.message).trim()) ? String(err.message).trim() : '';
+                const fallback = code === 'auth_error' ? 'AI provider auth error' : code === 'rate_limited' ? 'AI rate limited' : (code === 'timeout' ? 'AI request timeout' : 'AI network error');
+                // If provider gave a specific message (not just "HTTP 401"), keep it; else use fallback
+                const message = (rawMsg && !/^HTTP\s+\d+$/i.test(rawMsg)) ? rawMsg : fallback;
+                _sanitizedLog('stream onDone error', code, String(message).slice(0, 300));
                 const e = new Error(message);
                 e.code = code;
+                if (typeof err.status === 'number') e.status = err.status;
                 return settle(e);
             }
             // Flush parser — triggers complete event if not already done
