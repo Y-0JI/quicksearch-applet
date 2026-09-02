@@ -183,29 +183,24 @@ function createAISearchEngine(deps) {
 
                     const toolQuery = normalized ? normalized.arguments.query : (res.arguments && res.arguments.query).trim();
 
-                    // AI-3A: legacy string overload for backward compat with AI-0/AI-2 tests.
-                    // AI-3B MUST migrate to canonical:
-                    //   webSearchTool.search({ query: toolQuery, maxResults: DEFAULT_MAX_RESULTS }, ...)
-                    //   and expect tool_result. Forward-compat already handles both.
+                    // AI-3A canonical orchestration: object request -> tool_result
                     try {
-                        webSearchTool.search(toolQuery, myCancellable, (wErr, wResults) => {
+                        const wsRequest = Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number'
+                            ? { query: toolQuery, maxResults: Gt.DEFAULT_MAX_RESULTS }
+                            : { query: toolQuery, maxResults: 5 };
+                        webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
                             if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
                             if (wErr) {
                                 const n2 = _normalizeWebError(wErr);
                                 return _deliverError(myGen, myCancellable, callbacks, n2.code, n2.message);
                             }
-                            let sources;
+                            if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources)) {
+                                return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
+                            }
+                            const sources = wResults.sources;
                             let _groundingContextObj = null;
-                            if (wResults && typeof wResults === 'object' && !Array.isArray(wResults) && wResults.type === 'tool_result' && Array.isArray(wResults.sources)) {
-                                sources = wResults.sources;
-                                if (Gt && typeof Gt.createGroundingContext === 'function') {
-                                    try { _groundingContextObj = Gt.createGroundingContext(wResults.query || toolQuery, sources); } catch (e) {}
-                                }
-                            } else {
-                                sources = Array.isArray(wResults) ? wResults : [];
-                                if (Gt && typeof Gt.createGroundingContext === 'function') {
-                                    try { _groundingContextObj = Gt.createGroundingContext(toolQuery, sources); } catch (e) {}
-                                }
+                            if (Gt && typeof Gt.createGroundingContext === 'function') {
+                                try { _groundingContextObj = Gt.createGroundingContext(wResults.query || toolQuery, sources); } catch (e) {}
                             }
                             let groundingContext = '';
                             try { groundingContext = promptBuilder.buildGroundingContext(sources); } catch (e) { groundingContext = ''; }

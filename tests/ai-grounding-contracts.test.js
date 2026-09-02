@@ -436,6 +436,67 @@ test('WebSearchTool backend_unavailable via handler code', () => {
     });
 });
 
+test('G5 engine sends canonical object request {query, maxResults} and consumes tool_result', () => {
+    let seenRequest = null;
+    let secondReq = null;
+    const provider = createMockAiProvider({
+        handler: (req, cb) => {
+            if (!req.groundingContext) return cb(null, { type: 'tool_call', tool: 'web_search', arguments: { query: 'expected query' } });
+            secondReq = req;
+            cb(null, { type: 'answer', text: 'grounded answer' });
+        }
+    });
+    const tool = {
+        search(req, c, cb) {
+            if (typeof c === 'function' && !cb) { cb = c; c = null; }
+            seenRequest = req;
+            assert.equal(typeof req, 'object');
+            assert.ok(req !== null && !Array.isArray(req));
+            assert.equal(req.query, 'expected query');
+            assert.equal(req.maxResults, Gt.DEFAULT_MAX_RESULTS);
+            const tr = Gt.createToolResult(req.query, [{ title: 'T', url: 'https://example.com/a', snippet: 's' }]);
+            cb(null, tr);
+        }
+    };
+    const engine = createAISearchEngine({ provider, webSearchTool: tool, enableGrounding: true });
+    let got = null;
+    engine.search('q', { onAnswer: d => { got = d; } });
+    assert.deepEqual(seenRequest, { query: 'expected query', maxResults: Gt.DEFAULT_MAX_RESULTS });
+    assert.ok(seenRequest);
+    assert.equal(got.type, 'answer');
+    assert.equal(got.grounded, true);
+    assert.ok(got.sources.every(s => Gt.isCanonicalSource(s)));
+    assert.equal(got.sources[0].url, 'https://example.com/a');
+    assert.ok(secondReq);
+    assert.ok(secondReq.groundingContext.includes('https://example.com/a'));
+    assert.ok(secondReq.groundingContextObj);
+    assert.equal(secondReq.groundingContextObj.type, 'grounding_context');
+    assert.equal(secondReq.groundingContextObj.query, 'expected query');
+});
+
+test('G5b engine primary path requires canonical tool_result (raw Array → invalid_response)', () => {
+    const provider = createMockAiProvider({
+        handler: (req, cb) => {
+            if (!req.groundingContext) return cb(null, { type: 'tool_call', tool: 'web_search', arguments: { query: 'x' } });
+            cb(null, { type: 'answer', text: 'should not reach' });
+        }
+    });
+    const tool = {
+        search(req, c, cb) {
+            if (typeof c === 'function' && !cb) { cb = c; c = null; }
+            // legacy raw Array even though request was canonical object
+            cb(null, [{ title: 'T', url: 'https://example.com/a', snippet: 's' }]);
+        }
+    };
+    const engine = createAISearchEngine({ provider, webSearchTool: tool, enableGrounding: true });
+    let err = null;
+    let got = null;
+    engine.search('q', { onError: e => { err = e; }, onAnswer: d => { got = d; } });
+    assert.ok(err);
+    assert.equal(err.code, 'invalid_response');
+    assert.equal(got, null);
+});
+
 test('createWebSearchTool fail-closed when Gt missing (canonical) but mock legacy still works', () => {
     const Module = require('node:module');
     const origRequire = Module.prototype.require;
