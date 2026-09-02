@@ -860,7 +860,8 @@ class QuickSearchApplet extends Applet.IconApplet {
                         self._aiLoading = false;
                         self._aiStreaming = false;
                         self._aiError = err || { code: code };
-                        self._aiAnswer = '';
+                        // AI-6 §15: retain partial answer if already streamed
+                        if (!self._aiAnswer) self._aiAnswer = '';
                         _render();
                     }
                 });

@@ -71,20 +71,24 @@ function createAiProvider(handler) {
 
 // Streaming mock provider: simulates streaming SSE behavior for tests.
 // opts.handler(payload, onEvent) — onEvent receives normalized stream events:
-//   { type: 'start' }, { type: 'delta', text }, { type: 'complete', result }, { type: 'error', error }
+//   { type: 'start' }, { type: 'delta', text }, { type: 'tool_call', tool, arguments }, { type: 'complete', result }, { type: 'error', error }
 // opts.chunks — array of text chunks (alternative to handler)
 // opts.errorAt — index at which to emit error (alternative to handler)
+// opts.requestHandler(payload, cb) — legacy non-streaming handler for first-leg tool_call detection;
+//   when present, streamRequest will use it for non-grounded vs grounded routing (back-compat shim>
+//   so that existing tests using requestHandler still work after engine switches to pure streaming.
 function createMockStreamingAiProvider(opts) {
     opts = opts || {};
     let handler = opts.handler || null;
     let chunks = Array.isArray(opts.chunks) ? opts.chunks.slice() : null;
     let callCount = 0;
+    let streamCallCount = 0;
     let errorAt = typeof opts.errorAt === 'number' ? opts.errorAt : -1;
 
     if (!handler && chunks) {
         handler = (payload, onEvent) => {
-            if (callCount === errorAt) {
-                callCount++;
+            if (streamCallCount === errorAt) {
+                streamCallCount++;
                 onEvent({ type: 'error', error: { code: 'provider_error', message: 'mock stream error' } });
                 return;
             }
@@ -97,7 +101,7 @@ function createMockStreamingAiProvider(opts) {
                     return;
                 }
             }
-            callCount++;
+            streamCallCount++;
             onEvent({ type: 'complete', result: { text: chunks.join(''), sources: [], grounded: false } });
         };
     }
@@ -110,10 +114,54 @@ function createMockStreamingAiProvider(opts) {
         };
     }
 
+    function isSecondLeg(payload) {
+        return !!(payload && (payload.groundingContext || payload.groundingContextObj || payload.searchResults));
+    }
+
     function streamRequest(payload, cancellableOrOnEvent, maybeOnEvent) {
         let onEvent = cancellableOrOnEvent;
         if (typeof maybeOnEvent === 'function') onEvent = maybeOnEvent;
         const req = payload && typeof payload === 'object' ? payload : { query: String(payload || '') };
+        // Back-compat shim: if legacy requestHandler exists and this is first leg (no grounding),
+        // let requestHandler decide tool_call vs answer to keep existing tests green while engine
+        // is now pure-streaming.
+        if (opts.requestHandler && !isSecondLeg(req)) {
+            let requestResult = null;
+            let requestError = null;
+            try {
+                opts.requestHandler(req, (err, raw) => {
+                    if (err) requestError = err;
+                    else requestResult = raw;
+                });
+            } catch (e) {
+                requestError = e;
+            }
+            if (requestError) {
+                const code = requestError.code || 'provider_error';
+                onEvent({ type: 'error', error: { code, message: requestError.message || code } });
+                return;
+            }
+            if (requestResult && requestResult.type === 'tool_call') {
+                const norm = normalizeResult(requestResult);
+                if (norm.type === 'error') {
+                    onEvent({ type: 'error', error: { code: norm.code, message: norm.message } });
+                    return;
+                }
+                // Emit tool_call without start/complete — engine suppresses first-leg extras
+                onEvent({ type: 'tool_call', tool: norm.tool, arguments: norm.arguments });
+                return;
+            }
+            if (requestResult && requestResult.type === 'answer') {
+                // Fall through to streaming handler but use the answer text as chunks
+                // This ensures direct answer via streaming path still works with legacy handler
+                const text = requestResult.text || '';
+                onEvent({ type: 'start' });
+                if (text) onEvent({ type: 'delta', text: text });
+                onEvent({ type: 'complete', result: { text, sources: [], grounded: false } });
+                return;
+            }
+            // If requestHandler returned nothing conclusive, fall through to normal handler
+        }
         try {
             handler(req, (evt) => {
                 if (onEvent) onEvent(evt);
@@ -124,7 +172,6 @@ function createMockStreamingAiProvider(opts) {
     }
 
     // Non-streaming request: opts.requestHandler(payload, cb) for explicit non-streaming path.
-    // If no requestHandler, falls back to converting streaming handler output.
     function request(payload, cancellableOrCb, maybeCb) {
         let cb = cancellableOrCb;
         if (typeof maybeCb === 'function') cb = maybeCb;
@@ -144,6 +191,8 @@ function createMockStreamingAiProvider(opts) {
             handler(req, (evt) => {
                 if (evt.type === 'complete' && evt.result) {
                     result = { type: 'answer', text: evt.result.text };
+                } else if (evt.type === 'tool_call') {
+                    result = { type: 'tool_call', tool: evt.tool, arguments: evt.arguments };
                 } else if (evt.type === 'error' && evt.error) {
                     error = new Error(evt.error.message);
                     error.code = evt.error.code;
@@ -153,7 +202,11 @@ function createMockStreamingAiProvider(opts) {
             error = e;
         }
         if (error) return cb(error);
-        if (result) return cb(null, result);
+        if (result) {
+            const norm = normalizeResult(result);
+            if (norm.type === 'error') { const e = new Error(norm.message); e.code = norm.code; return cb(e); }
+            return cb(null, norm);
+        }
         cb(null, { type: 'answer', text: '' });
     }
 

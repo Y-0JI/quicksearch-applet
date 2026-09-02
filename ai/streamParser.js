@@ -11,6 +11,7 @@
 // Contract §6 (AI-6 spec):
 //   { type: 'start' }
 //   { type: 'delta', text: 'partial text' }
+//   { type: 'tool_call', tool: 'web_search', arguments: { query: '...' } }
 //   { type: 'complete', result: { text, sources, grounded } }
 //   { type: 'error', error: { code, message } }
 //
@@ -36,6 +37,10 @@ function createStreamParser(opts) {
     // Accumulated text from delta events
     let accumulatedText = '';
 
+    // Accumulated tool_call arguments (OpenAI streams tool_calls incrementally)
+    let pendingToolCall = null;
+    let toolCallId = null;
+
     function feed(rawChunk) {
         if (done) return;
         if (typeof rawChunk !== 'string') return;
@@ -54,6 +59,7 @@ function createStreamParser(opts) {
             buffer = buffer.slice(boundary + 2);
 
             _handleEventBlock(eventBlock);
+            if (done) break;
         }
     }
 
@@ -64,13 +70,10 @@ function createStreamParser(opts) {
         let dataLines = [];
 
         for (const line of lines) {
-            // SSE format: "field: value" or "field" (no colon = no value)
-            // Only "data:" lines carry OpenAI payload
             if (line.indexOf('data:') === 0) {
                 const value = line.slice(5); // after "data:"
                 dataLines.push(value);
             }
-            // Ignore event:, id:, retry:, comments (:), and unknown fields
         }
 
         if (dataLines.length === 0) return; // no data lines, skip
@@ -88,16 +91,15 @@ function createStreamParser(opts) {
         try {
             payload = JSON.parse(dataStr);
         } catch (e) {
-            // JSON parse failure — emit error but don't crash
-            // Could be incomplete JSON across reads; accumulate instead
-            // Put the event back for later processing
-            buffer = 'data: ' + dataStr + '\n\n' + buffer;
-            // Check if this looks like an incomplete JSON (no closing brace/bracket)
+            // Distinguish incomplete transport data vs complete malformed event.
+            // Incomplete JSON (brackets unclosed) stays in buffer for next feed.
+            // Complete malformed JSON (valid SSE boundary but invalid JSON) is skipped.
             if (_isIncompleteJson(dataStr)) {
-                // Don't emit error yet — this chunk may complete with next feed
+                // Incomplete — put back and wait for next chunk
+                buffer = 'data: ' + dataStr + '\n\n' + buffer;
                 return;
             }
-            // Invalid but complete JSON — skip this event
+            // Complete malformed event — skip safely, do not reinsert
             return;
         }
 
@@ -107,19 +109,51 @@ function createStreamParser(opts) {
             _emit({ type: 'start' });
         }
 
-        // Extract delta content from OpenAI-compatible format
-        // { choices: [{ delta: { content: "text" } }] }
+        // Check for error in payload
+        if (payload && typeof payload === 'object' && payload.error) {
+            _emitError(
+                payload.error.code || 'provider_error',
+                payload.error.message || 'Provider error'
+            );
+            return;
+        }
+
         if (payload && typeof payload === 'object') {
-            // Check for error in payload
-            if (payload.error) {
-                _emitError(
-                    payload.error.code || 'provider_error',
-                    payload.error.message || 'Provider error'
-                );
+            // Try tool_calls first (streaming tool_call path)
+            const tc = _extractToolCallDelta(payload);
+            if (tc !== null) {
+                // Accumulate incremental tool_call arguments
+                if (!pendingToolCall) {
+                    pendingToolCall = { tool: tc.name || 'web_search', argumentsStr: '' };
+                    if (tc.id) toolCallId = tc.id;
+                }
+                if (typeof tc.argumentsFragment === 'string') {
+                    pendingToolCall.argumentsStr += tc.argumentsFragment;
+                }
+                if (tc.name && pendingToolCall) {
+                    pendingToolCall.tool = tc.name;
+                }
+                // If arguments look complete (valid JSON with query), emit tool_call now
+                // But wait for at least some accumulation; also handle finish on DONE
+                // For incremental streaming, emit once we have a parseable complete arguments
+                const query = _tryExtractQuery(pendingToolCall.argumentsStr);
+                if (query !== null) {
+                    // Emit tool_call event; engine will handle grounding
+                    _emit({ type: 'tool_call', tool: pendingToolCall.tool, arguments: { query: query } });
+                    // Don't duplicate emit on DONE; pending handled
+                }
                 return;
             }
 
-            // Extract content from choices[0].delta.content
+            // Also check non-streaming tool_calls format (message.tool_calls)
+            const tcMsg = _extractToolCallMessage(payload);
+            if (tcMsg !== null) {
+                if (!started) { started = true; _emit({ type: 'start' }); }
+                _emit({ type: 'tool_call', tool: tcMsg.tool, arguments: tcMsg.arguments });
+                return;
+            }
+
+            // Extract delta content from OpenAI-compatible format
             const text = _extractDeltaText(payload);
             if (text !== null) {
                 accumulatedText += text;
@@ -127,7 +161,6 @@ function createStreamParser(opts) {
                 return;
             }
 
-            // Also handle choices[0].message.content (non-streaming format occasionally seen)
             const msgText = _extractMessageText(payload);
             if (msgText !== null) {
                 accumulatedText += msgText;
@@ -145,7 +178,77 @@ function createStreamParser(opts) {
             if (!choice || typeof choice !== 'object') return null;
             if (!choice.delta || typeof choice.delta !== 'object') return null;
             if (typeof choice.delta.content !== 'string') return null;
+            // If delta also contains tool_calls without content, it's tool_call not text
             return choice.delta.content;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function _extractToolCallDelta(payload) {
+        try {
+            if (!Array.isArray(payload.choices) || payload.choices.length === 0) return null;
+            const choice = payload.choices[0];
+            if (!choice || typeof choice !== 'object') return null;
+            const delta = choice.delta;
+            if (!delta || typeof delta !== 'object') return null;
+            if (!Array.isArray(delta.tool_calls) || delta.tool_calls.length === 0) return null;
+            const tc = delta.tool_calls[0];
+            if (!tc || typeof tc !== 'object') return null;
+            let name = null;
+            let argsFrag = null;
+            let id = tc.id || null;
+            if (tc.function && typeof tc.function === 'object') {
+                if (typeof tc.function.name === 'string') name = tc.function.name;
+                if (typeof tc.function.arguments === 'string') argsFrag = tc.function.arguments;
+            }
+            // Some providers use 'function' at top level
+            if (name === null && typeof tc.name === 'string') name = tc.name;
+            if (argsFrag === null && typeof tc.arguments === 'string') argsFrag = tc.arguments;
+            // If both null but tc exists, treat as signal fragment
+            if (name === null && argsFrag === null) return null;
+            return { name: name, argumentsFragment: argsFrag || '', id: id };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function _extractToolCallMessage(payload) {
+        try {
+            if (!Array.isArray(payload.choices) || payload.choices.length === 0) return null;
+            const choice = payload.choices[0];
+            if (!choice || typeof choice !== 'object') return null;
+            const msg = choice.message;
+            if (!msg || typeof msg !== 'object') return null;
+            if (!Array.isArray(msg.tool_calls) || msg.tool_calls.length === 0) return null;
+            const tc = msg.tool_calls[0];
+            if (!tc || typeof tc !== 'object') return null;
+            let tool = 'web_search';
+            let args = {};
+            if (tc.function && typeof tc.function === 'object') {
+                if (typeof tc.function.name === 'string') tool = tc.function.name;
+                if (typeof tc.function.arguments === 'string') {
+                    try { args = JSON.parse(tc.function.arguments); } catch (e) { args = {}; }
+                } else if (typeof tc.function.arguments === 'object') {
+                    args = tc.function.arguments;
+                }
+            }
+            return { tool: tool, arguments: args };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function _tryExtractQuery(argsStr) {
+        if (!argsStr || typeof argsStr !== 'string') return null;
+        const s = argsStr.trim();
+        if (!s) return null;
+        // Only emit if it looks like complete JSON object
+        if (s[0] !== '{' || s[s.length - 1] !== '}') return null;
+        try {
+            const obj = JSON.parse(s);
+            if (obj && typeof obj.query === 'string' && obj.query.trim()) return obj.query.trim();
+            return null;
         } catch (e) {
             return null;
         }
@@ -167,7 +270,6 @@ function createStreamParser(opts) {
     function _isIncompleteJson(str) {
         const trimmed = str.trim();
         if (!trimmed) return false;
-        // Simple heuristic: count unmatched braces/brackets
         let braces = 0, brackets = 0, inString = false, escape = false;
         for (let i = 0; i < trimmed.length; i++) {
             const ch = trimmed[i];
@@ -189,6 +291,16 @@ function createStreamParser(opts) {
         if (!started) {
             started = true;
             _emit({ type: 'start' });
+        }
+        // If pending tool_call was accumulated but never emitted (e.g., arguments completed exactly at DONE),
+        // emit it now if valid, instead of empty complete
+        if (pendingToolCall && pendingToolCall.argumentsStr) {
+            const q = _tryExtractQuery(pendingToolCall.argumentsStr);
+            if (q !== null) {
+                _emit({ type: 'tool_call', tool: pendingToolCall.tool, arguments: { query: q } });
+                // Still emit complete with empty text for streaming harness to settle
+                // The engine will handle tool_call prior to complete
+            }
         }
         _emit({
             type: 'complete',
@@ -218,13 +330,10 @@ function createStreamParser(opts) {
     }
 
     function flush() {
-        // Flush any remaining buffer as a final event
         if (done) return;
         if (buffer.trim()) {
-            // Process whatever is left
             _processBuffer();
         }
-        // Only emit complete if stream was started (at least one event received)
         if (!done && started) {
             _emitComplete();
         }

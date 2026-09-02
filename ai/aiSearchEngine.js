@@ -52,7 +52,6 @@ function _normalizeWebError(err) {
     if (!err) return { code: 'web_search_unavailable', message: ERROR_MESSAGES.web_search_unavailable };
     if (err.code === 'cancelled') return { code: 'cancelled', message: null };
     if (err.code === 'no_results') return { code: 'no_results', message: err.message || ERROR_MESSAGES.no_results };
-    // Preserve legacy code for existing regression (ai-search-engine.test expects web_search_unavailable)
     if (err.code === 'web_search_unavailable') return { code: 'web_search_unavailable', message: err.message || ERROR_MESSAGES.web_search_unavailable };
     if (err.code === 'request_failed') return { code: 'web_search_unavailable', message: err.message || ERROR_MESSAGES.web_search_unavailable };
     if (Gt && typeof Gt.fromCallbackError === 'function') {
@@ -177,7 +176,6 @@ function createAISearchEngine(deps) {
                     if (!enableGrounding) {
                         return _deliverError(myGen, myCancellable, callbacks, 'unsupported_tool', ERROR_MESSAGES.unsupported_tool);
                     }
-                    // Canonical tool-call boundary. Single source of truth via Gt.normalizeToolCall().
                     let normalized = null;
                     if (Gt && typeof Gt.normalizeToolCall === 'function') {
                         normalized = Gt.normalizeToolCall(res);
@@ -190,9 +188,7 @@ function createAISearchEngine(deps) {
                             const code = te.code || 'invalid_query';
                             return _deliverError(myGen, myCancellable, callbacks, code, msg);
                         }
-                        // valid web_search tool_call at this point; extract canonical query
                     } else {
-                        // Fallback when Gt unavailable (tests / legacy) — preserve old manual path
                         if (res.tool !== 'web_search') {
                             return _deliverError(myGen, myCancellable, callbacks, 'unsupported_tool', ERROR_MESSAGES.unsupported_tool);
                         }
@@ -204,7 +200,6 @@ function createAISearchEngine(deps) {
 
                     const toolQuery = normalized ? normalized.arguments.query : (res.arguments && res.arguments.query).trim();
 
-                    // AI-3A canonical orchestration: object request -> tool_result
                     try {
                         const wsRequest = Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number'
                             ? { query: toolQuery, maxResults: Gt.DEFAULT_MAX_RESULTS }
@@ -220,7 +215,6 @@ function createAISearchEngine(deps) {
                                 return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
                             }
                             const sources = wResults.sources;
-                            // AI-3B Requirement D — empty canonical sources: fail closed, no Provider #2.
                             if (sources.length === 0) {
                                 return _deliverError(myGen, myCancellable, callbacks, 'no_results', ERROR_MESSAGES.no_results);
                             }
@@ -238,7 +232,6 @@ function createAISearchEngine(deps) {
                                         if (n3.code === 'cancelled') return;
                                         return _deliverError(myGen, myCancellable, callbacks, n3.code, n3.message);
                                     }
-                                    // AI-3B Requirement C — loop guard: Provider #2 must not trigger second grounding round.
                                     if (res2 && res2.type === 'tool_call') {
                                         return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
                                     }
@@ -264,9 +257,8 @@ function createAISearchEngine(deps) {
         }
     }
 
-    // Streaming search: delivers progressive text via streaming callbacks.
-    // callbacks: { onStart, onDelta, onComplete, onError }
-    // Supports grounding: first call may return tool_call → web search → second streaming call.
+    // Streaming search: real progressive transport, no blocking non-streaming probe for direct answer.
+    // Handles tool_call via streaming events (OpenAI streaming tool_calls).
     function searchStream(query, cancellable, callbacks) {
         if (callbacks === undefined && cancellable != null) {
             if (typeof cancellable === 'function' || (typeof cancellable === 'object' && (cancellable.onStart || cancellable.onDelta || cancellable.onComplete || cancellable.onError))) {
@@ -276,7 +268,6 @@ function createAISearchEngine(deps) {
         }
         if (destroyed) return;
         if (!provider || typeof provider.streamRequest !== 'function') {
-            // Fallback: non-streaming provider → use search() with single completion
             return search(query, cancellable, {
                 onAnswer: callbacks && callbacks.onComplete ? callbacks.onComplete : (callbacks && callbacks.onDone),
                 onError: callbacks && callbacks.onError,
@@ -303,12 +294,98 @@ function createAISearchEngine(deps) {
         try { systemPrompt = promptBuilder.buildSystemPrompt(); } catch (e) { systemPrompt = ''; }
 
         let accumulatedText = '';
+        let groundedSources = null;
+        let toolCallPending = false;
+        let settled = false;
 
-        function _stale() { return myGen !== gen; }
+        function _staleS() { return myGen !== gen; }
 
-        // Streaming event handler for provider streamRequest
-        function handleStreamEvent(evt) {
-            if (_stale() || _isCancelled(myCancellable) || destroyed) return;
+        function emitComplete(finalText, sources) {
+            if (settled || _staleS() || _isCancelled(myCancellable) || destroyed) return;
+            settled = true;
+            const effectiveText = typeof finalText === 'string' ? finalText : accumulatedText;
+            // Source retention: prefer provider sources if they yield >=1 valid after AI-5 canonicalization,
+            // else fallback to grounded canonical sources. Never overwrite valid grounded with invalid/empty.
+            let effectiveSources = [];
+            let providerCanon = [];
+            let groundedCanon = [];
+            if (Array.isArray(sources) && sources.length > 0) {
+                if (Gt && typeof Gt.canonicalizeSources === 'function') {
+                    try { providerCanon = Gt.canonicalizeSources(sources); } catch (e) { providerCanon = []; }
+                } else {
+                    providerCanon = sourceFormatter.formatSources(sources);
+                }
+            }
+            if (Array.isArray(groundedSources) && groundedSources.length > 0) {
+                if (Gt && typeof Gt.canonicalizeSources === 'function') {
+                    try { groundedCanon = Gt.canonicalizeSources(groundedSources); } catch (e) { groundedCanon = []; }
+                } else {
+                    groundedCanon = sourceFormatter.formatSources(groundedSources);
+                }
+            }
+            if (providerCanon.length > 0) {
+                effectiveSources = providerCanon;
+            } else if (groundedCanon.length > 0) {
+                effectiveSources = groundedCanon;
+            } else {
+                effectiveSources = [];
+            }
+            if (callbacks && typeof callbacks.onComplete === 'function') {
+                let payload;
+                if (Gt && typeof Gt.createGroundedAnswer === 'function') {
+                    payload = Gt.createGroundedAnswer(effectiveText, effectiveSources);
+                } else {
+                    const normalizedSources = sourceFormatter.formatSources(effectiveSources);
+                    payload = { type: 'answer', text: effectiveText, grounded: normalizedSources.length > 0, sources: normalizedSources };
+                }
+                callbacks.onComplete(payload);
+            }
+        }
+
+        function emitError(code, message) {
+            if (settled || _staleS() || _isCancelled(myCancellable) || destroyed) return;
+            settled = true;
+            if (code === 'cancelled') return;
+            if (callbacks && typeof callbacks.onError === 'function') {
+                callbacks.onError({ code, message });
+            }
+        }
+
+        // Second leg handler (after grounding)
+        function handleSecondStreamEvent(evt) {
+            if (_staleS() || _isCancelled(myCancellable) || destroyed || settled) return;
+            if (!evt || typeof evt !== 'object') return;
+            if (evt.type === 'start') {
+                if (callbacks && typeof callbacks.onStart === 'function') callbacks.onStart();
+                return;
+            }
+            if (evt.type === 'delta') {
+                const chunk = typeof evt.text === 'string' ? evt.text : '';
+                accumulatedText += chunk;
+                if (callbacks && typeof callbacks.onDelta === 'function') callbacks.onDelta(chunk, accumulatedText);
+                return;
+            }
+            if (evt.type === 'tool_call') {
+                // Loop guard: second leg must not trigger another grounding round
+                emitError('invalid_response', ERROR_MESSAGES.invalid_response);
+                return;
+            }
+            if (evt.type === 'complete') {
+                const finalText = (evt.result && typeof evt.result.text === 'string') ? evt.result.text : accumulatedText;
+                const sources = (evt.result && Array.isArray(evt.result.sources)) ? evt.result.sources : [];
+                emitComplete(finalText, sources);
+                return;
+            }
+            if (evt.type === 'error') {
+                const code = (evt.error && evt.error.code) || 'provider_error';
+                const message = (evt.error && evt.error.message) || ERROR_MESSAGES[code] || ERROR_MESSAGES.provider_error;
+                emitError(code, message);
+                return;
+            }
+        }
+
+        function handleFirstStreamEvent(evt) {
+            if (_staleS() || _isCancelled(myCancellable) || destroyed || settled) return;
             if (!evt || typeof evt !== 'object') return;
 
             if (evt.type === 'start') {
@@ -317,179 +394,118 @@ function createAISearchEngine(deps) {
             }
 
             if (evt.type === 'delta') {
+                if (toolCallPending) return;
                 const chunk = typeof evt.text === 'string' ? evt.text : '';
                 accumulatedText += chunk;
                 if (callbacks && typeof callbacks.onDelta === 'function') callbacks.onDelta(chunk, accumulatedText);
                 return;
             }
 
+            if (evt.type === 'tool_call') {
+                if (toolCallPending) return;
+                toolCallPending = true;
+                if (!enableGrounding) {
+                    emitError('unsupported_tool', ERROR_MESSAGES.unsupported_tool);
+                    return;
+                }
+                // Normalize tool_call via canonical boundary
+                let normalized = null;
+                // Build a synthetic res object compatible with Gt.normalizeToolCall
+                const synthetic = { type: 'tool_call', tool: evt.tool || 'web_search', arguments: evt.arguments || {} };
+                if (Gt && typeof Gt.normalizeToolCall === 'function') {
+                    normalized = Gt.normalizeToolCall(synthetic);
+                    if (normalized.type === 'unsupported_tool') {
+                        emitError('unsupported_tool', ERROR_MESSAGES.unsupported_tool);
+                        return;
+                    }
+                    if (normalized.type === 'tool_error') {
+                        emitError(normalized.code || 'invalid_query', normalized.message || ERROR_MESSAGES.invalid_response);
+                        return;
+                    }
+                } else {
+                    if (synthetic.tool !== 'web_search') {
+                        emitError('unsupported_tool', ERROR_MESSAGES.unsupported_tool);
+                        return;
+                    }
+                    const tq = synthetic.arguments && synthetic.arguments.query;
+                    if (typeof tq !== 'string' || !tq.trim()) {
+                        emitError('invalid_response', ERROR_MESSAGES.invalid_response);
+                        return;
+                    }
+                    normalized = { type: 'tool_call', tool: 'web_search', arguments: { query: tq.trim() } };
+                }
+                const toolQuery = normalized.arguments.query;
+                try {
+                    const wsRequest = Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number'
+                        ? { query: toolQuery, maxResults: Gt.DEFAULT_MAX_RESULTS }
+                        : { query: toolQuery, maxResults: 5 };
+                    webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
+                        if (_staleS() || _isCancelled(myCancellable) || destroyed || settled) return;
+                        if (wErr) {
+                            const n2 = _normalizeWebError(wErr);
+                            if (n2.code === 'cancelled') return;
+                            emitError(n2.code, n2.message);
+                            return;
+                        }
+                        if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources)) {
+                            emitError('invalid_response', ERROR_MESSAGES.invalid_response);
+                            return;
+                        }
+                        const sources = wResults.sources;
+                        if (sources.length === 0) {
+                            emitError('no_results', ERROR_MESSAGES.no_results);
+                            return;
+                        }
+                        groundedSources = sources;
+                        let _groundingContextObj = null;
+                        if (Gt && typeof Gt.createGroundingContext === 'function') {
+                            try { _groundingContextObj = Gt.createGroundingContext(wResults.query || toolQuery, sources); } catch (e) {}
+                        }
+                        let groundingContext = '';
+                        try { groundingContext = promptBuilder.buildGroundingContext(sources); } catch (e) { groundingContext = ''; }
+                        // Reset accumulation for grounded answer streaming
+                        accumulatedText = '';
+                        try {
+                            provider.streamRequest(
+                                { query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: sources, tools: [] },
+                                myCancellable,
+                                handleSecondStreamEvent
+                            );
+                        } catch (e) {
+                            emitError('provider_error', ERROR_MESSAGES.provider_error);
+                        }
+                    });
+                } catch (e) {
+                    emitError('grounding_error', ERROR_MESSAGES.grounding_error);
+                }
+                return;
+            }
+
             if (evt.type === 'complete') {
-                // Text may arrive via deltas or in the complete result
+                if (toolCallPending) return; // ignore first-leg complete after tool_call; second leg will complete
                 const finalText = (evt.result && typeof evt.result.text === 'string') ? evt.result.text : accumulatedText;
                 const sources = (evt.result && Array.isArray(evt.result.sources)) ? evt.result.sources : [];
-                if (callbacks && typeof callbacks.onComplete === 'function') {
-                    // Build AI-5 canonical result
-                    let payload;
-                    if (Gt && typeof Gt.createGroundedAnswer === 'function') {
-                        payload = Gt.createGroundedAnswer(finalText, sources);
-                    } else {
-                        const normalizedSources = sourceFormatter.formatSources(sources);
-                        payload = { type: 'answer', text: finalText, grounded: normalizedSources.length > 0, sources: normalizedSources };
-                    }
-                    callbacks.onComplete(payload);
-                }
+                emitComplete(finalText, sources);
                 return;
             }
 
             if (evt.type === 'error') {
+                if (toolCallPending) return; // second leg owns error after tool routing
                 const code = (evt.error && evt.error.code) || 'provider_error';
                 const message = (evt.error && evt.error.message) || ERROR_MESSAGES[code] || ERROR_MESSAGES.provider_error;
-                if (code === 'cancelled') return;
-                if (callbacks && typeof callbacks.onError === 'function') {
-                    callbacks.onError({ code, message });
-                }
+                emitError(code, message);
                 return;
             }
         }
 
-        // First provider call — check for grounding tool_call
         try {
             const firstPayload = enableGrounding
                 ? { query: q, systemPrompt, tools: ['web_search'] }
                 : { query: q, systemPrompt };
-
-            // Use non-streaming request first to check for tool_call
-            provider.request(firstPayload, myCancellable, (err, res) => {
-                if (_stale() || _isCancelled(myCancellable) || destroyed) return;
-                if (err) {
-                    const n = _normalizeProviderError(err);
-                    if (n.code === 'cancelled') return;
-                    if (callbacks && typeof callbacks.onError === 'function') {
-                        callbacks.onError({ code: n.code, message: n.message });
-                    }
-                    return;
-                }
-                if (!res || typeof res !== 'object') {
-                    if (callbacks && typeof callbacks.onError === 'function') {
-                        callbacks.onError({ code: 'invalid_response', message: ERROR_MESSAGES.invalid_response });
-                    }
-                    return;
-                }
-
-                // Direct answer — stream it
-                if (res.type === 'answer') {
-                    if (callbacks && typeof callbacks.onStart === 'function') callbacks.onStart();
-                    if (callbacks && typeof callbacks.onDelta === 'function') callbacks.onDelta(res.text, res.text);
-                    accumulatedText = res.text;
-                    if (callbacks && typeof callbacks.onComplete === 'function') {
-                        let payload;
-                        if (Gt && typeof Gt.createGroundedAnswer === 'function') {
-                            payload = Gt.createGroundedAnswer(res.text, []);
-                        } else {
-                            payload = { type: 'answer', text: res.text, grounded: false, sources: [] };
-                        }
-                        callbacks.onComplete(payload);
-                    }
-                    return;
-                }
-
-                // Tool call — do grounding, then stream the second call
-                if (res.type === 'tool_call') {
-                    if (!enableGrounding) {
-                        if (callbacks && typeof callbacks.onError === 'function') {
-                            callbacks.onError({ code: 'unsupported_tool', message: ERROR_MESSAGES.unsupported_tool });
-                        }
-                        return;
-                    }
-                    let normalized = null;
-                    if (Gt && typeof Gt.normalizeToolCall === 'function') {
-                        normalized = Gt.normalizeToolCall(res);
-                        if (normalized.type === 'unsupported_tool') {
-                            if (callbacks && typeof callbacks.onError === 'function') {
-                                callbacks.onError({ code: 'unsupported_tool', message: ERROR_MESSAGES.unsupported_tool });
-                            }
-                            return;
-                        }
-                        if (normalized.type === 'tool_error') {
-                            const te = normalized;
-                            if (callbacks && typeof callbacks.onError === 'function') {
-                                callbacks.onError({ code: te.code || 'invalid_query', message: te.message || ERROR_MESSAGES.invalid_response });
-                            }
-                            return;
-                        }
-                    } else {
-                        if (res.tool !== 'web_search') {
-                            if (callbacks && typeof callbacks.onError === 'function') {
-                                callbacks.onError({ code: 'unsupported_tool', message: ERROR_MESSAGES.unsupported_tool });
-                            }
-                            return;
-                        }
-                    }
-                    const toolQuery = normalized ? normalized.arguments.query : (res.arguments && res.arguments.query && res.arguments.query.trim());
-                    try {
-                        const wsRequest = Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number'
-                            ? { query: toolQuery, maxResults: Gt.DEFAULT_MAX_RESULTS }
-                            : { query: toolQuery, maxResults: 5 };
-                        webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
-                            if (_stale() || _isCancelled(myCancellable) || destroyed) return;
-                            if (wErr) {
-                                const n2 = _normalizeWebError(wErr);
-                                if (n2.code === 'cancelled') return;
-                                if (callbacks && typeof callbacks.onError === 'function') {
-                                    callbacks.onError({ code: n2.code, message: n2.message });
-                                }
-                                return;
-                            }
-                            if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources)) {
-                                if (callbacks && typeof callbacks.onError === 'function') {
-                                    callbacks.onError({ code: 'invalid_response', message: ERROR_MESSAGES.invalid_response });
-                                }
-                                return;
-                            }
-                            const sources = wResults.sources;
-                            if (sources.length === 0) {
-                                if (callbacks && typeof callbacks.onError === 'function') {
-                                    callbacks.onError({ code: 'no_results', message: ERROR_MESSAGES.no_results });
-                                }
-                                return;
-                            }
-                            let _groundingContextObj = null;
-                            if (Gt && typeof Gt.createGroundingContext === 'function') {
-                                try { _groundingContextObj = Gt.createGroundingContext(wResults.query || toolQuery, sources); } catch (e) {}
-                            }
-                            let groundingContext = '';
-                            try { groundingContext = promptBuilder.buildGroundingContext(sources); } catch (e) { groundingContext = ''; }
-                            // Second call — streaming this time
-                            try {
-                                provider.streamRequest(
-                                    { query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: sources, tools: [] },
-                                    myCancellable,
-                                    handleStreamEvent
-                                );
-                            } catch (e) {
-                                if (callbacks && typeof callbacks.onError === 'function') {
-                                    callbacks.onError({ code: 'provider_error', message: ERROR_MESSAGES.provider_error });
-                                }
-                            }
-                        });
-                    } catch (e) {
-                        if (callbacks && typeof callbacks.onError === 'function') {
-                            callbacks.onError({ code: 'grounding_error', message: ERROR_MESSAGES.grounding_error });
-                        }
-                    }
-                    return;
-                }
-
-                // Unknown response type
-                if (callbacks && typeof callbacks.onError === 'function') {
-                    callbacks.onError({ code: 'invalid_response', message: ERROR_MESSAGES.invalid_response });
-                }
-            });
+            provider.streamRequest(firstPayload, myCancellable, handleFirstStreamEvent);
         } catch (e) {
             const n = _normalizeProviderError(e);
-            if (callbacks && typeof callbacks.onError === 'function') {
-                callbacks.onError({ code: n.code, message: n.message });
-            }
+            emitError(n.code, n.message);
         }
     }
 

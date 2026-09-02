@@ -221,6 +221,8 @@ function createDefaultStreamingHttpFetch() {
                         const text = decoder.decode(value, { stream: true });
                         if (text) onChunk(text);
                     }
+                    const tail = decoder.decode();
+                    if (tail) onChunk(tail);
                     onDone(null);
                 } catch (e) {
                     onDone(e);
@@ -234,9 +236,12 @@ function createDefaultStreamingHttpFetch() {
 }
 
 // Read chunks from a GIO InputStream (Soup streaming path)
+// ponytail: persistent TextDecoder with {stream:true} prevents UTF-8 split corruption.
 function _readStreamChunks(inputStream, onChunk, onDone) {
     const bufferSize = 4096;
     let finished = false;
+    let decoder = null;
+    try { decoder = new TextDecoder(); } catch (e) { decoder = null; }
     function readNext() {
         if (finished) return;
         try {
@@ -246,12 +251,24 @@ function _readStreamChunks(inputStream, onChunk, onDone) {
                     const bytes = stream.read_bytes_finish(result);
                     if (!bytes || bytes.get_size() === 0) {
                         finished = true;
+                        // flush persistent decoder tail
+                        if (decoder) {
+                            try {
+                                const tail = decoder.decode();
+                                if (tail) onChunk(tail);
+                            } catch (e) {}
+                        }
                         try { inputStream.close(null); } catch (e) {}
                         onDone(null);
                         return;
                     }
                     let text = '';
-                    try { text = new TextDecoder().decode(bytes.get_data()); } catch (e) { text = String(bytes.get_data()); }
+                    const raw = bytes.get_data();
+                    if (decoder) {
+                        try { text = decoder.decode(raw, { stream: true }); } catch (e) { try { text = new TextDecoder().decode(raw); } catch (e2) { text = String(raw); } }
+                    } else {
+                        try { text = new TextDecoder().decode(raw); } catch (e) { text = String(raw); }
+                    }
                     if (text) onChunk(text);
                     readNext();
                 } catch (e) {

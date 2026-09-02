@@ -83,7 +83,6 @@ test('stream C1: late A delta ignored after B starts', () => {
     let callIndex = 0;
     const provider = {
         request(payload, cancellable, cb) {
-            // Non-streaming first call — return answer so searchStream gets it directly
             cb(null, { type: 'answer', text: 'answer for ' + payload.query });
         },
         streamRequest(payload, cancellable, onEvent) {
@@ -98,22 +97,24 @@ test('stream C1: late A delta ignored after B starts', () => {
     };
     const tool = createMockWebSearchTool();
     const engine = createAISearchEngine({ provider, webSearchTool: tool });
-    let got1 = null, got2 = null;
-    // With a direct answer from request(), searchStream delivers via onStart+onDelta+onComplete.
-    // got1 is set immediately from the first searchStream. Stale late events should not
-    // override it. Test by checking got2 is set and got1 was not corrupted.
-    engine.searchStream('first', { onComplete: d => { got1 = d; }, onDelta: () => {} });
-    // got1 is now set from the direct answer path
-    const got1Before = got1 ? got1.text : null;
-    engine.searchStream('second', { onComplete: d => { got2 = d; }, onDelta: () => {} });
-    // Late first stream events — should be ignored
+    let deltas1 = [], deltas2 = [], got1 = null, got2 = null;
+    engine.searchStream('first', { onDelta: (c) => deltas1.push(c), onComplete: d => { got1 = d; } });
+    engine.searchStream('second', { onDelta: (c) => deltas2.push(c), onComplete: d => { got2 = d; } });
+    // Late first stream events — should be ignored (stale gen)
     if (firstStreamHandler) {
         firstStreamHandler({ type: 'start' });
         firstStreamHandler({ type: 'delta', text: 'late A' });
         firstStreamHandler({ type: 'complete', result: { text: 'LATE OVERWRITE', sources: [], grounded: false } });
     }
-    // got1 should not have been overwritten
-    assert.equal(got1.text, got1Before, 'stale A must not overwrite got1');
+    assert.equal(got1, null, 'stale A must not deliver its completion');
+    assert.deepEqual(deltas1, [], 'stale A delta must be ignored');
+    // Second stream should still be able to deliver
+    if (secondStreamHandler) {
+        secondStreamHandler({ type: 'start' });
+        secondStreamHandler({ type: 'delta', text: 'ok' });
+        secondStreamHandler({ type: 'complete', result: { text: 'ok', sources: [], grounded: false } });
+    }
+    assert.equal(got2 && got2.text, 'ok', 'B must still deliver');
 });
 
 test('stream C2: late A error ignored after B starts', () => {
