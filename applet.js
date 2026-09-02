@@ -435,7 +435,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._sortedResults = [];
         this._contextMenu = null;
 
-        // ---- AI Search mode state (Phase AI-2) ----
+        // ---- AI Search mode state (Phase AI-4) ----
+        // Spec AI-4 §4.2: explicit _searchMode = 'normal' | 'ai' (alias to _mode='search'|'ai' for compat)
+        // _mode kept as legacy alias; _searchMode is canonical per spec.
         this._mode = 'search';
         this._aiLoading = false;
         this._aiAnswer = '';
@@ -445,6 +447,17 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.ai_base_url = this.ai_base_url || "";
         this.ai_api_key = this.ai_api_key || "";
         this.ai_model = this.ai_model || "";
+        // ponytail: _searchMode alias via accessor so both stay in sync; ceiling=AI-4 spec, no extra state.
+        try {
+            Object.defineProperty(this, '_searchMode', {
+                get() { return this._mode === 'ai' ? 'ai' : 'normal'; },
+                set(v) { this._mode = (v === 'ai') ? 'ai' : 'search'; },
+                enumerable: true,
+                configurable: true
+            });
+        } catch (e) {
+            this._searchMode = 'normal';
+        }
 
         this._createEngine();
         this._createAiEngine();
