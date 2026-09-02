@@ -12,7 +12,13 @@ function normalizeSource(entry) {
     const snippet = typeof entry.snippet === 'string' ? entry.snippet
         : typeof entry.content === 'string' ? entry.content
         : typeof entry.description === 'string' ? entry.description : '';
-    return { title: title.slice(0, 200), url, snippet: String(snippet).slice(0, 500) };
+    // Extract domain from URL
+    let domain = '';
+    try {
+        const parsed = new URL(url);
+        domain = parsed.hostname || '';
+    } catch (e) {}
+    return { title: title.slice(0, 200), url, domain, snippet: String(snippet).slice(0, 500) };
 }
 
 function formatSources(raw) {
