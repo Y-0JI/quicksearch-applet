@@ -118,24 +118,46 @@ function createDefaultHttpFetch() {
                             catch (e) { msg.set_request_body_from_bytes('application/json', new GLib.Bytes(String(body))); }
                         }
                     } catch (e) {}
-                    const cancellable = opts.cancellable || null;
+                    const appCancellable = opts.cancellable || null;
                     const signal = opts.signal || null;
+                    const resolvedSoup = _resolveSoupCancellable(appCancellable);
+                    const soupCancellable = resolvedSoup.soupCancellable;
+                    const bridgeCleanup = resolvedSoup.bridgeCleanup;
+                    if (Gio && Gio.Cancellable) {
+                        if (_isGioCancellable(appCancellable)) _aiLog('transport: Soup native cancellable (already Gio) request URL:', _sanitizeUrl(url));
+                        else if (appCancellable) { _aiLog('native cancellable created'); _aiLog('transport: Soup request URL:', _sanitizeUrl(url)); }
+                        else _aiLog('native cancellable created (no app cancellable)');
+                    } else {
+                        _aiLog('transport: fallback (no Gio) request URL:', _sanitizeUrl(url));
+                    }
                     // if native AbortSignal provided and Soup not cancellable, wire it
                     let abortHandler = null;
-                    if (signal && !cancellable) {
+                    if (signal && !soupCancellable) {
                         if (signal.aborted) return reject(Object.assign(new Error('AbortError'), { name: 'AbortError' }));
                         abortHandler = () => reject(Object.assign(new Error('AbortError'), { name: 'AbortError' }));
                         try { signal.addEventListener('abort', abortHandler); } catch (e) {}
+                    } else if (signal && soupCancellable) {
+                        try {
+                            if (signal.aborted) { try { soupCancellable.cancel(); } catch (e) {} }
+                            else signal.addEventListener('abort', function onAbort() { try { soupCancellable.cancel(); } catch (e) {} });
+                        } catch (e) {}
                     }
-                    s.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, cancellable, (sess, res) => {
+                    _aiLog('send_async started');
+                    s.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, soupCancellable, (sess, res) => {
+                        try { bridgeCleanup(); } catch (e) {}
                         try { if (signal && abortHandler) try { signal.removeEventListener('abort', abortHandler); } catch (e) {} } catch (e) {}
                         try {
                             const bytes = sess.send_and_read_finish(res);
                             let text = '';
                             try { text = new TextDecoder().decode(bytes.get_data()); } catch (e) { text = String(bytes.get_data()); }
                             const status = typeof msg.get_status === 'function' ? msg.get_status() : (msg.status_code || 200);
+                            _aiLog('HTTP status:', status);
+                            if (text) _aiLog('first stream chunk received');
                             resolve({ status, bodyText: text, body: text });
-                        } catch (e) { reject(e); }
+                        } catch (e) {
+                            _aiLog('stream transport error:', String(e && e.message || e).slice(0, 300));
+                            reject(e);
+                        }
                     });
                 } catch (e) { reject(e); }
             });
@@ -196,6 +218,106 @@ function _sanitizedLog() {
         if (typeof global !== 'undefined' && global && typeof global.log === 'function') global.log(msg);
         else if (typeof console !== 'undefined' && typeof console.log === 'function') console.log(msg);
     } catch (e) {}
+}
+
+function _sanitizeUrl(url) {
+    try {
+        let s = String(url || '');
+        s = _redactKnownKeys(s);
+        s = s.replace(/Bearer\s+[A-Za-z0-9._\-~+\/]+=*/gi, 'Bearer [REDACTED]');
+        return s;
+    } catch (e) { return String(url || ''); }
+}
+
+function _aiLog() {
+    try {
+        const args = Array.prototype.slice.call(arguments);
+        const line = args.map(a => {
+            let s = String(a);
+            s = _redactKnownKeys(s);
+            s = s.replace(/Bearer\s+[A-Za-z0-9._\-~+\/]+=*/gi, 'Bearer [REDACTED]');
+            s = s.replace(/api[_-]?key\s*[:=]\s*\S+/gi, 'api_key=[REDACTED]');
+            s = _redactKnownKeys(s);
+            return s;
+        }).join(' ');
+        const msg = '[QuickSearch AI] ' + line;
+        if (typeof global !== 'undefined' && global && typeof global.log === 'function') global.log(msg);
+        else if (typeof console !== 'undefined' && typeof console.log === 'function') console.log(msg);
+    } catch (e) {}
+}
+
+function _isGioCancellable(c) {
+    if (!c || !Gio || !Gio.Cancellable) return false;
+    try {
+        // Real Gio.Cancellable has connect/disconnect and instanceof
+        if (typeof c.connect === 'function' && typeof c.cancel === 'function' && typeof c.is_cancelled === 'function') {
+            // Stronger check: instanceof when possible, else heuristic (GIO objects have specific behavior)
+            try { if (c instanceof Gio.Cancellable) return true; } catch (e) {}
+            // Heuristic fallback: GIO cancellable has 'cancelled' signal, plain JS doesn't have disconnect with correct semantics
+            // but we treat any object with connect+disconnect as GIO-like to avoid false bridging
+            if (typeof c.disconnect === 'function') return true;
+        }
+    } catch (e) {}
+    return false;
+}
+
+function _newNativeCancellable() {
+    if (Gio && Gio.Cancellable) {
+        try { return new Gio.Cancellable(); } catch (e) { return null; }
+    }
+    return null;
+}
+
+function _bridgeAppToNative(appCancellable, nativeCancellable) {
+    // Returns { cleanup, native } — bridges plain JS cancellable -> Gio.Cancellable
+    // so that app cancel also cancels Soup. No-op if app is already Gio.
+    if (!appCancellable || !nativeCancellable) return { cleanup: function() {}, native: nativeCancellable };
+    try { if (typeof appCancellable.is_cancelled === 'function' && appCancellable.is_cancelled()) { try { nativeCancellable.cancel(); } catch (e) {} } } catch (e) {}
+    if (_isGioCancellable(appCancellable)) return { cleanup: function() {}, native: appCancellable };
+    // For GObject-style cancellable with 'cancelled' signal, connect.
+    if (typeof appCancellable.connect === 'function') {
+        try {
+            const id = appCancellable.connect('cancelled', function() { try { nativeCancellable.cancel(); } catch (e) {} });
+            return { cleanup: function() { try { if (typeof appCancellable.disconnect === 'function') appCancellable.disconnect(id); } catch (e) {} }, native: nativeCancellable };
+        } catch (e) {}
+    }
+    if (typeof appCancellable.cancel === 'function') {
+        try {
+            const orig = appCancellable.cancel.bind(appCancellable);
+            const originalCancel = orig;
+            // Chain: patched cancel calls original (which may be provider's patched version) then native
+            appCancellable.cancel = function bridgedCancel() {
+                let r;
+                try { r = originalCancel(); } catch (e) {}
+                try { nativeCancellable.cancel(); } catch (e2) {}
+                return r;
+            };
+            return {
+                cleanup: function() { try { appCancellable.cancel = originalCancel; } catch (e) {} },
+                native: nativeCancellable
+            };
+        } catch (e) {}
+    }
+    return { cleanup: function() {}, native: nativeCancellable };
+}
+
+function _resolveSoupCancellable(appCancellable) {
+    // Provider-side helper: decide which cancellable to pass to Soup transport.
+    // Returns { soupCancellable, bridgeCleanup }. soupCancellable is always a Gio.Cancellable when Gio available,
+    // otherwise the original app cancellable (for test/fetch transport).
+    if (!Gio || !Gio.Cancellable) return { soupCancellable: appCancellable || null, bridgeCleanup: function() {} };
+    if (_isGioCancellable(appCancellable)) {
+        return { soupCancellable: appCancellable, bridgeCleanup: function() {} };
+    }
+    if (appCancellable) {
+        const native = _newNativeCancellable();
+        if (!native) return { soupCancellable: appCancellable, bridgeCleanup: function() {} };
+        const bridged = _bridgeAppToNative(appCancellable, native);
+        return { soupCancellable: bridged.native, bridgeCleanup: bridged.cleanup };
+    }
+    // No app cancellable: create standalone native so Soup can still be cancelled via destroy/timeout/abort
+    const standalone = _newNativeCancellable();
+    return { soupCancellable: standalone, bridgeCleanup: function() {} };
 }
 
 function _collectStreamText(stream, cb) {
@@ -261,16 +383,48 @@ function createDefaultStreamingHttpFetch() {
                         catch (e) { msg.set_request_body_from_bytes('application/json', new GLib.Bytes(String(body))); }
                     }
                 } catch (e) {}
-                const cancellable = opts.cancellable || null;
-                _sanitizedLog('stream start', url);
+                const appCancellable = opts.cancellable || null;
+                const resolved = _resolveSoupCancellable(appCancellable);
+                const soupCancellable = resolved.soupCancellable;
+                const bridgeCleanup = resolved.bridgeCleanup;
+                if (Gio && Gio.Cancellable) {
+                    _aiLog('transport: Soup');
+                    _aiLog('request URL:', _sanitizeUrl(url));
+                    if (_isGioCancellable(appCancellable)) _aiLog('native cancellable (already Gio)');
+                    else if (appCancellable) _aiLog('native cancellable created');
+                    else _aiLog('native cancellable created (standalone)');
+                } else {
+                    _aiLog('transport: fallback (no Gio)');
+                    _aiLog('request URL:', _sanitizeUrl(url));
+                }
+                _aiLog('stream request start');
                 // Resolve async send method compat: libsoup 3 uses send_async/send_finish, older also send_async
                 let sendFn = null;
                 let sendKind = '';
                 if (typeof s.send_async === 'function') { sendFn = s.send_async.bind(s); sendKind = 'send_async'; }
                 else if (typeof s.sendAsync === 'function') { sendFn = s.sendAsync.bind(s); sendKind = 'sendAsync'; }
                 else if (typeof s.send === 'function') { sendFn = s.send.bind(s); sendKind = 'send'; }
+                let firstChunkLogged = false;
+                function wrappedOnChunk(text) {
+                    try {
+                        if (!firstChunkLogged && text) {
+                            _aiLog('first stream chunk received');
+                            firstChunkLogged = true;
+                        }
+                    } catch (e) {}
+                    try { onChunk(text); } catch (e) {}
+                }
+                function wrappedOnDone(err) {
+                    try {
+                        if (!err) _aiLog('stream completed');
+                        else _aiLog('stream transport error:', String(err && err.message || err).slice(0, 300));
+                    } catch (e) {}
+                    try { bridgeCleanup(); } catch (e) {}
+                    try { onDone(err); } catch (e) {}
+                }
                 function handleStream(stream) {
                     const status = _getSoupStatus(msg);
+                    _aiLog('HTTP status:', status);
                     _sanitizedLog('stream response status', status, 'via', sendKind || 'fallback');
                     if (status !== 0 && (status < 200 || status >= 300)) {
                         // Do NOT feed error body into SSE parser — collect, parse, map
@@ -278,28 +432,30 @@ function createDefaultStreamingHttpFetch() {
                             const message = _parseErrorMessage(text, status);
                             const code = httpStatusToCode(status);
                             _sanitizedLog('stream http error', status, code, message.slice(0, 200));
+                            _aiLog('stream transport error:', message.slice(0, 300));
                             const err = new Error(message);
                             err.code = code;
                             err.status = status;
-                            onDone(err);
+                            wrappedOnDone(err);
                         });
                         return;
                     }
-                    _readStreamChunks(stream, onChunk, onDone);
+                    _readStreamChunks(stream, wrappedOnChunk, wrappedOnDone);
                 }
                 function handleSendError(e) {
                     const status = _getSoupStatus(msg);
                     _sanitizedLog('stream send error', String(e && e.message || e).slice(0, 300), 'status', status);
+                    _aiLog('stream transport error:', String(e && e.message || e).slice(0, 300));
                     if (status !== 0 && (status < 200 || status >= 300)) {
                         const code = httpStatusToCode(status);
                         const err = new Error(_parseErrorMessage(e && e.message || '', status));
                         err.code = code;
                         err.status = status;
-                        onDone(err);
+                        wrappedOnDone(err);
                         return;
                     }
                     if (status >= 200 && status < 300) {
-                        _fallbackFullRead(s, msg, onChunk, onDone);
+                        _fallbackFullRead(s, msg, wrappedOnChunk, wrappedOnDone);
                         return;
                     }
                     if (status !== 0) {
@@ -307,31 +463,33 @@ function createDefaultStreamingHttpFetch() {
                         const err = new Error(_parseErrorMessage('', status));
                         err.code = code;
                         err.status = status;
-                        onDone(err);
+                        wrappedOnDone(err);
                         return;
                     }
-                    onDone(e);
+                    wrappedOnDone(e);
                 }
                 if (sendFn) {
                     try {
                         // send_async signature: (msg, priority, cancellable, callback) vs send: (msg, cancellable, callback)
                         if (sendKind === 'send_async' || sendKind === 'sendAsync') {
-                            sendFn(msg, GLib.PRIORITY_DEFAULT, cancellable, (sess, res) => {
+                            _aiLog('send_async started');
+                            sendFn(msg, GLib.PRIORITY_DEFAULT, soupCancellable, (sess, res) => {
                                 try {
                                     const finish = sess.send_finish || sess.sendFinish || sess.send_finish_async;
                                     const inputStream = (typeof sess.send_finish === 'function') ? sess.send_finish(res)
                                         : (typeof sess.sendFinish === 'function') ? sess.sendFinish(res)
                                         : null;
-                                    if (!inputStream) { onDone(new Error('no input stream')); return; }
+                                    if (!inputStream) { wrappedOnDone(new Error('no input stream')); return; }
                                     handleStream(inputStream);
                                 } catch (e) { handleSendError(e); }
                             });
                         } else {
                             // s.send(msg, cancellable, cb) — older GI binding
-                            s.send(msg, cancellable, (sess, res) => {
+                            _aiLog('send_async started');
+                            s.send(msg, soupCancellable, (sess, res) => {
                                 try {
                                     const inputStream = sess.send_finish(res);
-                                    if (!inputStream) { onDone(new Error('no input stream')); return; }
+                                    if (!inputStream) { wrappedOnDone(new Error('no input stream')); return; }
                                     handleStream(inputStream);
                                 } catch (e) { handleSendError(e); }
                             });
@@ -339,7 +497,8 @@ function createDefaultStreamingHttpFetch() {
                     } catch (e) { handleSendError(e); }
                 } else {
                     // Fallback: full read then deliver as one chunk (will validate status)
-                    _fallbackFullRead(s, msg, onChunk, onDone);
+                    _aiLog('send_async started (fallback full read)');
+                    _fallbackFullRead(s, msg, wrappedOnChunk, wrappedOnDone);
                 }
             } catch (e) { onDone(e); }
         };
@@ -554,6 +713,23 @@ function createNineRouterProvider(opts) {
             'Authorization': 'Bearer ' + apiKey
         };
 
+        // Gio/Soup bridge: ensure Soup receives a real Gio.Cancellable, not plain JS object
+        const resolvedReq = _resolveSoupCancellable(cancellable);
+        const soupCancellable = resolvedReq.soupCancellable;
+        const bridgeCleanupReq = resolvedReq.bridgeCleanup;
+        if (Gio && Gio.Cancellable) {
+            _aiLog('transport: Soup');
+            _aiLog('request URL:', _sanitizeUrl(url));
+            if (_isGioCancellable(cancellable)) _aiLog('native cancellable (already Gio)');
+            else if (cancellable) _aiLog('native cancellable created');
+            else _aiLog('native cancellable created (standalone)');
+        } else {
+            _aiLog('transport: fallback (no Gio)');
+            _aiLog('request URL:', _sanitizeUrl(url));
+        }
+        _aiLog('stream request start');
+        _aiLog('send_async started');
+
         // per-request state for one-shot completion
         const state = {
             settled: false,
@@ -561,6 +737,8 @@ function createNineRouterProvider(opts) {
             cancelHandlerId: null,
             originalCancel: null,
             cancellable: cancellable,
+            soupCancellable: soupCancellable,
+            bridgeCleanup: bridgeCleanupReq,
             abortController: null,
             cb: cb,
             complete: null
@@ -583,17 +761,28 @@ function createNineRouterProvider(opts) {
                 } catch (e) {}
                 state.cancelHandlerId = null;
             }
-            // restore patched cancel
+            // restore patched cancel (provider-level patch)
             if (state.originalCancel && state.cancellable) {
                 try { state.cancellable.cancel = state.originalCancel; } catch (e) {}
                 state.originalCancel = null;
             }
+            // restore bridge patch (transport-level plain JS -> Gio)
+            try { if (state.bridgeCleanup) state.bridgeCleanup(); } catch (e) {}
             activeRequests.delete(state);
         }
 
         function complete(err, result) {
             if (state.settled) return;
             state.settled = true;
+            // Cancel native Soup request if still pending (timeout/cancel/error)
+            if (err && state.soupCancellable) {
+                try {
+                    const code = err.code;
+                    if (code === 'cancelled' || code === 'timeout') {
+                        if (typeof state.soupCancellable.cancel === 'function') state.soupCancellable.cancel();
+                    }
+                } catch (e) {}
+            }
             cleanup();
             // abort fetch if still pending
             if (state.abortController) {
@@ -601,44 +790,53 @@ function createNineRouterProvider(opts) {
             }
             if (err) {
                 sanitizeError(err);
+                if (err.code !== 'cancelled') {
+                    try { _aiLog('stream transport error:', String(err.message || err.code).slice(0, 300)); } catch (e) {}
+                }
                 // never expose headers/body containing secret — err is generic
                 if (state.cb) return state.cb(err);
                 return;
             }
+            try { _aiLog('HTTP status:', 200); } catch (e) {}
             if (state.cb) return state.cb(null, result);
         }
         state.complete = complete;
 
         const cancelledError = Object.assign(new Error('cancelled'), { code: 'cancelled' });
 
-        // register immediate cancellation handler
+        // register immediate cancellation handler — also bridges to native Soup cancellable
         if (cancellable) {
             // GIO Cancellable path: connect signal
             if (typeof cancellable.connect === 'function') {
                 try {
                     state.cancelHandlerId = cancellable.connect('cancelled', () => {
+                        try { if (state.soupCancellable && state.soupCancellable !== cancellable && typeof state.soupCancellable.cancel === 'function') state.soupCancellable.cancel(); } catch (e) {}
                         complete(cancelledError);
                     });
                 } catch (e) {}
             } else if (typeof cancellable.cancel === 'function') {
-                // fake cancellable: patch cancel() to trigger immediate complete
+                // plain JS cancellable: patch cancel() to trigger immediate complete + native cancel
                 try {
                     state.originalCancel = cancellable.cancel.bind(cancellable);
                     const orig = state.originalCancel;
+                    const nativeToCancel = state.soupCancellable;
                     cancellable.cancel = function patchedCancel() {
                         try { orig(); } catch (e) {}
+                        try { if (nativeToCancel && nativeToCancel !== cancellable && typeof nativeToCancel.cancel === 'function') nativeToCancel.cancel(); } catch (e) {}
                         complete(cancelledError);
                     };
                 } catch (e) {}
             }
             // also check already-cancelled race after registration
             if (_isCancelled(cancellable)) {
+                try { if (state.soupCancellable && state.soupCancellable !== cancellable && typeof state.soupCancellable.cancel === 'function') state.soupCancellable.cancel(); } catch (e) {}
                 return complete(cancelledError);
             }
         }
 
         state.timeoutId = _scheduleTimeout(timeoutMs, () => {
             if (state.settled) return;
+            try { if (state.soupCancellable && state.soupCancellable !== state.cancellable && typeof state.soupCancellable.cancel === 'function') state.soupCancellable.cancel(); } catch (e) {}
             const e = new Error('AI request timeout');
             e.code = 'timeout';
             complete(e);
@@ -646,7 +844,7 @@ function createNineRouterProvider(opts) {
 
         let fetchPromise;
         try {
-            const fetchOpts = { method: 'POST', headers, body, cancellable: cancellable, timeoutMs };
+            const fetchOpts = { method: 'POST', headers, body, cancellable: soupCancellable, timeoutMs };
             // provide AbortSignal to fetch fallback so it can be aborted
             if (state.abortController) fetchOpts.signal = state.abortController.signal;
             // also pass abortController itself for transports that want it
@@ -789,6 +987,22 @@ function createNineRouterProvider(opts) {
             'Authorization': 'Bearer ' + apiKey
         };
 
+        // Gio/Soup bridge: ensure Soup receives a real Gio.Cancellable, not plain JS object
+        const resolvedStream = _resolveSoupCancellable(cancellable);
+        const soupCancellable = resolvedStream.soupCancellable;
+        const bridgeCleanupOuter = resolvedStream.bridgeCleanup;
+        if (Gio && Gio.Cancellable) {
+            _aiLog('transport: Soup');
+            _aiLog('request URL:', _sanitizeUrl(url));
+            if (_isGioCancellable(cancellable)) _aiLog('native cancellable (already Gio)');
+            else if (cancellable) _aiLog('native cancellable created');
+            else _aiLog('native cancellable created (standalone)');
+        } else {
+            _aiLog('transport: fallback (no Gio)');
+            _aiLog('request URL:', _sanitizeUrl(url));
+        }
+        _aiLog('stream request start');
+
         // per-request state
         const state = {
             settled: false,
@@ -796,6 +1010,8 @@ function createNineRouterProvider(opts) {
             cancelHandlerId: null,
             originalCancel: null,
             cancellable: cancellable,
+            soupCancellable: soupCancellable,
+            bridgeCleanup: bridgeCleanupOuter,
             abortController: null,
             onEvent: onEvent,
             complete: null
@@ -831,12 +1047,21 @@ function createNineRouterProvider(opts) {
                 try { state.cancellable.cancel = state.originalCancel; } catch (e) {}
                 state.originalCancel = null;
             }
+            try { if (state.bridgeCleanup) state.bridgeCleanup(); } catch (e) {}
             activeRequests.delete(state);
         }
 
         function settle(err) {
             if (state.settled) return;
             state.settled = true;
+            if (err && state.soupCancellable) {
+                try {
+                    const code = err.code;
+                    if (code === 'cancelled' || code === 'timeout') {
+                        if (typeof state.soupCancellable.cancel === 'function') state.soupCancellable.cancel();
+                    }
+                } catch (e) {}
+            }
             cleanup();
             if (state.abortController) {
                 try { state.abortController.abort(); } catch (e) {}
@@ -845,19 +1070,23 @@ function createNineRouterProvider(opts) {
                 try { sanitizeError(err); } catch (e) {}
                 const code = err.code || 'provider_error';
                 if (code !== 'cancelled') {
+                    try { _aiLog('stream transport error:', String(err.message || code).slice(0, 300)); } catch (e) {}
                     state.onEvent({ type: 'error', error: { code, message: err.message || code } });
                 }
+            } else if (!err) {
+                try { _aiLog('stream completed'); } catch (e) {}
             }
         }
         state.complete = settle;
 
         const cancelledError = Object.assign(new Error('cancelled'), { code: 'cancelled' });
 
-        // register cancellation handler
+        // register cancellation handler — also bridges to native Soup cancellable
         if (cancellable) {
             if (typeof cancellable.connect === 'function') {
                 try {
                     state.cancelHandlerId = cancellable.connect('cancelled', () => {
+                        try { if (state.soupCancellable && state.soupCancellable !== cancellable && typeof state.soupCancellable.cancel === 'function') state.soupCancellable.cancel(); } catch (e) {}
                         settle(cancelledError);
                     });
                 } catch (e) {}
@@ -865,19 +1094,23 @@ function createNineRouterProvider(opts) {
                 try {
                     state.originalCancel = cancellable.cancel.bind(cancellable);
                     const orig = state.originalCancel;
+                    const nativeToCancel = state.soupCancellable;
                     cancellable.cancel = function patchedCancel() {
                         try { orig(); } catch (e) {}
+                        try { if (nativeToCancel && typeof nativeToCancel.cancel === 'function') nativeToCancel.cancel(); } catch (e) {}
                         settle(cancelledError);
                     };
                 } catch (e) {}
             }
             if (_isCancelled(cancellable)) {
+                try { if (state.soupCancellable && state.soupCancellable !== cancellable && typeof state.soupCancellable.cancel === 'function') state.soupCancellable.cancel(); } catch (e) {}
                 return settle(cancelledError);
             }
         }
 
         state.timeoutId = _scheduleTimeout(timeoutMs, () => {
             if (state.settled) return;
+            try { if (state.soupCancellable && typeof state.soupCancellable.cancel === 'function') state.soupCancellable.cancel(); } catch (e) {}
             const e = new Error('AI request timeout');
             e.code = 'timeout';
             settle(e);
@@ -890,11 +1123,12 @@ function createNineRouterProvider(opts) {
             try { state.abortController.signal.addEventListener('abort', fetchAbortHandler); } catch (e) {}
         }
 
+        _aiLog('send_async started');
         httpStreamFetch(url, {
             method: 'POST',
             headers: headers,
             body: body,
-            cancellable: cancellable,
+            cancellable: soupCancellable,
             signal: state.abortController ? state.abortController.signal : undefined
         },
         // onChunk: feed raw SSE text to parser
