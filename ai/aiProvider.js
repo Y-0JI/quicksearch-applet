@@ -10,7 +10,7 @@ function normalizeResult(raw) {
     if (raw.type === 'tool_call') {
         if (raw.tool !== ALLOWED_TOOL) return { type: 'error', code: 'unsupported_tool', message: 'Unsupported AI tool request' };
         const q = raw.arguments && raw.arguments.query;
-        if (typeof q !== 'string' || !q.trim()) return { type: 'error', code: 'invalid_response', message: 'Invalid AI response' };
+        if (typeof q !== 'string' || !q.trim()) return { type: 'error', code: 'invalid_query', message: 'Invalid search query' };
         return { type: 'tool_call', tool: ALLOWED_TOOL, arguments: { query: q.trim() } };
     }
     return { type: 'error', code: 'invalid_response', message: 'Invalid AI response' };

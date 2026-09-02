@@ -9,6 +9,12 @@
 // Legacy must NOT be used for new AI-3B orchestration and must not gain new features.
 // Contracts delegated to groundingTypes. No UI, no Cinnamon, no scraping.
 // Backend injection: backend.search(query, maxResults, cancellable, cb) preferred; 3-arg legacy tolerated.
+// Fail-closed scope: canonical AI-3+ production path (object request → tool_result/tool_error) is fail-closed
+// when groundingTypes is unavailable (returns tool_error invalid_response). Legacy string-query path in
+// createMockWebSearchTool remains available for AI-0/AI-2 test compatibility and is intentionally not fail-closed.
+// Canonical callback errors: pure {type:'tool_error',...} → Gt.toCallbackError() → Error instance is the
+// single canonical callback boundary. Legacy fallbacks construct plain Error directly and never enrich the
+// canonical AI-3 path.
 
 const Gt = (() => {
     try { return require('./groundingTypes.js'); } catch (e) { return null; }

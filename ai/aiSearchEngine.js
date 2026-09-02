@@ -1,9 +1,6 @@
 // ai/aiSearchEngine.js — orchestrator. Owns generation/cancellation, normalizes errors.
 // Isolated from searchEngine.js. Only tool: web_search.
-// AI-3A: canonical contracts live in groundingTypes.js. Engine's dormant grounding path
-// is legacy string-based for AI-0/AI-2 compat; AI-3B MUST migrate to canonical
-//   webSearchTool.search({ query, maxResults }, cancellable, cb) -> tool_result
-// and canonical grounding_context / grounded answer boundaries. See TODOs below.
+// AI-3A: canonical contracts live in groundingTypes.js.
 const promptBuilderMod = require('./promptBuilder.js');
 const sourceFormatterMod = require('./sourceFormatter.js');
 let Gt = null;
@@ -14,6 +11,7 @@ const ERROR_MESSAGES = {
     web_search_unavailable: 'Web search unavailable',
     grounding_error: 'Web search unavailable',
     unsupported_tool: 'Unsupported AI tool request',
+    invalid_query: 'Invalid search query',
     invalid_response: 'Invalid AI response',
     timeout: 'AI request timeout',
     auth_error: 'AI authentication failed',
@@ -37,6 +35,7 @@ function _makeCancellable(external) {
 
 function _normalizeProviderError(err) {
     if (!err) return { code: 'provider_error', message: ERROR_MESSAGES.provider_error };
+    if (err.code === 'invalid_query') return { code: 'invalid_query', message: err.message || ERROR_MESSAGES.invalid_query };
     if (err.code === 'unsupported_tool') return { code: 'unsupported_tool', message: ERROR_MESSAGES.unsupported_tool };
     if (err.code === 'invalid_response') return { code: 'invalid_response', message: ERROR_MESSAGES.invalid_response };
     if (err.code === 'timeout') return { code: 'timeout', message: ERROR_MESSAGES.timeout };
@@ -50,9 +49,7 @@ function _normalizeProviderError(err) {
 function _normalizeWebError(err) {
     if (!err) return { code: 'web_search_unavailable', message: ERROR_MESSAGES.web_search_unavailable };
     // AI-3A keeps legacy web_search_unavailable for backward compat with existing tests/engine callers.
-    // AI-3B TODO: when engine migrates to canonical WebSearchTool (tool_error codes), propagate
-    // Gt.ERROR_CODES (invalid_query/backend_unavailable/request_failed/cancelled/invalid_response)
-    // via fromCallbackError/normalize and map to user messages, instead of always web_search_unavailable.
+    // AI-3B TODO: propagate Gt.ERROR_CODES via fromCallbackError when canonical tool_error is used.
     return { code: 'web_search_unavailable', message: ERROR_MESSAGES.web_search_unavailable };
 }
 
@@ -66,7 +63,6 @@ function createAISearchEngine(deps) {
 
     if (!provider || typeof provider.request !== 'function') throw new Error('AISearchEngine: provider.request required');
     if (!webSearchTool || typeof webSearchTool.search !== 'function') {
-        // AI-2: no grounding yet — stub keeps basic answer path working
         webSearchTool = {
             search: (q, c, cb) => {
                 const e = new Error('Web search unavailable');
@@ -87,11 +83,14 @@ function createAISearchEngine(deps) {
 
     function _deliverAnswer(myGen, cancellable, callbacks, text, sources) {
         if (_stale(myGen) || _isCancelled(cancellable) || destroyed) return;
-        const normalizedSources = sourceFormatter.formatSources(sources || []);
-        // Canonical grounded answer shape for AI-3A: { type:'answer', text, grounded, sources }
-        // Keep {text, sources} for backward compat with AI-2 callers; add type+grounded for AI-3+.
-        const grounded = normalizedSources.length > 0;
-        const payload = { type: 'answer', text, grounded, sources: normalizedSources };
+        let payload;
+        if (Gt && typeof Gt.createGroundedAnswer === 'function') {
+            payload = Gt.createGroundedAnswer(text, sources || []);
+        } else {
+            const normalizedSources = sourceFormatter.formatSources(sources || []);
+            const grounded = normalizedSources.length > 0;
+            payload = { type: 'answer', text, grounded, sources: normalizedSources };
+        }
         if (typeof callbacks === 'function') return callbacks(null, payload);
         if (callbacks && typeof callbacks.onAnswer === 'function') return callbacks.onAnswer(payload);
         if (callbacks && typeof callbacks.onDone === 'function') return callbacks.onDone(null, payload);
@@ -121,10 +120,8 @@ function createAISearchEngine(deps) {
             }
         }
         if (destroyed) return;
-        // invalidate previous request
         gen++;
         const myGen = gen;
-        // cancel previous cancellable
         if (currentCancellable) {
             try { if (typeof currentCancellable.cancel === 'function') currentCancellable.cancel(); } catch (e) {}
         }
@@ -140,8 +137,6 @@ function createAISearchEngine(deps) {
         let systemPrompt = '';
         try { systemPrompt = promptBuilder.buildSystemPrompt(); } catch (e) { systemPrompt = ''; }
 
-        // first provider call — pass cancellable if provider supports it (§12)
-        // AI-2: basic answer mode does not advertise web_search tool; grounding enabled only when explicitly requested (AI-3)
         try {
             const firstPayload = enableGrounding ? { query: q, systemPrompt, tools: ['web_search'] } : { query: q, systemPrompt };
             provider.request(firstPayload, myCancellable, (err, res) => {
@@ -161,19 +156,37 @@ function createAISearchEngine(deps) {
                     if (!enableGrounding) {
                         return _deliverError(myGen, myCancellable, callbacks, 'unsupported_tool', ERROR_MESSAGES.unsupported_tool);
                     }
-                    if (res.tool !== 'web_search') {
-                        return _deliverError(myGen, myCancellable, callbacks, 'unsupported_tool', ERROR_MESSAGES.unsupported_tool);
+                    // Canonical tool-call boundary. Single source of truth via Gt.normalizeToolCall().
+                    let normalized = null;
+                    if (Gt && typeof Gt.normalizeToolCall === 'function') {
+                        normalized = Gt.normalizeToolCall(res);
+                        if (normalized.type === 'unsupported_tool') {
+                            return _deliverError(myGen, myCancellable, callbacks, 'unsupported_tool', ERROR_MESSAGES.unsupported_tool);
+                        }
+                        if (normalized.type === 'tool_error') {
+                            const te = normalized;
+                            const msg = te.message || ERROR_MESSAGES.invalid_response;
+                            const code = te.code || 'invalid_query';
+                            return _deliverError(myGen, myCancellable, callbacks, code, msg);
+                        }
+                        // valid web_search tool_call at this point; extract canonical query
+                    } else {
+                        // Fallback when Gt unavailable (tests / legacy) — preserve old manual path
+                        if (res.tool !== 'web_search') {
+                            return _deliverError(myGen, myCancellable, callbacks, 'unsupported_tool', ERROR_MESSAGES.unsupported_tool);
+                        }
+                        const tq = res.arguments && res.arguments.query;
+                        if (typeof tq !== 'string' || !tq.trim()) {
+                            return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
+                        }
                     }
-                    const toolQuery = res.arguments && res.arguments.query;
-                    if (typeof toolQuery !== 'string' || !toolQuery.trim()) {
-                        return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
-                    }
-                    // web search
+
+                    const toolQuery = normalized ? normalized.arguments.query : (res.arguments && res.arguments.query).trim();
+
                     // AI-3A: legacy string overload for backward compat with AI-0/AI-2 tests.
                     // AI-3B MUST migrate to canonical:
-                    //   webSearchTool.search({ query: toolQuery, maxResults: DEFAULT_MAX_RESULTS }, myCancellable, cb)
-                    //   and expect cb(null, tool_result) where tool_result = { type:'tool_result', tool:'web_search', query, sources }
-                    // Raw Array assumption (Array.isArray(wResults)) is deprecated and will be removed in AI-3B.
+                    //   webSearchTool.search({ query: toolQuery, maxResults: DEFAULT_MAX_RESULTS }, ...)
+                    //   and expect tool_result. Forward-compat already handles both.
                     try {
                         webSearchTool.search(toolQuery, myCancellable, (wErr, wResults) => {
                             if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
@@ -181,9 +194,6 @@ function createAISearchEngine(deps) {
                                 const n2 = _normalizeWebError(wErr);
                                 return _deliverError(myGen, myCancellable, callbacks, n2.code, n2.message);
                             }
-                            // Forward-compat: accept both canonical tool_result and legacy raw Array.
-                            // Canonical: { type:'tool_result', tool:'web_search', query, sources }
-                            // Legacy: Array<{title,url,snippet}>
                             let sources;
                             let _groundingContextObj = null;
                             if (wResults && typeof wResults === 'object' && !Array.isArray(wResults) && wResults.type === 'tool_result' && Array.isArray(wResults.sources)) {
@@ -197,13 +207,8 @@ function createAISearchEngine(deps) {
                                     try { _groundingContextObj = Gt.createGroundingContext(toolQuery, sources); } catch (e) {}
                                 }
                             }
-                            // Canonical grounding_context object (_groundingContextObj) is the semantic boundary.
-                            // Current provider payload translates it to string via promptBuilder for backward compat.
-                            // AI-3B: provider adapter should consume grounding_context object before string translation;
-                            // do not bypass canonical object with raw backend results.
                             let groundingContext = '';
                             try { groundingContext = promptBuilder.buildGroundingContext(sources); } catch (e) { groundingContext = ''; }
-                            // second provider call with grounding
                             try {
                                 provider.request({ query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: sources, tools: [] }, myCancellable, (err2, res2) => {
                                     if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;

@@ -60,6 +60,7 @@ function normalizeSource(entry, id) {
 // - lowercase protocol + hostname
 // - normalize empty path "/" consistently (https://example.com vs https://example.com/ are duplicates)
 // Does NOT strip querystring, fragment, or tracking params.
+// Preserves path case ( /path vs /PATH are distinct) and query distinctness.
 function normalizeDedupeKey(url) {
     const raw = String(url || '').trim();
     try {
@@ -67,13 +68,10 @@ function normalizeDedupeKey(url) {
         const protocol = u.protocol.toLowerCase(); // "https:" / "http:"
         const hostname = u.hostname.toLowerCase();
         const port = u.port ? ':' + u.port : '';
-        // pathname: treat "" and "/" as same; keep other paths as-is
         let pathname = u.pathname || '/';
         if (pathname === '/') pathname = '/';
-        // search + hash preserved verbatim
         return protocol + '//' + hostname + port + pathname + u.search + u.hash;
     } catch (e) {
-        // fallback: trimmed lowercased
         return raw.toLowerCase();
     }
 }
@@ -90,6 +88,8 @@ function isCanonicalSource(entry) {
     return true;
 }
 
+// Inspection helper — separates already-canonical sources, does not normalize raw.
+// For enforcement/normalization use canonicalizeSources() / normalizeSources() / builders.
 function validateSources(sources) {
     if (!Array.isArray(sources)) return { valid: [], invalid: [] };
     const valid = [];
@@ -118,35 +118,32 @@ function normalizeSources(raw, maxResults) {
     return tmp.map((s, i) => ({ id: `web-${i + 1}`, title: s.title, url: s.url, snippet: s.snippet }));
 }
 
+// Internal single canonical path — normalize raw, validate, dedupe, re-id.
+// Used by createToolResult / createGroundingContext / createGroundedAnswer so they don't drift.
+function canonicalizeSources(sources) {
+    if (!Array.isArray(sources)) return [];
+    const filtered = [];
+    for (const s of sources) {
+        if (isCanonicalSource(s)) filtered.push(s);
+        else {
+            const n = normalizeSource(s);
+            if (n) filtered.push({ id: `web-${filtered.length + 1}`, title: n.title, url: n.url, snippet: n.snippet });
+        }
+    }
+    const seen = new Set();
+    const deduped = [];
+    for (const s of filtered) {
+        const key = normalizeDedupeKey(s.url);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        deduped.push(s);
+    }
+    return deduped.map((s, i) => ({ id: `web-${i + 1}`, title: s.title, url: s.url, snippet: s.snippet }));
+}
+
 function createToolResult(query, sources) {
     const q = typeof query === 'string' ? query.trim() : String(query || '').trim();
-    // Defensive: sources MUST be canonical. Filter invalid silently so canonical object never carries arbitrary shape.
-    // Caller should use normalizeSources() or ensure canonical via isCanonicalSource(); builder enforces defensively.
-    let src = [];
-    if (Array.isArray(sources)) {
-        const filtered = [];
-        for (const s of sources) {
-            if (isCanonicalSource(s)) filtered.push(s);
-            else {
-                // also accept raw source that can be normalized (e.g. missing id but valid url/title)
-                const n = normalizeSource(s);
-                if (n) {
-                    // assign provisional id, will be re-idded? keep as-is with new id
-                    filtered.push({ id: `web-${filtered.length + 1}`, title: n.title, url: n.url, snippet: n.snippet });
-                }
-            }
-        }
-        // Re-id to ensure sequential web-N ids and dedupe by normalized URL
-        const deduped = [];
-        const seen = new Set();
-        for (const s of filtered) {
-            const key = normalizeDedupeKey(s.url);
-            if (seen.has(key)) continue;
-            seen.add(key);
-            deduped.push(s);
-        }
-        src = deduped.map((s, i) => ({ id: `web-${i + 1}`, title: s.title, url: s.url, snippet: s.snippet }));
-    }
+    const src = canonicalizeSources(sources);
     return { type: 'tool_result', tool: TOOL_NAME, query: q, sources: src };
 }
 
@@ -182,51 +179,13 @@ function fromCallbackError(err) {
 
 function createGroundingContext(query, sources) {
     const q = typeof query === 'string' ? query.trim() : String(query || '').trim();
-    let src = [];
-    if (Array.isArray(sources)) {
-        const filtered = [];
-        for (const s of sources) {
-            if (isCanonicalSource(s)) filtered.push(s);
-            else {
-                const n = normalizeSource(s);
-                if (n) filtered.push({ id: `web-${filtered.length + 1}`, title: n.title, url: n.url, snippet: n.snippet });
-            }
-        }
-        const seen = new Set();
-        const deduped = [];
-        for (const s of filtered) {
-            const key = normalizeDedupeKey(s.url);
-            if (seen.has(key)) continue;
-            seen.add(key);
-            deduped.push(s);
-        }
-        src = deduped.map((s, i) => ({ id: `web-${i + 1}`, title: s.title, url: s.url, snippet: s.snippet }));
-    }
+    const src = canonicalizeSources(sources);
     return { type: 'grounding_context', query: q, sources: src };
 }
 
 function createGroundedAnswer(text, sources) {
     const t = String(text || '');
-    let src = [];
-    if (Array.isArray(sources)) {
-        const filtered = [];
-        for (const s of sources) {
-            if (isCanonicalSource(s)) filtered.push(s);
-            else {
-                const n = normalizeSource(s);
-                if (n) filtered.push({ id: `web-${filtered.length + 1}`, title: n.title, url: n.url, snippet: n.snippet });
-            }
-        }
-        const seen = new Set();
-        const deduped = [];
-        for (const s of filtered) {
-            const key = normalizeDedupeKey(s.url);
-            if (seen.has(key)) continue;
-            seen.add(key);
-            deduped.push(s);
-        }
-        src = deduped.map((s, i) => ({ id: `web-${i + 1}`, title: s.title, url: s.url, snippet: s.snippet }));
-    }
+    const src = canonicalizeSources(sources);
     const grounded = src.length > 0;
     return { type: 'answer', text: t, grounded, sources: src };
 }
@@ -247,7 +206,6 @@ function normalizeToolCall(raw) {
         if (raw.tool !== TOOL_NAME) {
             return { type: 'unsupported_tool', tool: String(raw.tool || '') };
         }
-        // known tool web_search — validate arguments
         const q = raw.arguments && raw.arguments.query;
         if (typeof q !== 'string' || !q.trim()) {
             return createToolError('invalid_query', 'Invalid search query');
@@ -270,6 +228,7 @@ module.exports = {
     normalizeDedupeKey,
     isCanonicalSource,
     validateSources,
+    canonicalizeSources,
     createToolResult,
     createToolError,
     toCallbackError,
