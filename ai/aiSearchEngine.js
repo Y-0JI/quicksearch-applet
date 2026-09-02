@@ -10,6 +10,7 @@ const ERROR_MESSAGES = {
     provider_error: 'AI provider unavailable',
     web_search_unavailable: 'Web search unavailable',
     grounding_error: 'Web search unavailable',
+    no_results: 'No search results found',
     unsupported_tool: 'Unsupported AI tool request',
     invalid_query: 'Invalid search query',
     invalid_response: 'Invalid AI response',
@@ -38,6 +39,7 @@ function _normalizeProviderError(err) {
     if (err.code === 'invalid_query') return { code: 'invalid_query', message: err.message || ERROR_MESSAGES.invalid_query };
     if (err.code === 'unsupported_tool') return { code: 'unsupported_tool', message: ERROR_MESSAGES.unsupported_tool };
     if (err.code === 'invalid_response') return { code: 'invalid_response', message: ERROR_MESSAGES.invalid_response };
+    if (err.code === 'no_results') return { code: 'no_results', message: err.message || ERROR_MESSAGES.no_results };
     if (err.code === 'timeout') return { code: 'timeout', message: ERROR_MESSAGES.timeout };
     if (err.code === 'auth_error') return { code: 'auth_error', message: ERROR_MESSAGES.auth_error };
     if (err.code === 'rate_limited') return { code: 'rate_limited', message: ERROR_MESSAGES.rate_limited };
@@ -48,8 +50,27 @@ function _normalizeProviderError(err) {
 
 function _normalizeWebError(err) {
     if (!err) return { code: 'web_search_unavailable', message: ERROR_MESSAGES.web_search_unavailable };
-    // AI-3A keeps legacy web_search_unavailable for backward compat with existing tests/engine callers.
-    // AI-3B TODO: propagate Gt.ERROR_CODES via fromCallbackError when canonical tool_error is used.
+    if (err.code === 'cancelled') return { code: 'cancelled', message: null };
+    if (err.code === 'no_results') return { code: 'no_results', message: err.message || ERROR_MESSAGES.no_results };
+    // Preserve legacy code for existing regression (ai-search-engine.test expects web_search_unavailable)
+    if (err.code === 'web_search_unavailable') return { code: 'web_search_unavailable', message: err.message || ERROR_MESSAGES.web_search_unavailable };
+    if (err.code === 'request_failed') return { code: 'web_search_unavailable', message: err.message || ERROR_MESSAGES.web_search_unavailable };
+    if (Gt && typeof Gt.fromCallbackError === 'function') {
+        try {
+            const te = Gt.fromCallbackError(err);
+            if (te && te.code) {
+                if (te.code === 'cancelled') return { code: 'cancelled', message: null };
+                if (te.code === 'request_failed') return { code: 'web_search_unavailable', message: te.message || ERROR_MESSAGES.web_search_unavailable };
+                const msg = te.message || ERROR_MESSAGES[te.code] || ERROR_MESSAGES.web_search_unavailable;
+                return { code: te.code, message: msg };
+            }
+        } catch (_) {}
+    }
+    if (err.code && ERROR_MESSAGES[err.code] !== undefined) {
+        return { code: err.code, message: err.message || ERROR_MESSAGES[err.code] };
+    }
+    const known = ['invalid_query', 'backend_unavailable', 'invalid_response'];
+    if (err.code && known.includes(err.code)) return { code: err.code, message: err.message || ERROR_MESSAGES[err.code] || err.code };
     return { code: 'web_search_unavailable', message: ERROR_MESSAGES.web_search_unavailable };
 }
 
@@ -192,12 +213,17 @@ function createAISearchEngine(deps) {
                             if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
                             if (wErr) {
                                 const n2 = _normalizeWebError(wErr);
+                                if (n2.code === 'cancelled') return;
                                 return _deliverError(myGen, myCancellable, callbacks, n2.code, n2.message);
                             }
                             if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources)) {
                                 return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
                             }
                             const sources = wResults.sources;
+                            // AI-3B Requirement D — empty canonical sources: fail closed, no Provider #2.
+                            if (sources.length === 0) {
+                                return _deliverError(myGen, myCancellable, callbacks, 'no_results', ERROR_MESSAGES.no_results);
+                            }
                             let _groundingContextObj = null;
                             if (Gt && typeof Gt.createGroundingContext === 'function') {
                                 try { _groundingContextObj = Gt.createGroundingContext(wResults.query || toolQuery, sources); } catch (e) {}
@@ -211,6 +237,10 @@ function createAISearchEngine(deps) {
                                         const n3 = _normalizeProviderError(err2);
                                         if (n3.code === 'cancelled') return;
                                         return _deliverError(myGen, myCancellable, callbacks, n3.code, n3.message);
+                                    }
+                                    // AI-3B Requirement C — loop guard: Provider #2 must not trigger second grounding round.
+                                    if (res2 && res2.type === 'tool_call') {
+                                        return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
                                     }
                                     if (!res2 || res2.type !== 'answer' || typeof res2.text !== 'string') {
                                         return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
