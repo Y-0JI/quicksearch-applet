@@ -585,6 +585,34 @@ function _parseDdgHtmlForSources(html) {
     return out;
 }
 
+function _parseDdgLiteForSources(html) {
+    const clean = s => String(s).replace(/<[^>]+>/g, '').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#x27;/g,"'").replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ').replace(/&#(\d+);/g,(m,n)=>String.fromCharCode(Number(n))).replace(/&[a-z]+;/gi,' ').replace(/\s+/g,' ').trim();
+    const out = [];
+    const htmlStr = html || '';
+    const seen = new Set();
+    // lite.duckduckgo.com renders one result per row: an external <a ... href="...">Title</a>,
+    // followed by a <td class="result-snippet"> snippet. Filter out DDG-internal nav links.
+    const anchorRe = /<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    let am;
+    while ((am = anchorRe.exec(htmlStr)) !== null && out.length < 10) {
+        const href = am[1];
+        if (!/^https?:\/\//.test(href)) continue;
+        let host = '';
+        try { host = new URL(href).hostname || ''; } catch (e) { host = ''; }
+        if (!host || host === 'duckduckgo.com' || host.endsWith('.duckduckgo.com')) continue;
+        const title = clean(am[2]);
+        if (title.length < 3) continue;
+        if (seen.has(href)) continue;
+        seen.add(href);
+        let snippet = '';
+        const after = htmlStr.slice(am.index, am.index + 1200);
+        const sp = /<td[^>]*class="[^"]*result-snippet[^"]*"[^>]*>([\s\S]*?)<\/td>/i.exec(after);
+        if (sp) snippet = clean(sp[1]);
+        out.push({ title: title.slice(0, 200), url: href, snippet: String(snippet || '').slice(0, 500) });
+    }
+    return out;
+}
+
 function _createProductionBackend(config) {
     config = config || {};
     const rawEngine = String(config.engine || 'ddgo').toLowerCase();
@@ -640,70 +668,20 @@ function _createProductionBackend(config) {
                         _cancelTimeout(htmlTid);
                         if (_isCancelled(cancellable)) return;
                         if (hErr) {
+                            // SearXNG HTML request itself failed (403/timeout/unreachable) — do not give up:
+                            // try DDG HTML, then DDG Lite, before surfacing an error.
                             const status = (hErr.status || hErr.httpStatus) || (origErr && (origErr.status || origErr.httpStatus)) || 0;
-                            const e = new Error('SearXNG JSON forbidden (HTTP ' + (status || 403) + '), HTML fallback failed: ' + (hErr.message || 'request failed'));
-                            e.code = 'invalid_response';
-                            e.stage = 'web_search_request';
-                            e._stage = 'web_search_request';
-                            e.httpStatus = status;
-                            e.status = status;
-                            return cb(e);
+                            const prefix = 'SearXNG HTML fallback failed (JSON HTTP ' + (status || 403) + ' Expected application/json Got text/html): ' + (hErr.message || 'request failed');
+                            return attemptDdgFallback(prefix, status);
                         }
                         try {
                             let raw = _parseSearxngHtmlForSources(hDataStr);
                             if (raw.length === 0) {
                                 const status = (origErr && (origErr.status || origErr.httpStatus)) || 0;
-                                // SearXNG HTML returned 200 but no parseable results (e.g., "Sorry! No results found." dialog). Fallback to DDG HTML which is more stable.
-                                const ddgUrl = 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q);
-                                let ddgDone = false;
-                                let ddgTid = _scheduleTimeout(DEFAULT_TIMEOUT_MS, () => {
-                                    if (ddgDone) return; ddgDone = true;
-                                    const e = new Error('SearXNG HTML fallback returned no results (JSON HTTP ' + (status || 403) + ' Expected application/json Got text/html) Parser searxng_html Extracted 0');
-                                    e.code = 'request_failed';
-                                    e.stage = 'web_search_request';
-                                    e._stage = 'web_search_request';
-                                    e.httpStatus = status;
-                                    e.status = status;
-                                    e.backend = 'searxng';
-                                    e.contentType = 'text/html';
-                                    return cb(e);
-                                });
-                                doGet(ddgUrl, cancellable, (ddgErr, ddgHtml) => {
-                                    if (ddgDone) return; ddgDone = true; _cancelTimeout(ddgTid);
-                                    if (_isCancelled(cancellable)) return;
-                                    if (ddgErr) {
-                                        const e = new Error('SearXNG HTML fallback returned no results (JSON HTTP ' + (status || 403) + ' Expected application/json Got text/html) DDG fallback failed: ' + (ddgErr.message||''));
-                                        e.code = 'request_failed';
-                                        e.stage = 'web_search_request';
-                                        e._stage = 'web_search_request';
-                                        e.httpStatus = status;
-                                        e.status = status;
-                                        e.backend = 'searxng';
-                                        return cb(e);
-                                    }
-                                    try {
-                                        const ddgRaw = _parseDdgHtmlForSources(ddgHtml);
-                                        if (ddgRaw.length === 0) {
-                                            const e = new Error('SearXNG HTML fallback returned no results (JSON HTTP ' + (status || 403) + ' Expected application/json Got text/html) Parser searxng_html Extracted 0 DDG fallback also 0');
-                                            e.code = 'request_failed';
-                                            e.stage = 'web_search_request';
-                                            e._stage = 'web_search_request';
-                                            e.httpStatus = status;
-                                            e.status = status;
-                                            e.backend = 'searxng';
-                                            e.contentType = 'text/html';
-                                            return cb(e);
-                                        }
-                                        cb(null, ddgRaw.slice(0, max));
-                                    } catch (e2) {
-                                        const e = new Error('SearXNG HTML fallback returned no results, DDG fallback parse failed');
-                                        e.code = 'invalid_response';
-                                        e.stage = 'web_search_request';
-                                        e._stage = 'web_search_request';
-                                        return cb(e);
-                                    }
-                                });
-                                return;
+                                // SearXNG HTML returned 200 but no parseable results (e.g., "Sorry! No results found." dialog).
+                                // Fall back to DDG (html.duckduckgo.com, then lite.duckduckgo.com) which are more stable.
+                                const prefix = 'SearXNG HTML fallback returned no results (JSON HTTP ' + (status || 403) + ' Expected application/json Got text/html) Parser searxng_html Extracted 0';
+                                return attemptDdgFallback(prefix, status);
                             }
                             cb(null, raw.slice(0, max));
                         } catch (e) {
@@ -717,6 +695,60 @@ function _createProductionBackend(config) {
                             cb(e2);
                         }
                     });
+                };
+                // Last-resort grounding: try DDG HTML, then DDG Lite, when SearXNG (JSON and/or HTML)
+                // failed entirely or returned no parseable results. Only when both DDG legs also fail
+                // do we surface an error — with full diagnostic context about every leg attempted.
+                const attemptDdgFallback = (prefix, status) => {
+                    const legs = [
+                        { name: 'DDG HTML', url: 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q), parser: _parseDdgHtmlForSources },
+                        { name: 'DDG Lite', url: 'https://lite.duckduckgo.com/lite/?q=' + encodeURIComponent(q), parser: _parseDdgLiteForSources }
+                    ];
+                    const failures = [];
+                    let legIndex = 0;
+                    const nextLeg = () => {
+                        if (legIndex >= legs.length) {
+                            const e = new Error(prefix + ' DDG fallback also failed' + (failures.length ? ': ' + failures.join('; ') : ''));
+                            e.code = 'request_failed';
+                            e.stage = 'web_search_request';
+                            e._stage = 'web_search_request';
+                            e.httpStatus = status;
+                            e.status = status;
+                            e.backend = 'searxng';
+                            e.contentType = 'text/html';
+                            return cb(e);
+                        }
+                        const leg = legs[legIndex++];
+                        let legDone = false;
+                        const legTid = _scheduleTimeout(DEFAULT_TIMEOUT_MS, () => {
+                            if (legDone) return;
+                            legDone = true;
+                            failures.push(leg.name + ' timeout');
+                            nextLeg();
+                        });
+                        doGet(leg.url, cancellable, (ddgErr, ddgHtml) => {
+                            if (legDone) return;
+                            legDone = true;
+                            _cancelTimeout(legTid);
+                            if (_isCancelled(cancellable)) return;
+                            if (ddgErr) {
+                                failures.push(leg.name + ' failed: ' + (ddgErr.message || 'request failed'));
+                                return nextLeg();
+                            }
+                            try {
+                                const raw = leg.parser(ddgHtml);
+                                if (raw.length === 0) {
+                                    failures.push(leg.name + ' returned 0 results');
+                                    return nextLeg();
+                                }
+                                return cb(null, raw.slice(0, max));
+                            } catch (e2) {
+                                failures.push(leg.name + ' parse failed');
+                                return nextLeg();
+                            }
+                        });
+                    };
+                    nextLeg();
                 };
                 doGet(urlJson, cancellable, (err, dataStr) => {
                     if (done) return;
@@ -750,11 +782,14 @@ function _createProductionBackend(config) {
                     try {
                         const raw = _parseSearxngJsonForSources(dataStr);
                         if (raw.length === 0) {
-                            const e = new Error('No search results');
-                            e.code = 'request_failed';
+                            // SearXNG JSON answered 200 but with zero results — SearXNG HTML (and then DDG)
+                            // may still return results from engines that did not answer JSON. Do not give up yet.
+                            const e = new Error('SearXNG JSON returned no results');
+                            e.status = 200;
+                            e.httpStatus = 200;
                             e.stage = 'web_search_request';
                             e._stage = 'web_search_request';
-                            return cb(e);
+                            return tryHtmlFallback(e, dataStr);
                         }
                         cb(null, raw.slice(0, max));
                     } catch (e) {
@@ -934,4 +969,4 @@ function createWebSearchTool(opts) {
     return createMockWebSearchTool(opts);
 }
 
-module.exports = { createMockWebSearchTool, createWebSearchTool, createProductionWebSearchTool, _createProductionBackend, _parseSearxngJsonForSources, _parseBingHtmlForSources, _parseDdgHtmlForSources, _isGioCancellable: typeof _isGioCancellable !== 'undefined' ? _isGioCancellable : () => false, _resolveSoupCancellable: typeof _resolveSoupCancellable !== 'undefined' ? _resolveSoupCancellable : () => ({ soupCancellable: null, bridgeCleanup: ()=>{} }), _isCancelled, __setGioSoupForTest };
+module.exports = { createMockWebSearchTool, createWebSearchTool, createProductionWebSearchTool, _createProductionBackend, _parseSearxngJsonForSources, _parseBingHtmlForSources, _parseDdgHtmlForSources, _parseDdgLiteForSources, _isGioCancellable: typeof _isGioCancellable !== 'undefined' ? _isGioCancellable : () => false, _resolveSoupCancellable: typeof _resolveSoupCancellable !== 'undefined' ? _resolveSoupCancellable : () => ({ soupCancellable: null, bridgeCleanup: ()=>{} }), _isCancelled, __setGioSoupForTest };
