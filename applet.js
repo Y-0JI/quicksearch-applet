@@ -406,6 +406,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             this.search_engine = v;
             this._applySearchEngineSetting();
             this._rebuildEngine();
+            this._rebuildAiEngine();
         });
         this.settings.bind("file-locations", "file_locations", () => this._rebuildEngine());
         this.settings.bind("max-apps", "max_apps", () => this._rebuildEngine());
@@ -414,8 +415,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.settings.bind("debounce-ms", "debounce_ms", () => this._rebuildEngine());
         this.settings.bind("show-recent", "show_recent");
         this.settings.bind("recent-queries", "recent_queries_json");
-        this.settings.bind("web-search-api-key", "web_search_api_key");
-        this.settings.bind("searxng-url", "searxng_url", () => this._rebuildEngine());
+        this.settings.bind("web-search-api-key", "web_search_api_key", () => { this._rebuildEngine(); this._rebuildAiEngine(); });
+        this.settings.bind("searxng-url", "searxng_url", () => { this._rebuildEngine(); this._rebuildAiEngine(); });
         this.settings.bind("ai-base-url", "ai_base_url", () => this._rebuildAiEngine());
         this.settings.bind("ai-api-key", "ai_api_key", () => this._rebuildAiEngine());
         this.settings.bind("ai-model", "ai_model", () => this._rebuildAiEngine());
@@ -539,9 +540,10 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!aiFactoryMod || typeof aiFactoryMod.createAiEngine !== 'function') return;
         if (this._injectedProvider) {
             try {
-                this._aiEngine = aiFactoryMod.createAiEngine({
-                    provider: this._injectedProvider
-                });
+                const injOpts = { provider: this._injectedProvider };
+                if (this._injectedWebSearchTool) injOpts.webSearchTool = this._injectedWebSearchTool;
+                if (this._injectedEnableGrounding !== undefined) injOpts.enableGrounding = !!this._injectedEnableGrounding;
+                this._aiEngine = aiFactoryMod.createAiEngine(injOpts);
             } catch (e) {}
             return;
         }
@@ -576,12 +578,33 @@ class QuickSearchApplet extends Applet.IconApplet {
             if (!aiFactoryMod || typeof aiFactoryMod.createAiEngine !== 'function') {
                 try { global.log("[quicksearch@yoji] aiFactoryMod missing: " + String(typeof aiFactoryMod) + " createAiEngine=" + String(aiFactoryMod && typeof aiFactoryMod.createAiEngine)); } catch (e2) {}
             }
+            let searchEngine = this.search_engine;
+            let searxngUrl = this.searxng_url;
+            let webSearchApiKey = this.web_search_api_key;
+            if (!String(searchEngine || '').trim() || !String(searxngUrl || '').trim()) {
+                try {
+                    const GLib3 = imports.gi.GLib;
+                    const path3 = GLib3.get_home_dir() + "/.config/cinnamon/spices/quicksearch@yoji/quicksearch@yoji.json";
+                    const [ok3, contents3] = GLib3.file_get_contents(path3);
+                    if (ok3) {
+                        const text3 = imports.byteArray.toString(contents3);
+                        const j3 = JSON.parse(text3);
+                        if (!String(searchEngine || '').trim() && j3["search-engine"] && j3["search-engine"].value) searchEngine = j3["search-engine"].value;
+                        if (!String(searxngUrl || '').trim() && j3["searxng-url"] && j3["searxng-url"].value) searxngUrl = j3["searxng-url"].value;
+                        if (!String(webSearchApiKey || '').trim() && j3["web-search-api-key"] && j3["web-search-api-key"].value) webSearchApiKey = j3["web-search-api-key"].value;
+                    }
+                } catch (e) {}
+            }
             this._aiEngine = aiFactoryMod.createAiEngine({
                 baseUrl: baseUrl,
                 apiKey: apiKey,
-                model: model
+                model: model,
+                searchEngine: searchEngine,
+                searxngUrl: searxngUrl,
+                webSearchApiKey: webSearchApiKey,
+                enableGrounding: true
             });
-            try { global.log("[quicksearch@yoji] AI engine created ok stream=" + String(!!(this._aiEngine && this._aiEngine.searchStream))); } catch (e2) {}
+            try { global.log("[quicksearch@yoji] AI engine created ok stream=" + String(!!(this._aiEngine && this._aiEngine.searchStream)) + " grounding=" + String(!!(this._aiEngine && this._aiEngine.__webSearchInitError ? " err:" + this._aiEngine.__webSearchInitError : " ok"))); } catch (e2) {}
         } catch (e) {
             try { global.log("[quicksearch@yoji] AI engine create failed: " + String(e && e.message || e) + " stack=" + String(e && e.stack || "").slice(0, 800)); } catch (e2) {}
         }

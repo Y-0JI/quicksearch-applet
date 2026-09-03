@@ -22,6 +22,21 @@ const Gt = (() => {
     try { return require('ai/groundingTypes.js'); } catch (e) { return null; }
 })();
 
+let Gio = null, GLib = null, Soup = null;
+try { Gio = require('gi.Gio'); } catch (e) {}
+try { GLib = require('gi.GLib'); } catch (e) {}
+try { Soup = require('gi.Soup'); } catch (e) {}
+const DEFAULT_TIMEOUT_MS = 4000;
+function _scheduleTimeout(ms, fn) {
+    if (GLib && typeof GLib.timeout_add === 'function') return GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => { fn(); return GLib.SOURCE_REMOVE; });
+    return setTimeout(fn, ms);
+}
+function _cancelTimeout(id) {
+    if (!id) return;
+    if (GLib && typeof GLib.source_remove === 'function') { try { GLib.source_remove(id); } catch (e) { try { clearTimeout(id); } catch (e2) {} } }
+    else try { clearTimeout(id); } catch (e) {}
+}
+
 function _isCancelled(c) {
     try { return !!(c && typeof c.is_cancelled === 'function' && c.is_cancelled()); } catch (e) { return false; }
 }
@@ -33,35 +48,61 @@ function _sanitizeMessage(msg) {
 }
 
 function _mapError(err, fallbackCode) {
+    function _attachStage(target, source) {
+        try {
+            if (source && (source.stage || source._stage)) {
+                target.stage = source.stage || source._stage;
+                target._stage = source.stage || source._stage;
+            }
+            if (source && source.status != null) target.status = source.status;
+            if (source && source.httpStatus != null) target.httpStatus = source.httpStatus;
+        } catch (e) {}
+        return target;
+    }
     if (!Gt) {
         const e = new Error(_sanitizeMessage(err && err.message));
         e.code = (err && err.code) ? err.code : (fallbackCode || 'request_failed');
-        return e;
+        return _attachStage(e, err);
     }
     if (err && err.type === 'tool_error') return err;
     if (!err) return Gt.createToolError(fallbackCode || 'request_failed', 'Web search error');
     const code = err.code;
     const msg = _sanitizeMessage(err.message);
     if (code === 'invalid_query' || code === 'backend_unavailable' || code === 'request_failed' || code === 'cancelled' || code === 'invalid_response') {
-        return Gt.createToolError(code, msg);
+        const te = Gt.createToolError(code, msg);
+        return _attachStage(te, err);
     }
     const lower = msg.toLowerCase();
     if (lower.includes('backend unavailable') || lower.includes('econnrefused') || lower.includes('enotfound')) {
-        return Gt.createToolError('backend_unavailable', 'Backend unavailable');
+        const te = Gt.createToolError('backend_unavailable', 'Backend unavailable');
+        return _attachStage(te, err);
     }
-    return Gt.createToolError(fallbackCode || 'request_failed', msg || 'Web search error');
+    const te = Gt.createToolError(fallbackCode || 'request_failed', msg || 'Web search error');
+    return _attachStage(te, err);
 }
 
 function _toCallbackError(toolError) {
+    function _attachStage(target, source) {
+        try {
+            if (source && (source.stage || source._stage)) {
+                target.stage = source.stage || source._stage;
+                target._stage = source.stage || source._stage;
+            }
+            if (source && source.status != null) target.status = source.status;
+            if (source && source.httpStatus != null) target.httpStatus = source.httpStatus;
+        } catch (e) {}
+        return target;
+    }
     if (!Gt) {
         const e = new Error(toolError.message || 'Web search error');
         e.code = toolError.code;
         e.type = toolError.type;
         e.tool = toolError.tool;
         Object.assign(e, toolError);
-        return e;
+        return _attachStage(e, toolError);
     }
-    return Gt.toCallbackError(toolError);
+    const e = Gt.toCallbackError(toolError);
+    return _attachStage(e, toolError);
 }
 
 function _normalizeResults(rawResults, maxResults) {
@@ -262,6 +303,327 @@ function createMockWebSearchTool(opts) {
     return { search, __callCount: () => callCount, __backend: backend, __handler: handler };
 }
 
+function _defaultHttpGet(url, cancellable, cb) {
+    try {
+        if (Soup && typeof Soup.Session !== 'undefined') {
+            let session = new Soup.Session();
+            try { session.timeout = Math.ceil(DEFAULT_TIMEOUT_MS / 1000); } catch (e) {}
+            const msg = Soup.Message.new('GET', url);
+            if (!msg) return cb(new Error('bad-url'));
+            try { msg.request_headers.append('User-Agent', 'Mozilla/5.0 QuickSearch'); } catch (e) {}
+            session.send_and_read_async(msg, GLib ? GLib.PRIORITY_DEFAULT : 0, cancellable, (sess, res) => {
+                try {
+                    const bytes = sess.send_and_read_finish(res);
+                    cb(null, new TextDecoder().decode(bytes.get_data()));
+                } catch (e) { cb(e); }
+            });
+            return;
+        }
+        if (typeof fetch === 'function') {
+            const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+            let timeoutId = null;
+            if (ctrl) timeoutId = setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, DEFAULT_TIMEOUT_MS);
+            const init = { method: 'GET', headers: { 'User-Agent': 'Mozilla/5.0 QuickSearch' } };
+            if (ctrl) init.signal = ctrl.signal;
+            fetch(url, init).then(r => r.text().then(t => {
+                if (timeoutId) clearTimeout(timeoutId);
+                if (!r.ok) {
+                    const e = new Error('HTTP ' + r.status);
+                    e.status = r.status;
+                    if (r.status === 429) e.code = 'backend_unavailable';
+                    return cb(e);
+                }
+                cb(null, t);
+            })).catch(e => {
+                if (timeoutId) clearTimeout(timeoutId);
+                cb(e);
+            });
+            return;
+        }
+        cb(new Error('no http transport'));
+    } catch (e) { cb(e); }
+}
+
+function _parseSearxngJsonForSources(dataStr) {
+    try {
+        const data = JSON.parse(dataStr);
+        const items = (data && data.results) || [];
+        const out = [];
+        for (const it of items) {
+            if (!it || !it.url || !/^https?:\/\//.test(it.url)) continue;
+            out.push({ title: String(it.title || '').slice(0, 200), url: String(it.url).trim(), snippet: String(it.content || it.snippet || '').slice(0, 500) });
+            if (out.length >= 10) break;
+        }
+        return out;
+    } catch (e) { throw e; }
+}
+
+function _parseGoogleSerperForSources(dataStr) {
+    const data = JSON.parse(dataStr);
+    const items = (data && data.organic) || [];
+    const out = [];
+    for (const it of items) {
+        if (!it || !it.link || !/^https?:\/\//.test(it.link)) continue;
+        out.push({ title: String(it.title || '').slice(0, 200), url: String(it.link).trim(), snippet: String(it.snippet || '').slice(0, 500) });
+        if (out.length >= 10) break;
+    }
+    return out;
+}
+
+function _parseBingHtmlForSources(html) {
+    const clean = s => String(s).replace(/<[^>]+>/g, '').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#x27;/g,"'").replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ').replace(/&#(\d+);/g,(m,n)=>String.fromCharCode(Number(n))).replace(/&[a-z]+;/gi,' ').replace(/\s+/g,' ').trim();
+    const out = [];
+    const blockRe = /<li\b[^>]*class="[^"]*\bb_algo\b[^"]*"[^>]*>([\s\S]*?)<\/li>/gi;
+    let bm;
+    while ((bm = blockRe.exec(html || '')) !== null && out.length < 10) {
+        const block = bm[1];
+        const h2a = /<h2[^>]*>\s*<a\s[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(block);
+        if (!h2a) continue;
+        const url = h2a[1];
+        const title = clean(h2a[2]);
+        if (!url || !/^https?:\/\//.test(url) || !title) continue;
+        let snippet = '';
+        const p = /<p\b[^>]*>([\s\S]*?)<\/p>/i.exec(block);
+        if (p) snippet = clean(p[1]).slice(0, 500);
+        out.push({ title: title.slice(0, 200), url, snippet });
+    }
+    return out;
+}
+
+function _parseDdgHtmlForSources(html) {
+    const clean = s => String(s).replace(/<[^>]+>/g, '').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#x27;/g,"'").replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ').replace(/&#(\d+);/g,(m,n)=>String.fromCharCode(Number(n))).replace(/&[a-z]+;/gi,' ').replace(/\s+/g,' ').trim();
+    const realUrl = href => {
+        const m = /\/l\/\?uddg=([^&]+)/.exec(href || '');
+        if (m) { try { return decodeURIComponent(m[1]); } catch (e) {} }
+        return /^https?:\/\//.test(href || '') ? href : '';
+    };
+    const out = [];
+    const htmlStr = html || '';
+    const blockRe = /<div\s+class="(?:result|web-result)[^"]*">([\s\S]*?)<\/div>/gi;
+    let bm;
+    while ((bm = blockRe.exec(htmlStr)) !== null && out.length < 10) {
+        const block = bm[1];
+        const anchorRe = /<a\s[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+        let am, title='', url='';
+        while ((am = anchorRe.exec(block)) !== null) {
+            const href = am[1];
+            const text = clean(am[2]);
+            const decoded = realUrl(href);
+            if (decoded && text.length > 2) { title = text; url = decoded; break; }
+        }
+        if (!url || !/^https?:\/\//.test(url)) continue;
+        let snippet = '';
+        const snip = /<a\s+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i.exec(block);
+        if (snip) snippet = clean(snip[1]).slice(0, 500);
+        out.push({ title: title.slice(0, 200), url, snippet });
+    }
+    if (out.length === 0) {
+        const flatRe = /<a\s+class="result__a"\s+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+        const snippets = [...htmlStr.matchAll(/<a\s+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi)].map(m=>clean(m[1]));
+        let idx=0, fm;
+        while ((fm = flatRe.exec(htmlStr)) !== null && out.length < 10) {
+            const url = realUrl(fm[1]);
+            if (!/^https?:\/\//.test(url)) continue;
+            out.push({ title: clean(fm[2]).slice(0, 200), url, snippet: (snippets[idx]||'').slice(0, 500) });
+            idx++;
+        }
+    }
+    return out;
+}
+
+function _createProductionBackend(config) {
+    config = config || {};
+    const rawEngine = String(config.engine || 'ddgo').toLowerCase();
+    const engine = rawEngine === 'ddgo' ? 'ddgo' : rawEngine === 'duckduckgo' ? 'ddgo' : rawEngine;
+    const searxngUrl = String(config.searxngUrl || 'http://127.0.0.1:8080').replace(/\/+$/, '');
+    const googleApiKey = String(config.googleApiKey || config.webSearchApiKey || '');
+    const injectedGet = typeof config.httpGet === 'function' ? config.httpGet : null;
+    const injectedPost = typeof config.httpPost === 'function' ? config.httpPost : null;
+    const doGet = injectedGet || _defaultHttpGet;
+    const doPost = injectedPost || null;
+    return {
+        search(query, maxResults, cancellable, cb) {
+            if (typeof maxResults === 'function' && !cb) { cb = maxResults; maxResults = 5; }
+            if (typeof cancellable === 'function' && !cb) { cb = cancellable; cancellable = null; }
+            const q = String(query || '').trim();
+            if (!q) {
+                const e = new Error('Invalid search query');
+                e.code = 'invalid_query';
+                return cb(e);
+            }
+            const max = typeof maxResults === 'number' && Number.isFinite(maxResults) ? Math.max(1, Math.min(10, Math.floor(maxResults))) : 5;
+            if (engine === 'searxng') {
+                const url = searxngUrl + '/search?q=' + encodeURIComponent(q) + '&format=json';
+                let done = false;
+                let tid = _scheduleTimeout(DEFAULT_TIMEOUT_MS, () => {
+                    if (done) return;
+                    done = true;
+                    const e = new Error('SearXNG request timeout');
+                    e.code = 'backend_unavailable';
+                    cb(e);
+                });
+                doGet(url, cancellable, (err, dataStr) => {
+                    if (done) return;
+                    done = true;
+                    _cancelTimeout(tid);
+                    if (_isCancelled(cancellable)) return;
+                    if (err) {
+                        const e2 = new Error(err.message || 'SearXNG unavailable');
+                        e2.code = err.code || 'backend_unavailable';
+                        if (String(err.message||'').toLowerCase().includes('econnrefused') || String(err.message||'').toLowerCase().includes('enotfound')) e2.code = 'backend_unavailable';
+                        return cb(e2);
+                    }
+                    try {
+                        const raw = _parseSearxngJsonForSources(dataStr);
+                        if (raw.length === 0) {
+                            const e = new Error('No search results');
+                            e.code = 'request_failed';
+                            return cb(e);
+                        }
+                        cb(null, raw.slice(0, max));
+                    } catch (e) {
+                        const e2 = new Error('Invalid response');
+                        e2.code = 'invalid_response';
+                        cb(e2);
+                    }
+                });
+                return;
+            }
+            if (engine === 'google' && !googleApiKey) {
+                const e = new Error('Google API key missing');
+                e.code = 'backend_unavailable';
+                e.stage = 'web_search_init';
+                e._stage = 'web_search_init';
+                return cb(e);
+            }
+            if (engine === 'google' && googleApiKey) {
+                const url = 'https://google.serper.dev/search';
+                const body = JSON.stringify({ q, num: max });
+                if (doPost) {
+                    let done = false;
+                    let tid = _scheduleTimeout(DEFAULT_TIMEOUT_MS, () => {
+                        if (done) return;
+                        done = true;
+                        const e = new Error('Google request timeout');
+                        e.code = 'backend_unavailable';
+                        cb(e);
+                    });
+                    doPost(url, body, cancellable, (err, dataStr) => {
+                        if (done) return;
+                        done = true;
+                        _cancelTimeout(tid);
+                        if (_isCancelled(cancellable)) return;
+                        if (err) {
+                            const e2 = new Error(err.message || 'Google unavailable');
+                            e2.code = err.code || 'backend_unavailable';
+                            return cb(e2);
+                        }
+                        try {
+                            const raw = _parseGoogleSerperForSources(dataStr);
+                            if (raw.length === 0) {
+                                const e = new Error('No search results');
+                                e.code = 'request_failed';
+                                return cb(e);
+                            }
+                            cb(null, raw.slice(0, max));
+                        } catch (e) {
+                            const e2 = new Error('Invalid response');
+                            e2.code = 'invalid_response';
+                            cb(e2);
+                        }
+                    });
+                    return;
+                }
+                if (Soup) {
+                    try {
+                        let session = new Soup.Session();
+                        try { session.timeout = Math.ceil(DEFAULT_TIMEOUT_MS/1000); } catch(e){}
+                        const msg = Soup.Message.new('POST', url);
+                        if (!msg) { const e=new Error('bad-url'); e.code='backend_unavailable'; return cb(e); }
+                        msg.request_headers.append('X-API-KEY', googleApiKey);
+                        msg.request_headers.append('Content-Type', 'application/json');
+                        if (GLib) {
+                            try { msg.set_request_body_from_bytes('application/json', GLib.Bytes.new(String(body))); }
+                            catch(e){ msg.set_request_body_from_bytes('application/json', new GLib.Bytes(String(body))); }
+                        }
+                        let done=false;
+                        let tid=_scheduleTimeout(DEFAULT_TIMEOUT_MS, ()=>{ if(done) return; done=true; const e=new Error('Google request timeout'); e.code='backend_unavailable'; cb(e); });
+                        session.send_and_read_async(msg, GLib?GLib.PRIORITY_DEFAULT:0, cancellable, (sess,res)=>{
+                            if(done) return; done=true; _cancelTimeout(tid);
+                            if(_isCancelled(cancellable)) return;
+                            try {
+                                const bytes=sess.send_and_read_finish(res);
+                                const dataStr=new TextDecoder().decode(bytes.get_data());
+                                const status=msg.get_status();
+                                if(status===429){ const e=new Error('rate limited'); e.code='backend_unavailable'; return cb(e); }
+                                if(status>=400){ const e=new Error('HTTP '+status); e.code='backend_unavailable'; return cb(e); }
+                                const raw=_parseGoogleSerperForSources(dataStr);
+                                if(raw.length===0){ const e=new Error('No search results'); e.code='request_failed'; return cb(e); }
+                                cb(null, raw.slice(0,max));
+                            } catch(e){ const e2=new Error('Invalid response'); e2.code='invalid_response'; cb(e2); }
+                        });
+                        return;
+                    } catch(e){ const e2=new Error('Google backend error'); e2.code='backend_unavailable'; return cb(e2); }
+                }
+                const e=new Error('no http transport for google');
+                e.code='backend_unavailable';
+                return cb(e);
+            }
+            if (engine === 'bing') {
+                const url = 'https://www.bing.com/search?q=' + encodeURIComponent(q);
+                let done=false;
+                let tid=_scheduleTimeout(DEFAULT_TIMEOUT_MS, ()=>{ if(done) return; done=true; const e=new Error('Bing request timeout'); e.code='backend_unavailable'; cb(e); });
+                doGet(url, cancellable, (err, html)=>{
+                    if(done) return; done=true; _cancelTimeout(tid);
+                    if(_isCancelled(cancellable)) return;
+                    if(err){ const e2=new Error(err.message||'Bing unavailable'); e2.code=err.code||'backend_unavailable'; return cb(e2); }
+                    try {
+                        const raw=_parseBingHtmlForSources(html);
+                        if(raw.length===0){ const e=new Error('No search results'); e.code='request_failed'; return cb(e); }
+                        cb(null, raw.slice(0,max));
+                    } catch(e){ const e2=new Error('Invalid response'); e2.code='invalid_response'; cb(e2); }
+                });
+                return;
+            }
+            const url = 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q);
+            let done=false;
+            let tid=_scheduleTimeout(DEFAULT_TIMEOUT_MS, ()=>{ if(done) return; done=true; const e=new Error('DDG request timeout'); e.code='backend_unavailable'; cb(e); });
+            doGet(url, cancellable, (err, html)=>{
+                if(done) return; done=true; _cancelTimeout(tid);
+                if(_isCancelled(cancellable)) return;
+                if(err){ const e2=new Error(err.message||'DDG unavailable'); e2.code=err.code||'backend_unavailable'; return cb(e2); }
+                try {
+                    const raw=_parseDdgHtmlForSources(html);
+                    if(raw.length===0){ const e=new Error('No search results'); e.code='request_failed'; return cb(e); }
+                    cb(null, raw.slice(0,max));
+                } catch(e){ const e2=new Error('Invalid response'); e2.code='invalid_response'; cb(e2); }
+            });
+        }
+    };
+}
+
+function createProductionWebSearchTool(config) {
+    if (!Gt) {
+        const toolErr = { type: 'tool_error', tool: 'web_search', code: 'invalid_response', message: 'Grounding contracts unavailable' };
+        return {
+            search(requestOrQuery, cancellable, onDone) {
+                if (typeof cancellable === 'function' && !onDone) { onDone = cancellable; cancellable = null; }
+                if (!onDone || typeof onDone !== 'function') return;
+                const e = new Error(toolErr.message);
+                e.code = toolErr.code; e.type = toolErr.type; e.tool = toolErr.tool;
+                Object.assign(e, toolErr);
+                return onDone(e);
+            },
+            __isProduction: true
+        };
+    }
+    const backend = _createProductionBackend(config);
+    const tool = createMockWebSearchTool({ backend });
+    tool.__isProduction = true;
+    tool.__backend = backend;
+    return tool;
+}
+
 function createWebSearchTool(opts) {
     // Production entry point — fail closed if canonical contracts unavailable.
     // Do NOT silently downgrade to legacy array behavior when groundingTypes is missing.
@@ -278,7 +640,10 @@ function createWebSearchTool(opts) {
             }
         };
     }
+    if (opts && (opts.engine || opts.searxngUrl || opts.googleApiKey || opts.webSearchApiKey)) {
+        return createProductionWebSearchTool(opts);
+    }
     return createMockWebSearchTool(opts);
 }
 
-module.exports = { createMockWebSearchTool, createWebSearchTool };
+module.exports = { createMockWebSearchTool, createWebSearchTool, createProductionWebSearchTool, _createProductionBackend, _parseSearxngJsonForSources, _parseBingHtmlForSources, _parseDdgHtmlForSources };

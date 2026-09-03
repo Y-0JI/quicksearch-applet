@@ -81,28 +81,30 @@ function _normalizeProviderError(err) {
 }
 
 function _normalizeWebError(err) {
+    function _stageOf(e) { try { return e && (e.stage || e._stage) || null; } catch (_) { return null; } }
+    function _withStage(obj, e) { const s = _stageOf(e); if (s) { obj.stage = s; obj._stage = s; } if (e && e.status != null) obj.status = e.status; if (e && e.httpStatus != null) obj.httpStatus = e.httpStatus; return obj; }
     if (!err) return { code: 'web_search_unavailable', message: ERROR_MESSAGES.web_search_unavailable };
-    if (err.code === 'cancelled') return { code: 'cancelled', message: null };
-    if (err.code === 'no_results') return { code: 'no_results', message: err.message || ERROR_MESSAGES.no_results };
-    if (err.code === 'web_search_unavailable') return { code: 'web_search_unavailable', message: err.message || ERROR_MESSAGES.web_search_unavailable };
-    if (err.code === 'request_failed') return { code: 'web_search_unavailable', message: err.message || ERROR_MESSAGES.web_search_unavailable };
+    if (err.code === 'cancelled') return _withStage({ code: 'cancelled', message: null }, err);
+    if (err.code === 'no_results') return _withStage({ code: 'no_results', message: err.message || ERROR_MESSAGES.no_results }, err);
+    if (err.code === 'web_search_unavailable') return _withStage({ code: 'web_search_unavailable', message: err.message || ERROR_MESSAGES.web_search_unavailable }, err);
+    if (err.code === 'request_failed') return _withStage({ code: 'web_search_unavailable', message: err.message || ERROR_MESSAGES.web_search_unavailable }, err);
     if (Gt && typeof Gt.fromCallbackError === 'function') {
         try {
             const te = Gt.fromCallbackError(err);
             if (te && te.code) {
-                if (te.code === 'cancelled') return { code: 'cancelled', message: null };
-                if (te.code === 'request_failed') return { code: 'web_search_unavailable', message: te.message || ERROR_MESSAGES.web_search_unavailable };
+                if (te.code === 'cancelled') return _withStage({ code: 'cancelled', message: null }, err);
+                if (te.code === 'request_failed') return _withStage({ code: 'web_search_unavailable', message: te.message || ERROR_MESSAGES.web_search_unavailable }, err);
                 const msg = te.message || ERROR_MESSAGES[te.code] || ERROR_MESSAGES.web_search_unavailable;
-                return { code: te.code, message: msg };
+                return _withStage({ code: te.code, message: msg }, err);
             }
         } catch (_) {}
     }
     if (err.code && ERROR_MESSAGES[err.code] !== undefined) {
-        return { code: err.code, message: err.message || ERROR_MESSAGES[err.code] };
+        return _withStage({ code: err.code, message: err.message || ERROR_MESSAGES[err.code] }, err);
     }
     const known = ['invalid_query', 'backend_unavailable', 'invalid_response'];
-    if (err.code && known.includes(err.code)) return { code: err.code, message: err.message || ERROR_MESSAGES[err.code] || err.code };
-    return { code: 'web_search_unavailable', message: ERROR_MESSAGES.web_search_unavailable };
+    if (err.code && known.includes(err.code)) return _withStage({ code: err.code, message: err.message || ERROR_MESSAGES[err.code] || err.code }, err);
+    return _withStage({ code: 'web_search_unavailable', message: ERROR_MESSAGES.web_search_unavailable }, err);
 }
 
 function createAISearchEngine(deps) {
@@ -119,6 +121,8 @@ function createAISearchEngine(deps) {
             search: (q, c, cb) => {
                 const e = new Error('Web search unavailable');
                 e.code = 'web_search_unavailable';
+                e.stage = 'web_search_init';
+                e._stage = 'web_search_init';
                 if (typeof c === 'function' && cb === undefined) return c(e);
                 if (typeof cb === 'function') return cb(e);
                 if (typeof c === 'function') return c(e);
@@ -257,7 +261,7 @@ function createAISearchEngine(deps) {
                             if (wErr) {
                                 const n2 = _normalizeWebError(wErr);
                                 if (n2.code === 'cancelled') return;
-                                return _deliverError(myGen, myCancellable, callbacks, n2.code, n2.message);
+                                return _deliverError(myGen, myCancellable, callbacks, n2.code, n2.message, { stage: n2.stage || wErr.stage || wErr._stage || 'web_search_request', status: n2.status || wErr.status });
                             }
                             if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources)) {
                                 return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
@@ -498,7 +502,7 @@ function createAISearchEngine(deps) {
                         if (wErr) {
                             const n2 = _normalizeWebError(wErr);
                             if (n2.code === 'cancelled') return;
-                            emitError(n2.code, n2.message);
+                            emitError(n2.code, n2.message, { stage: n2.stage || wErr.stage || wErr._stage || 'web_search_request', status: n2.status || wErr.status });
                             return;
                         }
                         if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources)) {

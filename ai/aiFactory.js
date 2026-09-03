@@ -65,6 +65,15 @@ if (!nineRouterProviderMod) {
         global.log("[quicksearch@yoji] aiFactory load nineRouter failed all paths attempted=" + _r.errors.map(e=>e.path).join(",") + " errors=" + diag);
     } catch (e2) {}
 }
+let webSearchToolMod = null;
+_r = _tryRequireWithDiagnostics('webSearchTool', ['./ai/webSearchTool.js', './webSearchTool.js', 'ai/webSearchTool.js']);
+webSearchToolMod = _r.module;
+if (!webSearchToolMod) {
+    try {
+        const diag = _r.errors.map(e => e.path + ": " + e.name + ": " + e.message).join(" | ");
+        global.log("[quicksearch@yoji] aiFactory load webSearchTool failed all paths attempted=" + _r.errors.map(e=>e.path).join(",") + " errors=" + diag);
+    } catch (e2) {}
+}
 
 function _trim(s) { return String(s || '').trim(); }
 
@@ -133,9 +142,8 @@ function _makeProviderErrorProvider() {
 function createAiEngine(opts) {
     opts = opts || {};
     let provider = opts.provider || null;
-    // P2-1: AI-2 does not wire WebSearchTool. Pass only if explicitly injected (tests).
-    // AISearchEngine stubs it internally when undefined, keeping basic answer path working.
-    let webSearchTool = opts.webSearchTool; // undefined -> stub, object -> use
+    let webSearchTool = opts.webSearchTool;
+    let webSearchToolInitError = null;
 
     if (!provider) {
         const baseUrl = _trim(opts.baseUrl);
@@ -164,11 +172,58 @@ function createAiEngine(opts) {
         throw new Error('aiFactory: AISearchEngine unavailable');
     }
     const enableGrounding = !!opts.enableGrounding;
+    if (webSearchTool === undefined && enableGrounding) {
+        if (webSearchToolMod) {
+            try {
+                const cfg = {
+                    engine: opts.searchEngine || opts.webSearchEngine || 'ddgo',
+                    searxngUrl: opts.searxngUrl || opts.searxng_url || 'http://127.0.0.1:8080',
+                    googleApiKey: opts.googleApiKey || opts.webSearchApiKey || opts.web_search_api_key || '',
+                    webSearchApiKey: opts.webSearchApiKey || opts.web_search_api_key || '',
+                    httpGet: opts.httpGet,
+                    httpPost: opts.httpPost
+                };
+                if (typeof webSearchToolMod.createProductionWebSearchTool === 'function') {
+                    webSearchTool = webSearchToolMod.createProductionWebSearchTool(cfg);
+                    try { global.log("[quicksearch@yoji] webSearchTool wired engine=" + cfg.engine + " searxngUrl=" + cfg.searxngUrl.slice(0, 40)); } catch (e) {}
+                } else if (typeof webSearchToolMod.createWebSearchTool === 'function') {
+                    webSearchTool = webSearchToolMod.createWebSearchTool(cfg);
+                } else if (typeof webSearchToolMod.createMockWebSearchTool === 'function') {
+                    webSearchTool = webSearchToolMod.createMockWebSearchTool();
+                } else {
+                    webSearchToolInitError = 'WebSearchTool module has no factory';
+                }
+            } catch (e) {
+                webSearchToolInitError = _sanitizeRequireMsg(e && e.message || String(e));
+                try { global.log("[quicksearch@yoji] webSearchTool init failed: " + webSearchToolInitError); } catch (e2) {}
+            }
+        } else {
+            webSearchToolInitError = 'WebSearchTool module unavailable';
+            try { global.log("[quicksearch@yoji] webSearchTool module unavailable for grounding"); } catch (e2) {}
+        }
+        if (!webSearchTool && enableGrounding) {
+            const msg = webSearchToolInitError || 'WebSearchTool unavailable';
+            webSearchTool = {
+                search: (req, canc, cb) => {
+                    if (typeof canc === 'function' && !cb) { cb = canc; canc = null; }
+                    const e = new Error(msg);
+                    e.code = 'web_search_unavailable';
+                    e.stage = 'web_search_init';
+                    e._stage = 'web_search_init';
+                    if (cb) cb(e);
+                },
+                __initError: msg,
+                __stage: 'web_search_init'
+            };
+        }
+    }
     const engineOpts = { provider, promptBuilder: opts.promptBuilder, sourceFormatter: opts.sourceFormatter, enableGrounding };
-    // Only forward webSearchTool if caller explicitly provided it (test injection).
-    // Otherwise let AISearchEngine stub it — AI-2 has no real grounding.
     if (webSearchTool !== undefined) engineOpts.webSearchTool = webSearchTool;
-    return aiSearchEngineMod.createAISearchEngine(engineOpts);
+    const engine = aiSearchEngineMod.createAISearchEngine(engineOpts);
+    if (webSearchToolInitError && enableGrounding) {
+        try { engine.__webSearchInitError = webSearchToolInitError; } catch (e) {}
+    }
+    return engine;
 }
 
 function _getRequireDiagnostics() { return JSON.parse(JSON.stringify(_lastRequireDiagnostics || {})); }
