@@ -454,6 +454,13 @@ function _parseSearxngHtmlForSources(html) {
     const clean = s => String(s).replace(/<[^>]+>/g, '').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#x27;/g,"'").replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ').replace(/&#(\d+);/g,(m,n)=>String.fromCharCode(Number(n))).replace(/&[a-z]+;/gi,' ').replace(/\s+/g,' ').trim();
     const out = [];
     const htmlStr = html || '';
+    const pushValid = (title, url, snippet) => {
+        if (!url || !/^https?:\/\//.test(url) || /^https?:\/\/127\.0\.0\.1/.test(url) || /^https?:\/\/localhost/.test(url)) return;
+        if (url.includes('searx.space') || url.includes('github.com/searxng')) return;
+        if (!title || title.length < 3) return;
+        if (/^javascript:/i.test(url) || /^#/.test(url)) return;
+        out.push({ title: title.slice(0, 200), url: url.trim(), snippet: String(snippet||'').slice(0, 500) });
+    };
     const articleRe = /<article[^>]*class="[^"]*\bresult\b[^"]*"[^>]*>([\s\S]*?)<\/article>/gi;
     let am;
     while ((am = articleRe.exec(htmlStr)) !== null && out.length < 10) {
@@ -462,17 +469,47 @@ function _parseSearxngHtmlForSources(html) {
         if (!h3a) continue;
         const url = h3a[1];
         const title = clean(h3a[2]);
-        if (!url || !/^https?:\/\//.test(url) || !title) continue;
         let snippet = '';
         const p = /<p[^>]*class="[^"]*\bcontent\b[^"]*"[^>]*>([\s\S]*?)<\/p>/i.exec(block);
-        if (p) snippet = clean(p[1]).slice(0, 500);
+        if (p) snippet = clean(p[1]);
         if (!snippet) {
             const p2 = /<p[^>]*>([\s\S]*?)<\/p>/i.exec(block);
-            if (p2) snippet = clean(p2[1]).slice(0, 500);
+            if (p2) snippet = clean(p2[1]);
         }
-        out.push({ title: title.slice(0, 200), url, snippet });
+        pushValid(title, url, snippet);
     }
-    return out;
+    if (out.length > 0) return out.slice(0, 10);
+    const divRe = /<div[^>]*class="[^"]*\bresult\b[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
+    let dm;
+    while ((dm = divRe.exec(htmlStr)) !== null && out.length < 10) {
+        const block = dm[1];
+        const a = /<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(block);
+        if (!a) continue;
+        const url = a[1];
+        const title = clean(a[2]);
+        let snippet = '';
+        const p = /<p[^>]*>([\s\S]*?)<\/p>/i.exec(block);
+        if (p) snippet = clean(p[1]);
+        pushValid(title, url, snippet);
+    }
+    if (out.length > 0) return out.slice(0, 10);
+    const genericRe = /<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([^<]{3,}?)<\/a>/gi;
+    let gm;
+    const seen = new Set();
+    while ((gm = genericRe.exec(htmlStr)) !== null && out.length < 10) {
+        const url = gm[1];
+        if (seen.has(url)) continue;
+        seen.add(url);
+        if (url.includes('127.0.0.1') || url.includes('searx.space') || url.includes('github.com/searxng')) continue;
+        const title = clean(gm[2]);
+        if (title.length < 5 || title.toLowerCase().includes('searxng') || title.toLowerCase().includes('about') || title.toLowerCase().includes('preferences')) continue;
+        let snippet = '';
+        const after = htmlStr.slice(gm.index, gm.index + 2000);
+        const p = /<p[^>]*class="[^"]*\bcontent\b[^"]*"[^>]*>([\s\S]*?)<\/p>/i.exec(after);
+        if (p) snippet = clean(p[1]);
+        pushValid(title, url, snippet);
+    }
+    return out.slice(0, 10);
 }
 
 function _parseGoogleSerperForSources(dataStr) {
@@ -613,16 +650,60 @@ function _createProductionBackend(config) {
                             return cb(e);
                         }
                         try {
-                            const raw = _parseSearxngHtmlForSources(hDataStr);
+                            let raw = _parseSearxngHtmlForSources(hDataStr);
                             if (raw.length === 0) {
                                 const status = (origErr && (origErr.status || origErr.httpStatus)) || 0;
-                                const e = new Error('SearXNG HTML fallback returned no results (JSON HTTP ' + (status || 403) + ' Expected application/json Got text/html)');
-                                e.code = 'request_failed';
-                                e.stage = 'web_search_request';
-                                e._stage = 'web_search_request';
-                                e.httpStatus = status;
-                                e.status = status;
-                                return cb(e);
+                                // SearXNG HTML returned 200 but no parseable results (e.g., "Sorry! No results found." dialog). Fallback to DDG HTML which is more stable.
+                                const ddgUrl = 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q);
+                                let ddgDone = false;
+                                let ddgTid = _scheduleTimeout(DEFAULT_TIMEOUT_MS, () => {
+                                    if (ddgDone) return; ddgDone = true;
+                                    const e = new Error('SearXNG HTML fallback returned no results (JSON HTTP ' + (status || 403) + ' Expected application/json Got text/html) Parser searxng_html Extracted 0');
+                                    e.code = 'request_failed';
+                                    e.stage = 'web_search_request';
+                                    e._stage = 'web_search_request';
+                                    e.httpStatus = status;
+                                    e.status = status;
+                                    e.backend = 'searxng';
+                                    e.contentType = 'text/html';
+                                    return cb(e);
+                                });
+                                doGet(ddgUrl, cancellable, (ddgErr, ddgHtml) => {
+                                    if (ddgDone) return; ddgDone = true; _cancelTimeout(ddgTid);
+                                    if (_isCancelled(cancellable)) return;
+                                    if (ddgErr) {
+                                        const e = new Error('SearXNG HTML fallback returned no results (JSON HTTP ' + (status || 403) + ' Expected application/json Got text/html) DDG fallback failed: ' + (ddgErr.message||''));
+                                        e.code = 'request_failed';
+                                        e.stage = 'web_search_request';
+                                        e._stage = 'web_search_request';
+                                        e.httpStatus = status;
+                                        e.status = status;
+                                        e.backend = 'searxng';
+                                        return cb(e);
+                                    }
+                                    try {
+                                        const ddgRaw = _parseDdgHtmlForSources(ddgHtml);
+                                        if (ddgRaw.length === 0) {
+                                            const e = new Error('SearXNG HTML fallback returned no results (JSON HTTP ' + (status || 403) + ' Expected application/json Got text/html) Parser searxng_html Extracted 0 DDG fallback also 0');
+                                            e.code = 'request_failed';
+                                            e.stage = 'web_search_request';
+                                            e._stage = 'web_search_request';
+                                            e.httpStatus = status;
+                                            e.status = status;
+                                            e.backend = 'searxng';
+                                            e.contentType = 'text/html';
+                                            return cb(e);
+                                        }
+                                        cb(null, ddgRaw.slice(0, max));
+                                    } catch (e2) {
+                                        const e = new Error('SearXNG HTML fallback returned no results, DDG fallback parse failed');
+                                        e.code = 'invalid_response';
+                                        e.stage = 'web_search_request';
+                                        e._stage = 'web_search_request';
+                                        return cb(e);
+                                    }
+                                });
+                                return;
                             }
                             cb(null, raw.slice(0, max));
                         } catch (e) {
