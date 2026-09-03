@@ -66,9 +66,21 @@ function buildToolsDefinition(tools) {
     }];
 }
 
-function buildChatMessages(systemPrompt, userContent, groundingContext, searchResults) {
+function buildChatMessages(systemPrompt, userContent, groundingContext, searchResults, history) {
     const messages = [];
     if (systemPrompt) messages.push({ role: 'system', content: String(systemPrompt) });
+    // Phase 8 §3: push validated prior turns as real chat messages (user/assistant roles
+    // preserved) so the model can reference the conversation, then the current user message.
+    if (Array.isArray(history) && history.length > 0) {
+        for (const h of history) {
+            if (!h || typeof h !== 'object') continue;
+            const role = h.role;
+            if (role !== 'user' && role !== 'assistant') continue;
+            const content = String(h.content || '').trim();
+            if (!content) continue;
+            messages.push({ role: role, content: content });
+        }
+    }
     let userMsg = String(userContent || '');
     if (groundingContext) {
         userMsg = (userMsg ? userMsg + '\n\n' : '') + String(groundingContext);
@@ -82,8 +94,8 @@ function buildChatMessages(systemPrompt, userContent, groundingContext, searchRe
     return messages;
 }
 
-function buildRequestBody(model, systemPrompt, userContent, tools, groundingContext, searchResults) {
-    const messages = buildChatMessages(systemPrompt, userContent, groundingContext, searchResults);
+function buildRequestBody(model, systemPrompt, userContent, tools, groundingContext, searchResults, history) {
+    const messages = buildChatMessages(systemPrompt, userContent, groundingContext, searchResults, history);
     const body = { model: String(model), messages, stream: false };
     const toolsDef = buildToolsDefinition(tools);
     if (toolsDef) {
@@ -819,6 +831,7 @@ function createNineRouterProvider(opts) {
         let tools = null;
         let groundingContext = '';
         let searchResults = null;
+        let history = null;
         try {
             if (typeof payload.query === 'string') userContent = payload.query;
             else if (typeof payload.userContent === 'string') userContent = payload.userContent;
@@ -828,6 +841,7 @@ function createNineRouterProvider(opts) {
             if (Array.isArray(payload.tools)) tools = payload.tools;
             if (typeof payload.groundingContext === 'string') groundingContext = payload.groundingContext;
             if (Array.isArray(payload.searchResults)) searchResults = payload.searchResults;
+            if (Array.isArray(payload.history)) history = payload.history;
         } catch (e) {
             const se = _attachStage(e, 'request_build');
             if (cb) return cb(_makeStagedError(se.message || 'Invalid AI response', 'invalid_response', 'request_build'));
@@ -845,7 +859,7 @@ function createNineRouterProvider(opts) {
 
         let body;
         try {
-            body = buildRequestBody(model, systemPrompt, userContent, tools, groundingContext, searchResults);
+            body = buildRequestBody(model, systemPrompt, userContent, tools, groundingContext, searchResults, history);
             try {
                 if (tools && tools.length > 0) _aiLog('Requested tools:', tools.join(','));
                 else _aiLog('Requested tools: none');
@@ -1115,12 +1129,14 @@ function createNineRouterProvider(opts) {
         let tools = null;
         let groundingContext = '';
         let searchResults = null;
+        let history = null;
         try {
             if (typeof payload.query === 'string') userContent = payload.query;
             else if (typeof payload.userContent === 'string') userContent = payload.userContent;
             if (Array.isArray(payload.tools)) tools = payload.tools;
             if (typeof payload.groundingContext === 'string') groundingContext = payload.groundingContext;
             if (Array.isArray(payload.searchResults)) searchResults = payload.searchResults;
+            if (Array.isArray(payload.history)) history = payload.history;
         } catch (e) {
             const se = _attachStage(e, 'request_build');
             if (onEvent) return onEvent({ type: 'error', error: { code: se.code || 'invalid_response', message: _sanitizeDiagnosticString(se.message || 'Invalid AI response'), stage: se.stage, status: se.status } });
@@ -1138,7 +1154,7 @@ function createNineRouterProvider(opts) {
         let messages;
         let body;
         try {
-            messages = buildChatMessages(systemPrompt, userContent, groundingContext, searchResults);
+            messages = buildChatMessages(systemPrompt, userContent, groundingContext, searchResults, history);
             const bodyObj = { model: String(model), messages, stream: true };
             const toolsDef = buildToolsDefinition(tools);
             if (toolsDef) {

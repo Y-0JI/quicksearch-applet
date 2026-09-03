@@ -33,4 +33,26 @@ function buildUserPrompt(query, searchResults) {
     return q + '\n\n' + buildGroundingContext(searchResults);
 }
 
-module.exports = { buildSystemPrompt, buildGroundingContext, buildUserPrompt, SYSTEM_PROMPT };
+// Phase 8 §3/§4: conversation history for multi-turn context.
+// Validates roles (user/assistant only), drops empty content, bounds to `limit`
+// (most recent preserved, order kept) and caps per-message length.
+// Returns an array of { role, content } ready to be pushed as chat messages.
+const DEFAULT_HISTORY_LIMIT = 10;
+const MAX_HISTORY_MSG_LEN = 2000;
+
+function buildHistoryMessages(history, limit) {
+    const n = (typeof limit === 'number' && limit > 0) ? limit : DEFAULT_HISTORY_LIMIT;
+    if (!Array.isArray(history) || history.length === 0) return [];
+    const out = [];
+    for (const m of history) {
+        if (!m || typeof m !== 'object') continue;
+        const role = m.role;
+        if (role !== 'user' && role !== 'assistant') continue;
+        const content = String(m.content || '').trim();
+        if (!content) continue;
+        out.push({ role, content: content.slice(0, MAX_HISTORY_MSG_LEN) });
+    }
+    return out.slice(-n);
+}
+
+module.exports = { buildSystemPrompt, buildGroundingContext, buildUserPrompt, buildHistoryMessages, SYSTEM_PROMPT, DEFAULT_HISTORY_LIMIT };

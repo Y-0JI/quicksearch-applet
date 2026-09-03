@@ -210,7 +210,7 @@ function createAISearchEngine(deps) {
         }
     }
 
-    function search(query, cancellable, callbacks) {
+    function search(query, cancellable, callbacks, opts) {
         if (callbacks === undefined && cancellable != null) {
             if (typeof cancellable === 'function' || (typeof cancellable === 'object' && (cancellable.onAnswer || cancellable.onError || cancellable.onDone))) {
                 callbacks = cancellable;
@@ -235,9 +235,19 @@ function createAISearchEngine(deps) {
         let systemPrompt = '';
         try { systemPrompt = promptBuilder.buildSystemPrompt(); } catch (e) { systemPrompt = ''; }
 
+        // Phase 8 §3: bounded conversation history (validated) attached to every provider payload.
+        let historyMessages = [];
+        try { historyMessages = promptBuilder.buildHistoryMessages(opts && opts.history); } catch (e) { historyMessages = []; }
+        function _withHistory(p) {
+            if (historyMessages.length > 0) {
+                try { p.history = historyMessages; } catch (e) {}
+            }
+            return p;
+        }
+
         try {
             const firstPayload = enableGrounding ? { query: q, systemPrompt, tools: ['web_search'] } : { query: q, systemPrompt };
-            provider.request(firstPayload, myCancellable, (err, res) => {
+            provider.request(_withHistory(firstPayload), myCancellable, (err, res) => {
                 if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
                 if (err) {
                     const n = _normalizeProviderError(err);
@@ -279,7 +289,7 @@ function createAISearchEngine(deps) {
                                 let groundingContext = '';
                                 try { groundingContext = promptBuilder.buildGroundingContext(sources); } catch (e) { groundingContext = ''; }
                                 try {
-                                    provider.request({ query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: sources, tools: [] }, myCancellable, (err2, res2) => {
+                                    provider.request(_withHistory({ query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: sources, tools: [] }), myCancellable, (err2, res2) => {
                                         if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
                                         if (err2) {
                                             const n3 = _normalizeProviderError(err2);
@@ -393,7 +403,7 @@ function createAISearchEngine(deps) {
 
     // Streaming search: real progressive transport, no blocking non-streaming probe for direct answer.
     // Handles tool_call via streaming events (OpenAI streaming tool_calls).
-    function searchStream(query, cancellable, callbacks) {
+    function searchStream(query, cancellable, callbacks, opts) {
         if (callbacks === undefined && cancellable != null) {
             if (typeof cancellable === 'function' || (typeof cancellable === 'object' && (cancellable.onStart || cancellable.onDelta || cancellable.onComplete || cancellable.onError))) {
                 callbacks = cancellable;
@@ -406,7 +416,7 @@ function createAISearchEngine(deps) {
                 onAnswer: callbacks && callbacks.onComplete ? callbacks.onComplete : (callbacks && callbacks.onDone),
                 onError: callbacks && callbacks.onError,
                 onDone: callbacks && callbacks.onDone
-            });
+            }, opts);
         }
         gen++;
         const myGen = gen;
@@ -426,6 +436,16 @@ function createAISearchEngine(deps) {
 
         let systemPrompt = '';
         try { systemPrompt = promptBuilder.buildSystemPrompt(); } catch (e) { systemPrompt = ''; }
+
+        // Phase 8 §3: bounded conversation history (validated) attached to every provider payload.
+        let historyMessages = [];
+        try { historyMessages = promptBuilder.buildHistoryMessages(opts && opts.history); } catch (e) { historyMessages = []; }
+        function _withHistory(p) {
+            if (historyMessages.length > 0) {
+                try { p.history = historyMessages; } catch (e) {}
+            }
+            return p;
+        }
 
         let accumulatedText = '';
         let groundedSources = null;
@@ -608,7 +628,7 @@ function createAISearchEngine(deps) {
                         accumulatedText = '';
                         try {
                             provider.streamRequest(
-                                { query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: sources, tools: [] },
+                                _withHistory({ query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: sources, tools: [] }),
                                 myCancellable,
                                 handleSecondStreamEvent
                             );
@@ -654,7 +674,7 @@ function createAISearchEngine(deps) {
                             accumulatedText = '';
                             try {
                                 provider.streamRequest(
-                                    { query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: wResults.sources, tools: [] },
+                                    _withHistory({ query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: wResults.sources, tools: [] }),
                                     myCancellable,
                                     handleSecondStreamEvent
                                 );
@@ -684,7 +704,7 @@ function createAISearchEngine(deps) {
             const firstPayload = enableGrounding
                 ? { query: q, systemPrompt, tools: ['web_search'] }
                 : { query: q, systemPrompt };
-            provider.streamRequest(firstPayload, myCancellable, handleFirstStreamEvent);
+            provider.streamRequest(_withHistory(firstPayload), myCancellable, handleFirstStreamEvent);
         } catch (e) {
             const n = _normalizeProviderError(e);
             emitError(n.code, n.message, { stage: n.stage, status: n.status, name: n.name });

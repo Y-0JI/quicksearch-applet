@@ -345,35 +345,37 @@ test('AI6 P1-partial: engine delta then error emits error (not fake complete)', 
 });
 
 test('AI6 P1-partial: applet retains partial answer on error (no clear)', () => {
+    // Phase 8: partial retention moved from a single _aiAnswer flag to the conversation
+    // message model — failAssistant keeps the streamed content intact (never clears it).
+    const convMod = require('../ai/conversationState.js');
     const fs = require('node:fs');
     const path = require('node:path');
     const src = fs.readFileSync(path.join(__dirname, '..', 'applet.js'), 'utf8');
-    // Streaming onError is the one tied to searchStream deltas; verify its guard (second AI-6 marker)
+    // Streaming onError is the one tied to searchStream deltas; it must route non-cancelled
+    // errors to convMod.failAssistant (content-preserving) and cancelled to cancelAssistant.
     const firstIdx = src.indexOf('AI-6');
     const streamingOnErrorIdx = firstIdx >= 0 ? src.indexOf('AI-6', firstIdx + 1) : -1;
     const streamingSnippet = streamingOnErrorIdx >= 0 ? src.slice(streamingOnErrorIdx - 200, streamingOnErrorIdx + 600) : src.slice(src.indexOf('searchStream'));
-    assert.ok(streamingSnippet.includes('if (!self._aiAnswer)'), 'streaming onError must guard clear with existing answer check');
-    assert.ok(!streamingSnippet.includes("self._aiError = err;\n                        self._aiAnswer = ''"), 'streaming onError must not blindly clear _aiAnswer');
-    // Simulate runtime: partial answer exists -> error keeps it
-    let _aiAnswer = 'partial answer';
-    let _aiError = null;
-    let _aiLoading = true, _aiStreaming = true;
-    function onError(err) {
-        const code = err && err.code ? err.code : 'provider_error';
-        if (code === 'cancelled') return;
-        _aiLoading = false; _aiStreaming = false;
-        _aiError = err;
-        if (!_aiAnswer) _aiAnswer = '';
-    }
-    onError({ code: 'network_error', message: 'fail' });
-    assert.equal(_aiAnswer, 'partial answer', 'partial must remain after error');
-    assert.ok(_aiError, 'interrupted/error state active');
-    // error before first delta -> normal error UI (no partial)
-    _aiAnswer = '';
-    _aiError = null;
-    onError({ code: 'provider_error', message: 'fail' });
-    assert.equal(_aiAnswer, '', 'no partial before first delta -> remains empty');
-    assert.ok(_aiError, 'error state active');
+    assert.ok(streamingSnippet.includes('convMod.failAssistant'), 'streaming onError must route errors to conversation failAssistant');
+    assert.ok(streamingSnippet.includes('convMod.cancelAssistant'), 'streaming onError must route cancelled to conversation cancelAssistant');
+    assert.ok(!streamingSnippet.includes("_aiAnswer = ''"), 'streaming onError must not clear answer state');
+    // Behavior: partial answer exists -> error keeps it (via conversation model)
+    const conv = convMod.createConversation();
+    convMod.appendUser(conv, 'q');
+    const aId = convMod.appendAssistant(conv);
+    convMod.updateAssistant(conv, aId, 'partial answer');
+    convMod.failAssistant(conv, aId, { code: 'network_error', message: 'fail' });
+    const m = convMod.getMessages(conv)[1];
+    assert.equal(m.content, 'partial answer', 'partial must remain after error');
+    assert.equal(m.status, 'error', 'interrupted/error state active');
+    // error before first delta -> empty content (no partial), still error state
+    const conv2 = convMod.createConversation();
+    convMod.appendUser(conv2, 'q');
+    const aId2 = convMod.appendAssistant(conv2);
+    convMod.failAssistant(conv2, aId2, { code: 'provider_error', message: 'fail' });
+    const m2 = convMod.getMessages(conv2)[1];
+    assert.equal(m2.content, '', 'no partial before first delta -> remains empty');
+    assert.equal(m2.status, 'error', 'error state active');
 });
 
 test('AI6 P1-partial: error before first delta shows normal error', () => {

@@ -146,3 +146,29 @@
     font-size: 9pt;
     color: rgba(100, 160, 255, 0.95);
 }
+
+/* Phase 8: conversation UX */
+.quicksearch-ai-user {
+    padding: 10px 8px 2px 8px;
+    font-size: 9.5pt;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.quicksearch-ai-footer {
+    padding: 8px 8px 10px 8px;
+    spacing: 8px;
+}
+
+.quicksearch-ai-stop, .quicksearch-ai-reset {
+    padding: 5px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.10);
+    background-color: rgba(255,255,255,0.06);
+    font-size: 9pt;
+}
+
+.quicksearch-ai-stop { color: rgba(255,120,120,0.95); }
+.quicksearch-ai-stop:hover { background-color: rgba(255,80,80,0.18); }
+.quicksearch-ai-reset { color: rgba(180,180,180,0.95); }
+.quicksearch-ai-reset:hover { background-color: rgba(255,255,255,0.12); }

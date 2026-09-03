@@ -27,6 +27,8 @@ const contextActionsMod = require('./providers/contextActions.js');
 const fileLauncherMod = require('./providers/fileLauncher.js');
 let aiFactoryMod = null;
 try { aiFactoryMod = require('./ai/aiFactory.js'); } catch (e) {}
+let convMod = null;
+try { convMod = require('./ai/conversationState.js'); } catch (e) {}
 
 const UUID = "quicksearch@yoji";
 
@@ -126,6 +128,24 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         });
         this._autoScroll.add_actor(this.autoCompleteBox);
         this.resultsRegion.add_actor(this._autoScroll);
+
+        // Phase 8 §6/§13: AI footer — Stop (visible while a request is active) + Reset Conversation
+        this._aiFooter = new St.BoxLayout({ style_class: "quicksearch-ai-footer", vertical: false, visible: false });
+        this._stopButton = new St.Button({ style_class: "quicksearch-ai-stop", can_focus: false, reactive: true, track_hover: true, label: _("\u23f9 Stop") });
+        this._resetButton = new St.Button({ style_class: "quicksearch-ai-reset", can_focus: false, reactive: true, track_hover: true, label: _("\u21ba Reset") });
+        this._aiFooter.add(this._stopButton);
+        this._aiFooter.add(this._resetButton);
+        this.contentLayout.add(this._aiFooter);
+        try {
+            this._stopButton.connect("clicked", () => {
+                try { this._applet._stopAI(); } catch (e) {}
+                return Clutter.EVENT_STOP;
+            });
+            this._resetButton.connect("clicked", () => {
+                try { this._applet._resetConversation(); } catch (e) {}
+                return Clutter.EVENT_STOP;
+            });
+        } catch (e) {}
 
         // dedicated popup layer for context menu — must be above the
         // lightbox shade and not clipped by ScrollView / Dialog.
@@ -444,11 +464,13 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._mode = 'search';
         this._aiLoading = false;
         this._aiStreaming = false;
-        this._aiAnswer = '';
-        this._aiSources = [];
-        this._aiError = null;
         this._aiGen = 0;
         this._aiEngine = null;
+        // Phase 8: canonical conversation state (message model, history, per-message sources)
+        this._conversation = null;
+        if (convMod && typeof convMod.createConversation === 'function') {
+            try { this._conversation = convMod.createConversation(); } catch (e) { this._conversation = null; }
+        }
         this.ai_base_url = this.ai_base_url || "";
         this.ai_api_key = this.ai_api_key || "";
         this.ai_model = this.ai_model || "";
@@ -622,7 +644,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiGen++;
         this._aiLoading = false;
         this._aiStreaming = false;
-        this._aiError = null;
+        if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
         this._createAiEngine();
         if (this._mode === 'ai') {
             try { this._syncModeUI(); } catch (e) {}
@@ -659,6 +681,8 @@ class QuickSearchApplet extends Applet.IconApplet {
                 ov._modeButton.remove_style_class_name("quicksearch-mode-active");
             }
         } catch (e) {}
+        try { if (ov._aiFooter) ov._aiFooter.visible = isAi; } catch (e) {}
+        try { this._syncAIFooter(); } catch (e) {}
     }
 
     _toggleMode() {
@@ -683,9 +707,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             this._aiGen++;
             this._aiLoading = false;
             this._aiStreaming = false;
-            this._aiError = null;
-            this._aiAnswer = '';
-            this._aiSources = [];
+            if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
             this._mode = 'search';
             this._syncModeUI();
             // clear AI visuals
@@ -733,19 +755,16 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     _clearAIState() {
+        // Phase 8: cancel the active request but preserve conversation history.
         this._aiLoading = false;
         this._aiStreaming = false;
-        this._aiAnswer = '';
-        this._aiSources = [];
-        this._aiError = null;
+        if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
     }
 
     _clearAIStateVisualOnly() {
         this._aiLoading = false;
         this._aiStreaming = false;
-        this._aiAnswer = '';
-        this._aiSources = [];
-        this._aiError = null;
+        if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
         const ov = this._overlay;
         if (!ov || !ov.resultsBox) return;
         try { while (ov.resultsBox.get_n_children() > 0) ov.resultsBox.remove_child(ov.resultsBox.get_child_at_index(0)); } catch (e) {}
@@ -789,6 +808,15 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) { return 'AI request failed'; }
     }
 
+    _syncAIFooter() {
+        const ov = this._overlay;
+        if (!ov || !ov._stopButton) return;
+        const active = !!this._aiLoading || !!this._aiStreaming ||
+            (convMod && this._conversation ? !!convMod.hasActive(this._conversation) : false);
+        try { ov._stopButton.visible = this._mode === 'ai' && active; } catch (e) {}
+        try { if (ov._resetButton) ov._resetButton.visible = this._mode === 'ai'; } catch (e) {}
+    }
+
     _renderAIState() {
         const ov = this._overlay;
         if (!ov || !ov.resultsBox) return;
@@ -799,222 +827,297 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._rows = [];
         this._selIdx = -1;
         this._sortedResults = [];
-        if (this._aiLoading || (this._aiStreaming && !this._aiAnswer)) {
-            try {
-                const lbl = new St.Label({ text: _("Thinking..."), style_class: "quicksearch-ai-loading" });
-                try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
-                ov.resultsBox.add_child(lbl);
-                ov._scroll.visible = true;
-            } catch (e) {}
-        } else if (this._aiError) {
-            try {
-                const _diagOn = !!this.ai_debug_mode;
-                const _diagText = _diagOn ? this._buildAiDiagnosticText(this._aiError) : null;
-                // AI-6 §15: if partial answer exists, show it with error indication
-                if (this._aiAnswer) {
-                    const lbl = new St.Label({ text: String(this._aiAnswer), style_class: "quicksearch-ai-answer" });
-                    try {
-                        const ct = lbl.get_clutter_text();
-                        ct.set_line_wrap(true);
-                        if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
-                    } catch (e) {}
-                    ov.resultsBox.add_child(lbl);
-                    const errText = _diagOn ? _diagText : _("\u26a0 Interrupted");
-                    const errLbl = new St.Label({ text: errText, style_class: "quicksearch-ai-error" });
-                    try {
-                        const ect = errLbl.get_clutter_text();
-                        ect.set_line_wrap(true);
-                        if (typeof ect.set_selectable === 'function') try { ect.set_selectable(true); } catch (e2) {}
-                    } catch (e) {}
-                    ov.resultsBox.add_child(errLbl);
-                } else {
-                    const msg = _diagOn ? _diagText : _("Unable to get an AI response.");
-                    const lbl = new St.Label({ text: msg, style_class: "quicksearch-ai-error" });
-                    try {
-                        const ct2 = lbl.get_clutter_text();
-                        ct2.set_line_wrap(true);
-                        if (typeof ct2.set_selectable === 'function') try { ct2.set_selectable(true); } catch (e2) {}
-                    } catch (e) {}
-                    ov.resultsBox.add_child(lbl);
-                }
-                ov._scroll.visible = true;
-            } catch (e) {}
-        } else if (this._aiAnswer) {
-            try {
-                const lbl = new St.Label({ text: String(this._aiAnswer), style_class: "quicksearch-ai-answer" });
+
+        // Phase 8 §1/§2: render the full conversation from the message model — never
+        // just the latest answer. Each assistant message owns its content + sources (§10)
+        // and its status (streaming/complete/cancelled/error) (§5/§8/§9).
+        const messages = (convMod && this._conversation) ? convMod.getMessages(this._conversation) : [];
+        const diagOn = !!this.ai_debug_mode;
+
+        for (const msg of messages) {
+            if (!msg) continue;
+            if (msg.role === 'user') {
                 try {
-                    const ct = lbl.get_clutter_text();
-                    ct.set_line_wrap(true);
-                    if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
+                    const lbl = new St.Label({ text: _("You") + ": " + String(msg.content || ''), style_class: "quicksearch-ai-user" });
+                    try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+                    ov.resultsBox.add_child(lbl);
                 } catch (e) {}
-                ov.resultsBox.add_child(lbl);
-                // Phase AI-5: Sources section — only when sources exist
-                if (Array.isArray(this._aiSources) && this._aiSources.length > 0) {
-                    try {
-                        const srcLabel = new St.Label({ text: _("Sources"), style_class: "quicksearch-ai-sources-label" });
-                        ov.resultsBox.add_child(srcLabel);
-                        for (const src of this._aiSources) {
-                            if (!src || typeof src.url !== 'string' || !src.url) continue;
-                            const srcTitle = typeof src.title === 'string' && src.title.trim() ? src.title.trim() : (src.domain || src.url);
-                            const srcDomain = typeof src.domain === 'string' && src.domain.trim() ? src.domain : '';
-                            const displayText = srcDomain ? srcTitle + ' — ' + srcDomain : srcTitle;
-                            const srcRow = new St.Button({
-                                style_class: "quicksearch-ai-source-row",
-                                reactive: true,
-                                track_hover: true
-                            });
-                            const srcRowLabel = new St.Label({ text: displayText, style_class: "quicksearch-ai-source-title" });
+            } else if (msg.role === 'assistant') {
+                if (msg.status === 'streaming') {
+                    if (msg.content) {
+                        try {
+                            const lbl = new St.Label({ text: String(msg.content), style_class: "quicksearch-ai-answer" });
                             try {
-                                const ct = srcRowLabel.get_clutter_text();
-                                ct.set_line_wrap(false);
-                                if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.END);
+                                const ct = lbl.get_clutter_text();
+                                ct.set_line_wrap(true);
+                                if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
                             } catch (e) {}
-                            srcRow.set_child(srcRowLabel);
-                            const url = src.url;
-                            srcRow.connect("clicked", () => {
-                                try {
-                                    const trimmed = String(url || "").trim();
-                                    if (!/^https?:\/\/.+/i.test(trimmed)) return;
-                                    try {
-                                        const parsed = new URL(trimmed);
-                                        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
-                                    } catch (e) { return; }
-                                    try {
-                                        if (Gio && Gio.AppInfo && typeof Gio.AppInfo.launch_default_for_uri_async === 'function') {
-                                            Gio.AppInfo.launch_default_for_uri_async(trimmed, null, null, null);
-                                            return;
-                                        }
-                                    } catch (e) {}
-                                    const q = GLib.shell_quote(trimmed);
-                                    if (Util) Util.spawnCommandLine('xdg-open ' + q);
-                                    else if (imports.misc.util) imports.misc.util.spawnCommandLine('xdg-open ' + q);
-                                } catch (e) {}
-                            });
-                            ov.resultsBox.add_child(srcRow);
-                        }
+                            ov.resultsBox.add_child(lbl);
+                        } catch (e) {}
+                    } else {
+                        try {
+                            const lbl = new St.Label({ text: _("Thinking..."), style_class: "quicksearch-ai-loading" });
+                            try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+                            ov.resultsBox.add_child(lbl);
+                        } catch (e) {}
+                    }
+                } else if (msg.status === 'complete') {
+                    try {
+                        const lbl = new St.Label({ text: String(msg.content || ''), style_class: "quicksearch-ai-answer" });
+                        try {
+                            const ct = lbl.get_clutter_text();
+                            ct.set_line_wrap(true);
+                            if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
+                        } catch (e) {}
+                        ov.resultsBox.add_child(lbl);
+                    } catch (e) {}
+                    if (Array.isArray(msg.sources) && msg.sources.length > 0) {
+                        this._renderSourcesForMessage(ov, msg.sources);
+                    }
+                } else if (msg.status === 'cancelled') {
+                    // §8: partial content remains visible, status shown, request inactive
+                    if (msg.content) {
+                        try {
+                            const lbl = new St.Label({ text: String(msg.content), style_class: "quicksearch-ai-answer" });
+                            try {
+                                const ct = lbl.get_clutter_text();
+                                ct.set_line_wrap(true);
+                                if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
+                            } catch (e) {}
+                            ov.resultsBox.add_child(lbl);
+                        } catch (e) {}
+                    }
+                    try {
+                        const errLbl = new St.Label({ text: _("\u26a0 Interrupted") + " [" + _("Stopped") + "]", style_class: "quicksearch-ai-error" });
+                        try { errLbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+                        ov.resultsBox.add_child(errLbl);
+                    } catch (e) {}
+                } else if (msg.status === 'error') {
+                    // §9: error belongs to this assistant interaction; history stays intact
+                    const errText = diagOn ? this._buildAiDiagnosticText(msg.error) : _("Unable to get an AI response.");
+                    if (msg.content) {
+                        try {
+                            const lbl = new St.Label({ text: String(msg.content), style_class: "quicksearch-ai-answer" });
+                            try {
+                                const ct = lbl.get_clutter_text();
+                                ct.set_line_wrap(true);
+                                if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
+                            } catch (e) {}
+                            ov.resultsBox.add_child(lbl);
+                        } catch (e) {}
+                    }
+                    try {
+                        const errLbl = new St.Label({ text: errText, style_class: "quicksearch-ai-error" });
+                        try {
+                            const ct2 = errLbl.get_clutter_text();
+                            ct2.set_line_wrap(true);
+                            if (typeof ct2.set_selectable === 'function') try { ct2.set_selectable(true); } catch (e2) {}
+                        } catch (e) {}
+                        ov.resultsBox.add_child(errLbl);
                     } catch (e) {}
                 }
-                ov._scroll.visible = true;
-            } catch (e) {}
-        } else {
-            try { ov._scroll.visible = false; } catch (e) {}
+            }
         }
+
+        try { ov._scroll.visible = messages.length > 0; } catch (e) {}
+        try { this._syncAIFooter(); } catch (e) {}
         try { this._syncRegionGeometry(); } catch (e) {}
         try { this._syncSelection(); } catch (e) {}
+    }
+
+    _renderSourcesForMessage(ov, sources) {
+        // Phase 8 §10: sources are rendered under the assistant message that produced them.
+        if (!ov || !Array.isArray(sources) || sources.length === 0) return;
+        try {
+            const srcLabel = new St.Label({ text: _("Sources"), style_class: "quicksearch-ai-sources-label" });
+            ov.resultsBox.add_child(srcLabel);
+        } catch (e) {}
+        for (const src of sources) {
+            if (!src || typeof src.url !== 'string' || !src.url) continue;
+            const srcTitle = typeof src.title === 'string' && src.title.trim() ? src.title.trim() : (src.domain || src.url);
+            const srcDomain = typeof src.domain === 'string' && src.domain.trim() ? src.domain : '';
+            const displayText = srcDomain ? srcTitle + ' \u2014 ' + srcDomain : srcTitle;
+            try {
+                const srcRow = new St.Button({ style_class: "quicksearch-ai-source-row", reactive: true, track_hover: true });
+                const srcRowLabel = new St.Label({ text: displayText, style_class: "quicksearch-ai-source-title" });
+                try {
+                    const ct = srcRowLabel.get_clutter_text();
+                    ct.set_line_wrap(false);
+                    if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.END);
+                } catch (e) {}
+                srcRow.set_child(srcRowLabel);
+                const url = src.url;
+                srcRow.connect("clicked", () => {
+                    try {
+                        const trimmed = String(url || "").trim();
+                        if (!/^https?:\/\/.+/i.test(trimmed)) return;
+                        try {
+                            const parsed = new URL(trimmed);
+                            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
+                        } catch (e) { return; }
+                        try {
+                            if (Gio && Gio.AppInfo && typeof Gio.AppInfo.launch_default_for_uri_async === 'function') {
+                                Gio.AppInfo.launch_default_for_uri_async(trimmed, null, null, null);
+                                return;
+                            }
+                        } catch (e) {}
+                        const q = GLib.shell_quote(trimmed);
+                        if (Util) Util.spawnCommandLine('xdg-open ' + q);
+                        else if (imports.misc.util) imports.misc.util.spawnCommandLine('xdg-open ' + q);
+                    } catch (e) {}
+                });
+                ov.resultsBox.add_child(srcRow);
+            } catch (e) {}
+        }
     }
 
     _submitAIQuery(raw) {
         const q = String(raw || "").trim();
         if (!q) return;
+        if (!convMod || !this._conversation) { this._aiLoading = false; return; }
+
+        const conv = this._conversation;
+        // Phase 8 §12 rapid-send contract: cancel the active request (partial preserved as
+        // 'cancelled'), append the new user message, open a fresh streaming assistant message.
+        const settled = convMod.rapidSend(conv, q);
+        const assistantId = settled ? settled.assistantId : null;
         this._aiGen++;
         const myGen = this._aiGen;
         if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiLoading = true;
-        this._aiAnswer = '';
-        this._aiError = null;
-        this._aiSources = [];
         this._aiStreaming = false;
         this._renderAIState();
         if (!this._aiEngine) this._createAiEngine();
         if (!this._aiEngine) {
             if (myGen !== this._aiGen || this._mode !== 'ai') return;
             this._aiLoading = false;
-            this._aiError = { code: 'provider_error' };
+            if (assistantId != null) convMod.failAssistant(conv, assistantId, { code: 'provider_error' });
             this._renderAIState();
             return;
         }
 
+        // Phase 8 §3/§4: bounded prior history (excludes the current user message — the
+        // engine always sends it as the live query).
+        const history = convMod.getHistory(conv, 10);
         const self = this;
         function _check() { return myGen !== self._aiGen || self._mode !== 'ai'; }
         function _render() { if (!_check()) self._renderAIState(); }
-        function _cancelRender() { if (!_check()) { self._aiLoading = false; _render(); } }
 
-        // Try streaming path first
+        // Try streaming path first (§5: chunks append to the same assistant message)
         if (typeof this._aiEngine.searchStream === 'function') {
             try {
-                this._aiEngine.searchStream(q, {
+                this._aiEngine.searchStream(q, null, {
                     onStart: function() {
-                        if (_check()) return;
+                        if (_check() || assistantId == null) return;
                         self._aiLoading = false;
                         self._aiStreaming = true;
                         _render();
                     },
                     onDelta: function(chunk, fullText) {
-                        if (_check()) return;
+                        if (_check() || assistantId == null) return;
                         self._aiLoading = false;
                         self._aiStreaming = true;
-                        self._aiAnswer = fullText || '';
+                        convMod.updateAssistant(conv, assistantId, fullText || '');
                         _render();
                     },
                     onComplete: function(data) {
-                        if (_check()) return;
+                        if (_check() || assistantId == null) return;
                         self._aiLoading = false;
                         self._aiStreaming = false;
-                        self._aiAnswer = data && typeof data.text === 'string' ? data.text : String((data && data.text) || '');
-                        self._aiSources = Array.isArray(data && data.sources) ? data.sources : [];
-                        self._aiError = null;
+                        const text = data && typeof data.text === 'string' ? data.text : String((data && data.text) || '');
+                        const sources = Array.isArray(data && data.sources) ? data.sources : [];
+                        convMod.completeAssistant(conv, assistantId, text, sources);
                         _render();
                     },
                     onError: function(err) {
-                        if (_check()) return;
-                        var code = err && err.code ? err.code : 'provider_error';
-                        if (code === 'cancelled') { _cancelRender(); return; }
+                        if (_check() || assistantId == null) return;
+                        const code = err && err.code ? err.code : 'provider_error';
                         self._aiLoading = false;
                         self._aiStreaming = false;
-                        self._aiError = err || { code: code };
-                        // AI-6 §15: retain partial answer if already streamed
-                        if (!self._aiAnswer) self._aiAnswer = '';
+                        if (code === 'cancelled') {
+                            convMod.cancelAssistant(conv, assistantId);
+                        } else {
+                            convMod.failAssistant(conv, assistantId, err || { code: code });
+                        }
                         _render();
                     }
-                });
+                }, { history });
             } catch (e) {
                 if (_check()) return;
                 self._aiLoading = false;
-                self._aiError = { code: 'provider_error', message: e && e.message };
+                if (assistantId != null) convMod.failAssistant(conv, assistantId, { code: 'provider_error', message: e && e.message });
                 _render();
             }
             return;
         }
 
-        // Fallback: non-streaming path (existing behavior)
+        // Fallback: non-streaming path
         const cbs = {
             onAnswer: (data) => {
-                if (_check()) return;
+                if (_check() || assistantId == null) return;
                 self._aiLoading = false;
-                self._aiAnswer = data && typeof data.text === 'string' ? data.text : String((data && data.text) || '');
-                self._aiSources = Array.isArray(data && data.sources) ? data.sources : [];
-                self._aiError = null;
+                self._aiStreaming = false;
+                convMod.completeAssistant(conv, assistantId,
+                    data && typeof data.text === 'string' ? data.text : String((data && data.text) || ''),
+                    Array.isArray(data && data.sources) ? data.sources : []);
                 _render();
             },
             onError: (err) => {
-                if (_check()) return;
+                if (_check() || assistantId == null) return;
                 const code = err && err.code ? err.code : 'provider_error';
-                if (code === 'cancelled') { _cancelRender(); return; }
                 self._aiLoading = false;
-                self._aiError = err || { code };
-                self._aiAnswer = '';
+                self._aiStreaming = false;
+                if (code === 'cancelled') convMod.cancelAssistant(conv, assistantId);
+                else convMod.failAssistant(conv, assistantId, err || { code });
                 _render();
             },
             onDone: (err, data) => {
-                if (_check()) return;
+                if (_check() || assistantId == null) return;
                 if (err) {
                     const code = err.code || 'provider_error';
-                    if (code === 'cancelled') { _cancelRender(); return; }
-                    self._aiLoading = false; self._aiError = err; self._aiAnswer = ''; self._aiSources = []; _render();
+                    self._aiLoading = false;
+                    self._aiStreaming = false;
+                    if (code === 'cancelled') convMod.cancelAssistant(conv, assistantId);
+                    else convMod.failAssistant(conv, assistantId, err);
+                    _render();
                 } else if (data) {
-                    self._aiLoading = false; self._aiAnswer = data.text || ''; self._aiSources = Array.isArray(data.sources) ? data.sources : []; self._aiError = null; _render();
+                    self._aiLoading = false;
+                    self._aiStreaming = false;
+                    convMod.completeAssistant(conv, assistantId, data.text || '', Array.isArray(data.sources) ? data.sources : []);
+                    _render();
                 }
             }
         };
         try {
-            const maybe = this._aiEngine.search(q, cbs);
+            const maybe = this._aiEngine.search(q, null, cbs, { history });
             void maybe;
         } catch (e) {
             if (_check()) return;
             self._aiLoading = false;
-            self._aiError = { code: 'provider_error', message: e && e.message };
+            if (assistantId != null) convMod.failAssistant(conv, assistantId, { code: 'provider_error', message: e && e.message });
             _render();
         }
+    }
+
+    // Phase 8 §6/§7: user-visible Stop — calls the existing internal cancellation lifecycle
+    // (engine.cancel() invalidates late callbacks; conversation marks the message 'cancelled').
+    _stopAI() {
+        if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
+        this._aiGen++;
+        this._aiLoading = false;
+        this._aiStreaming = false;
+        if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
+        try { this._renderAIState(); } catch (e) {}
+    }
+
+    // Phase 8 §13: deterministic conversation reset — cancel active, clear model + UI.
+    _resetConversation() {
+        if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
+        this._aiGen++;
+        this._aiLoading = false;
+        this._aiStreaming = false;
+        if (convMod && this._conversation) { try { convMod.reset(this._conversation); } catch (e) {} }
+        try { this._renderAIState(); } catch (e) {}
     }
 
     _applySearchEngineSetting() {
@@ -1053,14 +1156,14 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!this._overlay) {
             this._overlay = new QuickSearchOverlay(this);
         }
-        // AI-2: every open starts in Normal Search (§16)
+        // AI-2: every open starts in Normal Search (§16); conversation history is preserved
+        // across open/close — only the Reset button clears it (§13).
         this._mode = 'search';
         this._aiLoading = false;
-        this._aiAnswer = '';
-        this._aiSources = [];
-        this._aiError = null;
+        this._aiStreaming = false;
         if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiGen++;
+        if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
         this._overlay.open(global.get_current_time());
         this._overlay.dialogLayout.set_height(global.screen_height - 2);
         global.stage.set_key_focus(this._overlay._entry);
@@ -1084,6 +1187,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiGen++;
         this._aiLoading = false;
         this._aiStreaming = false;
+        if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
         this._cancelPopupHide();
         this._ptrInEntry = false;
         this._ptrInPopup = false;
@@ -1292,10 +1396,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 if (this._overlay && this._overlay._autoScroll) this._overlay._autoScroll.visible = false;
                 this._rows = [];
             } catch (e) {}
-            if (this._aiError) {
-                this._aiError = null;
-                if (!this._aiLoading && !this._aiAnswer) this._renderAIState();
-            }
+            if (!this._aiLoading && !this._aiStreaming) { try { this._renderAIState(); } catch (e) {} }
             return;
         }
         this._selIdx = -1;
