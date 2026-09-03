@@ -216,19 +216,28 @@ test('P7 lifecycle 5: stale provider result from Query A never lands in Query B'
     // hold A's pending file callback (B will overwrite the shared slot)
     const aFile = fakes.fileCb();
     assert.ok(aFile, 'A file call captured');
+    // baseline: deliveries seen so far are legitimately A's own (sync app flush before B starts)
+    const aDeliveries = got.all.length;
     engine.query('BBB', got.cb);
     await waitRun();
-    // deliver A's file rows late -> must be dropped as stale
+    // deliver A's file rows late -> must be dropped as stale (must not reach ANY consumer delivery)
     aFile.cb([makeResult({ type: 'file', title: 'FileAAA_late', path: '/tmp/AAA_late.txt', score: scoreResult('file-prefix') })]);
     await waitRun();
-    assert.ok(!got.last().some(r => /FileAAA/.test(r.title)), 'stale A file rows must be dropped');
-    // now release B's providers -> B rows land
-    fakes.releaseFile();
+    // Release B's WEB first so a partial flush happens while B's FILE bucket is still empty:
+    // if A's stale file rows had leaked into the shared bucket, they would surface on this flush.
     fakes.releaseWeb();
+    await waitRun();
+    const midRows = got.last();
+    assert.ok(midRows.some(r => r.type === 'web' && /BBB/.test(r.title)), 'B web rows delivered on partial flush');
+    // release B's file last -> final B rows land
+    fakes.releaseFile();
     await waitRun();
     const finalRows = got.last();
     assert.ok(finalRows.some(r => /BBB/.test(r.title)), 'B rows delivered');
-    assert.ok(!finalRows.some(r => /AAA/.test(r.title)), 'no A rows anywhere');
+    // strong invariant: NOTHING delivered after Query B started may contain A rows (only A's own
+    // pre-B deliveries may, since A's sync app flush legitimately ran before B superseded it)
+    const postB = got.all.slice(aDeliveries);
+    assert.ok(!postB.some(rows => rows.some(r => /AAA/.test(r.title))), 'no A rows delivered once Query B became active: ' + JSON.stringify(postB.map(r => r.map(x => x.title))));
     engine.destroy();
 });
 
@@ -239,13 +248,14 @@ test('P7 lifecycle 6: cancel stops late delivery and engine stays usable', async
     const got = collectResults();
     engine.query('one', got.cb);
     await waitRun();
+    // baseline BEFORE the late callbacks are released — a late delivery would change this count
+    const before = got.all.length;
+    assert.ok(before >= 1, 'initial sync flush already delivered');
     engine.cancel();
     fakes.releaseFile();
     fakes.releaseWeb();
     await waitRun();
-    const before = got.all.length;
-    // late callbacks after cancel must not flush anything new
-    assert.equal(got.all.length, before, 'no delivery after cancel');
+    assert.equal(got.all.length, before, 'late callbacks after cancel must not deliver results');
     // engine still usable for a fresh query
     const got2 = collectResults();
     engine.query('two', got2.cb);
@@ -302,13 +312,23 @@ test('P7 lifecycle 9: destroy cancels and destroys providers exactly once; null 
     const got2 = collectResults();
     engine2.query('xyz', got2.cb);
     await waitRun();
+    // baseline BEFORE destroy + late release — a stale delivery would push this count up
+    const before = got2.all.length;
+    assert.ok(before >= 1, 'initial sync flush already delivered');
     engine2.destroy();
     assert.deepEqual(fakes2.log.destroys.sort(), ['app', 'file', 'web'], 'all providers destroyed');
     fakes2.releaseFile();
     fakes2.releaseWeb();
     await waitRun();
-    const before = got2.all.length;
-    assert.equal(got2.all.length, before, 'no delivery after destroy');
+    assert.equal(got2.all.length, before, 'late callbacks after destroy must not deliver results');
+    // destroy must not be re-entrant from late async callbacks: engine stays dead for that query
+    const got3 = collectResults();
+    engine2.query('revived?', got3.cb);
+    await waitRun();
+    // searchEngine has no destroyed flag; destroy() only cancels generation. A fresh query starts a
+    // NEW generation, so it must deliver normally — late callbacks from the destroyed query are what
+    // must stay blocked, verified above. Re-query after destroy must not throw or double-deliver.
+    assert.ok(Array.isArray(got3.last()), 'post-destroy query still answers without throw');
 });
 
 // 10. new query clears old buckets: sync-only Query B must not contain Query A rows
@@ -327,6 +347,72 @@ test('P7 lifecycle 10: new query clears previous buckets (no row bleed across qu
     assert.ok(rows.some(r => /next/.test(r.title)), 'next rows present');
     assert.ok(!rows.some(r => /prev/.test(r.title)), 'prev rows cleared for new query');
     engine.destroy();
+});
+
+// 11. stale WEB provider: Query A web pending -> Query B starts -> A's late web rows are dropped
+// (explicit web-provider sibling of test 5; A's rows must never reach B's buckets/deliveries)
+test('P7 lifecycle 11: stale WEB provider from Query A never lands in Query B', async () => {
+    const fakes = makeFakeProviders();
+    const engine = makeEngine(fakes);
+    const got = collectResults();
+    engine.query('AAA', got.cb);
+    await waitRun();
+    // hold A's pending web callback (B will overwrite the shared slot)
+    const aWeb = fakes.webCb();
+    assert.ok(aWeb, 'A web call captured');
+    engine.query('BBB', got.cb);
+    await waitRun();
+    // deliver A's web rows late -> must be dropped as stale
+    aWeb.cb([makeResult({ type: 'web', title: 'WebAAA_late', url: 'https://example.com/AAA_late', description: 'd', score: scoreResult('web-instant') })]);
+    await waitRun();
+    // now release B's providers -> B web rows land
+    fakes.releaseFile();
+    fakes.releaseWeb();
+    await waitRun();
+    const finalRows = got.last();
+    assert.ok(finalRows.some(r => /BBB/.test(r.title)), 'B rows delivered');
+    assert.ok(finalRows.some(r => r.type === 'web' && /BBB/.test(r.title)), 'B web rows delivered');
+    // strong invariant: stale A web rows never reached ANY consumer delivery
+    assert.ok(!got.all.some(rows => rows.some(r => /WebAAA/.test(r.title))), 'stale A web rows never reached any consumer delivery');
+    engine.destroy();
+});
+
+// 12. stale WEB provider after cancel: Query A web pending -> engine.cancel() -> A's web completes late
+// -> no new result, no consumer delivery, engine not reactivated, no unhandled rejection
+test('P7 lifecycle 12: stale WEB after cancel never delivers', async () => {
+    const fakes = makeFakeProviders();
+    const engine = makeEngine(fakes);
+    const got = collectResults();
+    const unhandled = [];
+    const onUnhandled = (e) => unhandled.push(e);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+        engine.query('AAA', got.cb);
+        await waitRun();
+        const aWeb = fakes.webCb();
+        const aFile = fakes.fileCb();
+        assert.ok(aWeb, 'A web call captured');
+        assert.ok(aFile, 'A file call captured');
+        const before = got.all.length; // baseline BEFORE late release
+        assert.ok(before >= 1, 'initial sync flush already delivered');
+        engine.cancel();
+        // A's providers complete after cancel (deliver directly on the held callbacks)
+        aWeb.cb([makeResult({ type: 'web', title: 'WebAAA_late', url: 'https://example.com/AAA_late', description: 'd', score: scoreResult('web-instant') })]);
+        aFile.cb([makeResult({ type: 'file', title: 'FileAAA_late', path: '/tmp/AAA_late.txt', score: scoreResult('file-prefix') })]);
+        await waitRun();
+        assert.equal(got.all.length, before, 'no consumer delivery after cancel with late web completion');
+        assert.ok(!got.all.some(rows => rows.some(r => /WebAAA/.test(r.title))), 'late web rows never delivered');
+        // state did not flip back active: fresh query works and still only sees its own rows
+        const got2 = collectResults();
+        engine.query('BBB', got2.cb);
+        await waitRun();
+        assert.ok(got2.last().some(r => /BBB/.test(r.title)), 'engine usable after cancel');
+        assert.ok(!got2.last().some(r => /AAA/.test(r.title)), 'no stale rows in new query');
+    } finally {
+        process.removeListener('unhandledRejection', onUnhandled);
+        engine.destroy();
+    }
+    assert.equal(unhandled.length, 0, 'no unhandled rejection from late web callback after cancel');
 });
 
 Module.prototype.require = origRequire;
