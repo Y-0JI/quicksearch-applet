@@ -4,18 +4,29 @@
 let aiSearchEngineMod = null;
 let aiProviderMod = null;
 let nineRouterProviderMod = null;
-try { aiSearchEngineMod = require('./aiSearchEngine.js'); } catch (e) {}
-try { aiProviderMod = require('./aiProvider.js'); } catch (e) {}
-try { nineRouterProviderMod = require('./nineRouterProvider.js'); } catch (e) {}
+function _tryRequire(paths) {
+    for (const p of paths) {
+        try { const m = require(p); if (m) return m; } catch (e) {}
+    }
+    return null;
+}
+aiSearchEngineMod = _tryRequire(['./ai/aiSearchEngine.js', './aiSearchEngine.js', 'ai/aiSearchEngine.js']);
+if (!aiSearchEngineMod) try { global.log("[quicksearch@yoji] aiFactory load aiSearchEngine failed all paths"); } catch (e2) {}
+aiProviderMod = _tryRequire(['./ai/aiProvider.js', './aiProvider.js', 'ai/aiProvider.js']);
+if (!aiProviderMod) try { global.log("[quicksearch@yoji] aiFactory load aiProvider failed all paths"); } catch (e2) {}
+nineRouterProviderMod = _tryRequire(['./ai/nineRouterProvider.js', './nineRouterProvider.js', 'ai/nineRouterProvider.js']);
+if (!nineRouterProviderMod) try { global.log("[quicksearch@yoji] aiFactory load nineRouter failed all paths"); } catch (e2) {}
 
 function _trim(s) { return String(s || '').trim(); }
 
 function _makeAuthErrorProvider() {
+    function _attach(e) { e.stage = 'provider_create'; e._stage = 'provider_create'; return e; }
     if (aiProviderMod && typeof aiProviderMod.createMockAiProvider === 'function') {
         return aiProviderMod.createMockAiProvider({
             handler: (req, cb) => {
                 const e = new Error('AI provider auth error');
                 e.code = 'auth_error';
+                _attach(e);
                 cb(e);
             }
         });
@@ -25,18 +36,28 @@ function _makeAuthErrorProvider() {
             if (typeof cancellable === 'function' && cb === undefined) { cb = cancellable; }
             const e = new Error('AI provider auth error');
             e.code = 'auth_error';
+            _attach(e);
             if (cb) cb(e);
+        },
+        streamRequest(payload, cancellable, onEvent) {
+            if (typeof cancellable === 'function' && onEvent === undefined) { onEvent = cancellable; }
+            const e = new Error('AI provider auth error');
+            e.code = 'auth_error';
+            _attach(e);
+            if (onEvent) onEvent({ type: 'error', error: { code: 'auth_error', message: e.message, stage: 'provider_create' } });
         },
         destroy() {}
     };
 }
 
 function _makeProviderErrorProvider() {
+    function _attach(e) { e.stage = 'provider_create'; e._stage = 'provider_create'; return e; }
     if (aiProviderMod && typeof aiProviderMod.createMockAiProvider === 'function') {
         return aiProviderMod.createMockAiProvider({
             handler: (req, cb) => {
                 const e = new Error('AI provider error');
                 e.code = 'provider_error';
+                _attach(e);
                 cb(e);
             }
         });
@@ -46,7 +67,15 @@ function _makeProviderErrorProvider() {
             if (typeof cancellable === 'function' && cb === undefined) { cb = cancellable; }
             const e = new Error('AI provider error');
             e.code = 'provider_error';
+            _attach(e);
             if (cb) cb(e);
+        },
+        streamRequest(payload, cancellable, onEvent) {
+            if (typeof cancellable === 'function' && onEvent === undefined) { onEvent = cancellable; }
+            const e = new Error('AI provider error');
+            e.code = 'provider_error';
+            _attach(e);
+            if (onEvent) onEvent({ type: 'error', error: { code: 'provider_error', message: e.message, stage: 'provider_create' } });
         },
         destroy() {}
     };

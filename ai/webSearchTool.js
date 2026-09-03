@@ -17,7 +17,9 @@
 // canonical AI-3 path.
 
 const Gt = (() => {
-    try { return require('./groundingTypes.js'); } catch (e) { return null; }
+    try { return require('./ai/groundingTypes.js'); } catch (e) {}
+    try { return require('./groundingTypes.js'); } catch (e) {}
+    try { return require('ai/groundingTypes.js'); } catch (e) { return null; }
 })();
 
 function _isCancelled(c) {

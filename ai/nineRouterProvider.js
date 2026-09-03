@@ -34,7 +34,12 @@ function _isCancelled(c) {
 
 function buildChatCompletionsUrl(baseUrl) {
     let raw = String(baseUrl || '').trim();
-    if (!raw) throw new Error('baseUrl required');
+    if (!raw) throw _attachStage(new Error('baseUrl required'), 'provider_create');
+    const alias = raw.toLowerCase();
+    if (alias === 'openrouter') raw = 'https://openrouter.ai/api';
+    else if (alias === '9router' || alias === 'nine-router' || alias === 'ninerouter') raw = 'http://127.0.0.1:20128';
+    else if (alias === 'openai') raw = 'https://api.openai.com';
+    if (!/^https?:\/\//i.test(raw)) throw _attachStage(new Error('AI base URL must start with http:// or https:// — got: ' + raw.slice(0, 80)), 'provider_create');
     raw = raw.replace(/\/+$/, '');
     if (raw.endsWith('/v1')) raw = raw.slice(0, -3);
     raw = raw.replace(/\/+$/, '');
@@ -76,11 +81,14 @@ function parseResponseText(text, status) {
         err.code = 'invalid_response';
         throw err;
     }
-    const content = choice.message.content;
+    let content = choice.message.content;
     if (typeof content !== 'string') {
         const err = new Error('Invalid AI response');
         err.code = 'invalid_response';
         throw err;
+    }
+    if (!content.trim() && choice.message.reasoning_content && String(choice.message.reasoning_content).trim()) {
+        content = String(choice.message.reasoning_content).trim();
     }
     return { type: 'answer', text: content };
 }
@@ -999,6 +1007,19 @@ function createNineRouterProvider(opts) {
             }
             try {
                 const parsed = parseResponseText(text, status);
+                if (!parsed.text || !String(parsed.text).trim()) {
+                    let rc = '';
+                    try {
+                        const d = JSON.parse(text);
+                        rc = d && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.reasoning_content || '';
+                    } catch (e) {}
+                    if (rc && String(rc).trim()) {
+                        parsed.text = String(rc).trim();
+                        return complete(null, parsed);
+                    }
+                    const e2 = _makeStagedError('Invalid AI response', 'invalid_response', 'stream_parse');
+                    return complete(e2);
+                }
                 return complete(null, parsed);
             } catch (e) {
                 if (e._status) e.code = httpStatusToCode(e._status);
@@ -1135,7 +1156,10 @@ function createNineRouterProvider(opts) {
 
         let parser = null;
         try {
-            const sp = require('./streamParser.js');
+            let sp = null;
+            try { sp = require('./ai/streamParser.js'); } catch (e) {}
+            if (!sp) try { sp = require('./streamParser.js'); } catch (e) {}
+            if (!sp) try { sp = require('ai/streamParser.js'); } catch (e) {}
             parser = sp.createStreamParser({
                 onEvent: (evt) => {
                     if (state.settled || _isCancelled(cancellable)) return;

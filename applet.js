@@ -537,7 +537,6 @@ class QuickSearchApplet extends Applet.IconApplet {
             this._aiEngine = null;
         }
         if (!aiFactoryMod || typeof aiFactoryMod.createAiEngine !== 'function') return;
-        // test injection hook (headless tests) — provider only; AI-2 has no grounding
         if (this._injectedProvider) {
             try {
                 this._aiEngine = aiFactoryMod.createAiEngine({
@@ -546,13 +545,46 @@ class QuickSearchApplet extends Applet.IconApplet {
             } catch (e) {}
             return;
         }
+        let baseUrl = this.ai_base_url;
+        let apiKey = this.ai_api_key;
+        let model = this.ai_model;
+        if (!String(baseUrl || '').trim() || !String(apiKey || '').trim() || !String(model || '').trim()) {
+            try {
+                const GLib2 = imports.gi.GLib;
+                const path = GLib2.get_home_dir() + "/.config/cinnamon/spices/quicksearch@yoji/quicksearch@yoji.json";
+                const [ok, contents] = GLib2.file_get_contents(path);
+                if (ok) {
+                    const text = imports.byteArray.toString(contents);
+                    const j = JSON.parse(text);
+                    if (!String(baseUrl || '').trim() && j["ai-base-url"] && j["ai-base-url"].value) baseUrl = j["ai-base-url"].value;
+                    if (!String(apiKey || '').trim() && j["ai-api-key"] && j["ai-api-key"].value) apiKey = j["ai-api-key"].value;
+                    if (!String(model || '').trim() && j["ai-model"] && j["ai-model"].value) model = j["ai-model"].value;
+                }
+            } catch (e) {}
+        }
+        try { this.ai_base_url = String(baseUrl || '').trim(); } catch (e) {}
+        try { this.ai_api_key = String(apiKey || '').trim(); } catch (e) {}
+        try { this.ai_model = String(model || '').trim(); } catch (e) {}
         try {
-            this._aiEngine = aiFactoryMod.createAiEngine({
-                baseUrl: this.ai_base_url,
-                apiKey: this.ai_api_key,
-                model: this.ai_model
-            });
+            const hasBase = !!String(baseUrl || '').trim();
+            const hasKey = !!String(apiKey || '').trim();
+            const hasModel = !!String(model || '').trim();
+            const msg = "[quicksearch@yoji] AI config base=" + (hasBase ? "set" : "empty") + " key=" + (hasKey ? "set len " + String(apiKey).length : "empty") + " model=" + (hasModel ? String(model).slice(0, 30) : "empty");
+            try { global.log(msg); } catch (e) {}
         } catch (e) {}
+        try {
+            if (!aiFactoryMod || typeof aiFactoryMod.createAiEngine !== 'function') {
+                try { global.log("[quicksearch@yoji] aiFactoryMod missing: " + String(typeof aiFactoryMod) + " createAiEngine=" + String(aiFactoryMod && typeof aiFactoryMod.createAiEngine)); } catch (e2) {}
+            }
+            this._aiEngine = aiFactoryMod.createAiEngine({
+                baseUrl: baseUrl,
+                apiKey: apiKey,
+                model: model
+            });
+            try { global.log("[quicksearch@yoji] AI engine created ok stream=" + String(!!(this._aiEngine && this._aiEngine.searchStream))); } catch (e2) {}
+        } catch (e) {
+            try { global.log("[quicksearch@yoji] AI engine create failed: " + String(e && e.message || e) + " stack=" + String(e && e.stack || "").slice(0, 800)); } catch (e2) {}
+        }
     }
 
     _rebuildAiEngine() {

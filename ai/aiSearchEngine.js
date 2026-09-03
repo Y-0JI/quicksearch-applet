@@ -1,10 +1,12 @@
 // ai/aiSearchEngine.js — orchestrator. Owns generation/cancellation, normalizes errors.
 // Isolated from searchEngine.js. Only tool: web_search.
 // AI-3A: canonical contracts live in groundingTypes.js.
-const promptBuilderMod = require('./promptBuilder.js');
-const sourceFormatterMod = require('./sourceFormatter.js');
-let Gt = null;
-try { Gt = require('./groundingTypes.js'); } catch (e) {}
+function _tryReq(p) { try { return require(p); } catch (e) { return null; } }
+let promptBuilderMod = _tryReq('./ai/promptBuilder.js') || _tryReq('./promptBuilder.js') || _tryReq('ai/promptBuilder.js');
+let sourceFormatterMod = _tryReq('./ai/sourceFormatter.js') || _tryReq('./sourceFormatter.js') || _tryReq('ai/sourceFormatter.js');
+let Gt = _tryReq('./ai/groundingTypes.js') || _tryReq('./groundingTypes.js') || _tryReq('ai/groundingTypes.js');
+if (!promptBuilderMod) try { global.log("[quicksearch@yoji] aiSearchEngine missing promptBuilder"); } catch (e) {}
+if (!sourceFormatterMod) try { global.log("[quicksearch@yoji] aiSearchEngine missing sourceFormatter"); } catch (e) {}
 
 const ERROR_MESSAGES = {
     provider_error: 'AI provider unavailable',
@@ -213,6 +215,9 @@ function createAISearchEngine(deps) {
                     return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
                 }
                 if (res.type === 'answer') {
+                    if (!res.text || !String(res.text).trim()) {
+                        return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
+                    }
                     return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
                 }
                 if (res.type === 'tool_call') {
@@ -278,7 +283,7 @@ function createAISearchEngine(deps) {
                                     if (res2 && res2.type === 'tool_call') {
                                         return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
                                     }
-                                    if (!res2 || res2.type !== 'answer' || typeof res2.text !== 'string') {
+                                    if (!res2 || res2.type !== 'answer' || typeof res2.text !== 'string' || !String(res2.text).trim()) {
                                         return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
                                     }
                                     return _deliverAnswer(myGen, myCancellable, callbacks, res2.text, sources);

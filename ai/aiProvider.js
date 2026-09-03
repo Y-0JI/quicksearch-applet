@@ -215,9 +215,14 @@ function createMockStreamingAiProvider(opts) {
 
 const _exp = { createMockAiProvider, createMockStreamingAiProvider, createAiProvider, normalizeResult, ALLOWED_TOOL };
 try {
-    const nr = require('./nineRouterProvider.js');
-    _exp.createNineRouterProvider = nr.createNineRouterProvider;
-    _exp.NineRouterProvider = nr.createNineRouterProvider;
-    _exp.buildChatCompletionsUrl = nr.buildChatCompletionsUrl;
+    let nr = null;
+    try { nr = require('./ai/nineRouterProvider.js'); } catch (e) {}
+    if (!nr) try { nr = require('./nineRouterProvider.js'); } catch (e) {}
+    if (!nr) try { nr = require('ai/nineRouterProvider.js'); } catch (e) {}
+    if (nr) {
+        _exp.createNineRouterProvider = nr.createNineRouterProvider;
+        _exp.NineRouterProvider = nr.createNineRouterProvider;
+        _exp.buildChatCompletionsUrl = nr.buildChatCompletionsUrl;
+    }
 } catch (e) {}
 module.exports = _exp;
