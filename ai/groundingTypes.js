@@ -17,11 +17,16 @@ function isValidHttpUrl(u) {
     if (typeof u !== 'string') return false;
     const s = u.trim();
     if (!s) return false;
-    if (!/^https?:\/\/.+/i.test(s)) return false;
-    try {
-        const parsed = new URL(s);
-        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-    } catch (e) { return false; }
+    if (!/^https?:\/\//i.test(s)) return false;
+    // Structural validation that does NOT depend on a global `URL` API: Cinnamon/GJS applet
+    // sandboxes may lack `URL`, and a throwing constructor inside try/catch would discard every
+    // valid parser-produced http(s) URL (runtime symptom: sources silently empty). Keep this
+    // gate in sync with ai/searchProviders/searchResult.js::isHttpUrl.
+    if (/[\s\u0000-\u001f]/.test(s)) return false;
+    const rest = s.slice(s.indexOf('://') + 3);
+    if (!rest) return false;
+    if (/^[./?#:"]/.test(rest)) return false;
+    return true;
 }
 
 function normalizeMaxResults(v) {

@@ -196,3 +196,101 @@ test('P7 init: backend connection failure is NOT classified as module unavailabl
     assert.equal(err.step, undefined, 'not a provider-init failure');
     assert.ok(!String(err.message).toLowerCase().includes('module unavailable'), 'must not be mislabeled as module problem: ' + err.message);
 });
+
+test('P8: URL validator is GJS-safe — works without global URL API and rejects unsafe URLs', () => {
+    const { isHttpUrl, normalizeSearchResult, normalizeSearchResults } = require('../ai/searchProviders/searchResult.js');
+    const savedUrl = globalThis.URL;
+    try {
+        // Simulate the Cinnamon/GJS sandbox where the global URL constructor may be absent.
+        delete globalThis.URL;
+        // accepted without URL API
+        assert.ok(isHttpUrl('https://example.com/chelsea'), 'valid https accepted without URL API');
+        assert.ok(isHttpUrl('http://example.com/a'), 'valid http accepted without URL API');
+        assert.ok(isHttpUrl('https://example.com:8080/path?q=1#frag'), 'url with port/query/fragment accepted');
+        // rejected
+        assert.equal(isHttpUrl('javascript:alert(1)'), false);
+        assert.equal(isHttpUrl('data:text/html,hi'), false);
+        assert.equal(isHttpUrl(''), false);
+        assert.equal(isHttpUrl('#fragment'), false);
+        assert.equal(isHttpUrl('https:///nohost'), false);
+        assert.equal(isHttpUrl('https://'), false);
+        assert.equal(isHttpUrl('not a url'), false);
+        assert.equal(isHttpUrl('https://exa mple.com'), false, 'whitespace inside url rejected');
+        assert.equal(isHttpUrl('ftp://example.com'), false);
+        // canonical normalization keeps valid results, never empties due to missing URL API
+        assert.ok(normalizeSearchResult({ title: 'Chelsea schedule', url: 'https://example.com/chelsea', snippet: 'x' }));
+        assert.ok(normalizeSearchResult({ title: 'Plain', url: 'http://example.org/b' }));
+        assert.equal(normalizeSearchResult({ title: 'Bad', url: 'javascript:void(0)' }), null);
+        const out = normalizeSearchResults([
+            { title: 'Chelsea', url: 'https://example.com/chelsea', snippet: 's1' },
+            { title: 'Two', url: 'http://example.org/two', snippet: 's2' }
+        ]);
+        assert.equal(out.length, 2, 'valid results must never all be dropped without a URL API');
+        // groundingTypes canonicalization also survives without URL API
+        const Gt = require('../ai/groundingTypes.js');
+        const canon = Gt.canonicalizeSources(out);
+        assert.equal(canon.length, 2, 'tool-level canonicalization survives without URL API: ' + canon.length);
+    } finally {
+        if (savedUrl !== undefined) globalThis.URL = savedUrl;
+        else delete globalThis.URL;
+    }
+});
+
+test('P8: zero-out normalization logs per-item drop reason, never silent', () => {
+    const { normalizeSearchResults } = require('../ai/searchProviders/searchResult.js');
+    const logs = [];
+    const savedLog = global.log;
+    global.log = (m) => logs.push(m);
+    try {
+        const out = normalizeSearchResults([{ title: 'x', url: 'ftp://bad.example', snippet: 's' }]);
+        assert.equal(out.length, 0, 'invalid entry dropped');
+        const trace = logs.find(l => String(l).includes('first_drop_reason='));
+        assert.ok(trace, 'drop trace emitted');
+        assert.ok(String(trace).includes('raw_count=1'), trace);
+        assert.ok(String(trace).includes('normalized_count=0'), trace);
+        assert.ok(String(trace).includes('first_raw_url=ftp://bad.example'), trace);
+        assert.ok(String(trace).includes('first_drop_reason=url_validation_failed'), trace);
+    } finally {
+        if (savedLog !== undefined) global.log = savedLog;
+        else delete global.log;
+    }
+});
+
+test('P8 E2E: full canonical path survives without global URL API (bug: parsed>0 but normalized=0)', async () => {
+    const savedUrl = globalThis.URL;
+    try {
+        delete globalThis.URL;
+        const w = require('../ai/webSearchTool.js');
+        const tool = w.createProductionWebSearchTool({
+            engine: 'searxng',
+            searxngUrl: 'http://127.0.0.1:8080',
+            httpGet: fakeHttpGet((url, cb) => cb(null, searxngHtmlWithResults(), { status: 200, contentType: 'text/html' }))
+        });
+        // parser -> provider -> SearchResult[]
+        const provider = createSearXngProvider({
+            searxngUrl: 'http://127.0.0.1:8080',
+            httpGet: fakeHttpGet((url, cb) => cb(null, searxngHtmlWithResults(), { status: 200, contentType: 'text/html' }))
+        });
+        const parsed = parseSearXngHtml(searxngHtmlWithResults());
+        assert.ok(parsed.length > 0, 'parsed_results > 0');
+        const results = await provider.search('cek jadwal chelsea minggu ini', null);
+        assert.ok(results.length > 0, 'normalized_results > 0 without URL API: got ' + results.length);
+        // tool result boundary
+        const tr = await new Promise((res, rej) => tool.search({ query: 'cek jadwal chelsea minggu ini', maxResults: 5 }, (err, r) => err ? rej(err) : res(r)));
+        assert.ok(tr.sources.length > 0, 'tool_sources > 0 without URL API: got ' + tr.sources.length);
+        // AI boundary
+        const { createAISearchEngine } = require('../ai/aiSearchEngine.js');
+        const { createMockAiProvider } = require('../ai/aiProvider.js');
+        const prov = createMockAiProvider({ responses: [
+            { type: 'tool_call', tool: 'web_search', arguments: { query: 'cek jadwal chelsea minggu ini' } },
+            { type: 'answer', text: 'chelsea grounded answer' }
+        ] });
+        const engine = createAISearchEngine({ provider: prov, webSearchTool: tool, enableGrounding: true });
+        const out = await new Promise((res, rej) => engine.search('cek jadwal chelsea minggu ini', (err, r) => err ? rej(err) : res(r)));
+        assert.ok(out.text.length > 0);
+        assert.ok(out.sources.length > 0, 'AI received_sources > 0 without URL API: got ' + out.sources.length);
+    } finally {
+        if (savedUrl !== undefined) globalThis.URL = savedUrl;
+        else delete globalThis.URL;
+    }
+});
