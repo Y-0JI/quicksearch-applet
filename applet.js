@@ -130,9 +130,15 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this.resultsRegion.add_actor(this._autoScroll);
 
         // Phase 8 §6/§13: AI footer — Stop (visible while a request is active) + Reset Conversation
+        // Note: build explicit St.Label children (set_child) — the St.Button `label:` constructor
+        // property is not used anywhere in this codebase and renders empty in this GJS runtime.
         this._aiFooter = new St.BoxLayout({ style_class: "quicksearch-ai-footer", vertical: false, visible: false });
-        this._stopButton = new St.Button({ style_class: "quicksearch-ai-stop", can_focus: false, reactive: true, track_hover: true, label: _("\u23f9 Stop") });
-        this._resetButton = new St.Button({ style_class: "quicksearch-ai-reset", can_focus: false, reactive: true, track_hover: true, label: _("\u21ba Reset") });
+        this._stopButton = new St.Button({ style_class: "quicksearch-ai-stop", can_focus: false, reactive: true, track_hover: true });
+        const _stopLabel = new St.Label({ text: _("\u23f9 Stop"), style_class: "quicksearch-ai-stop-label" });
+        try { this._stopButton.set_child(_stopLabel); } catch (e) {}
+        this._resetButton = new St.Button({ style_class: "quicksearch-ai-reset", can_focus: false, reactive: true, track_hover: true });
+        const _resetLabel = new St.Label({ text: _("\u21ba Reset"), style_class: "quicksearch-ai-reset-label" });
+        try { this._resetButton.set_child(_resetLabel); } catch (e) {}
         this._aiFooter.add(this._stopButton);
         this._aiFooter.add(this._resetButton);
         this.contentLayout.add(this._aiFooter);
@@ -812,10 +818,12 @@ class QuickSearchApplet extends Applet.IconApplet {
     _syncAIFooter() {
         const ov = this._overlay;
         if (!ov || !ov._stopButton) return;
+        const isAi = this._mode === 'ai';
+        try { ov._aiFooter.visible = isAi; } catch (e) {}
         const active = !!this._aiLoading || !!this._aiStreaming ||
             (convMod && this._conversation ? !!convMod.hasActive(this._conversation) : false);
-        try { ov._stopButton.visible = this._mode === 'ai' && active; } catch (e) {}
-        try { if (ov._resetButton) ov._resetButton.visible = this._mode === 'ai'; } catch (e) {}
+        try { ov._stopButton.visible = isAi && active; } catch (e) {}
+        try { if (ov._resetButton) ov._resetButton.visible = isAi; } catch (e) {}
     }
 
     _renderAIState() {
