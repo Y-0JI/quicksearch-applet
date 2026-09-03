@@ -139,3 +139,135 @@ test('diagnostic: all 12 stages wired in provider', () => {
   const required = ['provider_create','request_build','transport_select','soup_session_create','send_async','send_finish','http_status','input_stream','read_bytes_async','stream_parse','parser_flush','engine_callback'];
   for (const s of required) assert.ok(src.includes(s), 'stage missing: ' + s);
 });
+
+// — regression: error propagation must preserve metadata —
+test('regression: sync throw with stage/status/name preserved (task 6)', async () => {
+  const { createAISearchEngine } = require('../ai/aiSearchEngine.js');
+  const prov = {
+    request: (payload, c, cb) => {
+      if (typeof c === 'function') { cb = c; c = null; }
+      const e = new Error('real runtime error');
+      e.code = 'provider_error';
+      e.stage = 'send_async';
+      e.status = 500;
+      e.name = 'TypeError';
+      throw e;
+    },
+    streamRequest: (payload, c, onEvent) => {
+      if (typeof c === 'function') { onEvent = c; c = null; }
+      const e = new Error('real runtime error');
+      e.code = 'provider_error';
+      e.stage = 'send_async';
+      e.status = 500;
+      e.name = 'TypeError';
+      throw e;
+    },
+    destroy() {}
+  };
+  const engine = createAISearchEngine({ provider: prov, webSearchTool: { search: (q,c,cb)=>cb(null,{type:'tool_result',sources:[{url:'https://example.com'}]}) } });
+  const evt = await new Promise(resolve => {
+    engine.searchStream('hello', { onError: (e)=>resolve(e), onComplete: ()=>resolve(null) });
+    setTimeout(()=>resolve(null), 800);
+  });
+  assert.ok(evt, 'must error');
+  assert.equal(evt.code, 'provider_error');
+  assert.equal(evt.message, 'real runtime error');
+  assert.equal(evt.stage, 'send_async');
+  assert.equal(evt.status, 500);
+  assert.equal(evt.name, 'TypeError');
+  assert.ok(!String(evt.message).includes('API_KEY_SHOULD_NOT_APPEAR_12345'));
+});
+
+test('regression: second leg sync throw preserved', async () => {
+  const { createAISearchEngine } = require('../ai/aiSearchEngine.js');
+  const prov = {
+    request(payload, c, cb) { if (typeof c==='function'){cb=c;c=null;} cb(null,{type:'answer',text:'ok'}); },
+    streamRequest(payload, c, onEvent) {
+      if (typeof c==='function'){ onEvent=c; c=null; }
+      // first leg: emit tool_call -> engine will call webSearch then second streamRequest
+      // detect second leg by groundingContext
+      if (payload.groundingContext) {
+        const e = new Error('Expected Gio.Cancellable');
+        e.code = 'provider_error';
+        e.stage = 'send_async';
+        e.name = 'TypeError';
+        e.status = 500;
+        throw e;
+      }
+      // first leg: emit tool_call
+      setTimeout(()=>onEvent({type:'start'}), 1);
+      setTimeout(()=>onEvent({type:'tool_call', tool:'web_search', arguments:{query:'q'}}), 5);
+    },
+    destroy(){}
+  };
+  const engine = createAISearchEngine({ provider: prov, webSearchTool: { search: (q,c,cb)=>cb(null,{type:'tool_result', sources:[{url:'https://example.com/a', title:'t'}]}) }, enableGrounding:true });
+  const err = await new Promise(resolve=>{
+    engine.searchStream('hello', { onError: e=>resolve(e), onComplete: ()=>resolve(null) });
+    setTimeout(()=>resolve(null), 800);
+  });
+  assert.ok(err, 'must error on second leg');
+  assert.equal(err.code, 'provider_error');
+  assert.equal(err.message, 'Expected Gio.Cancellable');
+  assert.equal(err.stage, 'send_async');
+  assert.equal(err.name, 'TypeError');
+});
+
+test('regression: unknown provider error preserves sanitized message (task 7)', async () => {
+  const { createAISearchEngine } = require('../ai/aiSearchEngine.js');
+  const prov = {
+    request: (p,c,cb)=>{ if(typeof c==='function'){cb=c;c=null;} throw new Error('unexpected transport failure'); },
+    streamRequest: (p,c,onEvent)=>{ if(typeof c==='function'){onEvent=c;c=null;} throw new Error('unexpected transport failure'); },
+    destroy(){}
+  };
+  const engine = createAISearchEngine({ provider: prov, webSearchTool: { search: (q,c,cb)=>cb(new Error('no')) } });
+  const err = await new Promise(resolve=>{
+    engine.searchStream('hi', { onError:e=>resolve(e), onComplete:()=>resolve(null) });
+    setTimeout(()=>resolve(null), 800);
+  });
+  assert.ok(err);
+  assert.equal(err.code, 'provider_error');
+  assert.ok(String(err.message).includes('unexpected transport failure'), err.message);
+  // stage may be null/undefined for unknown throw without stage — must not be 'unknown' string?
+  // should not hide message behind generic
+  assert.notEqual(err.message, 'AI provider unavailable');
+});
+
+test('regression: Bearer/api_key redacted even when preserving message', async () => {
+  const { createAISearchEngine } = require('../ai/aiSearchEngine.js');
+  const secret = FAKE_KEY;
+  const prov = {
+    request: (p,c,cb)=>{ if(typeof c==='function'){cb=c;c=null;} const e=new Error('fail Bearer '+secret+' api_key='+secret); e.code='provider_error'; e.stage='send_async'; throw e; },
+    streamRequest: (p,c,onEvent)=>{ if(typeof c==='function'){onEvent=c;c=null;} const e=new Error('fail Bearer '+secret+' api_key='+secret); e.code='provider_error'; e.stage='send_async'; throw e; },
+    destroy(){}
+  };
+  const engine = createAISearchEngine({ provider: prov, webSearchTool: { search: (q,c,cb)=>cb(new Error('no')) } });
+  const err = await new Promise(resolve=>{
+    engine.searchStream('hi', { onError:e=>resolve(e), onComplete:()=>resolve(null) });
+    setTimeout(()=>resolve(null), 800);
+  });
+  assert.ok(err);
+  assert.ok(!String(err.message).includes(secret), 'must be redacted');
+  assert.ok(String(err.message).includes('[REDACTED]'));
+  assert.equal(err.stage, 'send_async');
+});
+
+test('regression: non-stream search sync throw also preserves metadata', async () => {
+  const { createAISearchEngine } = require('../ai/aiSearchEngine.js');
+  const prov = {
+    request: (p,c,cb)=>{ if(typeof c==='function'){cb=c;c=null;} const e=new Error('real runtime error'); e.code='provider_error'; e.stage='read_bytes_async'; e.status=503; e.name='TypeError'; throw e; },
+    streamRequest: (p,c,onEvent)=>{ if(typeof c==='function'){onEvent=c;c=null;} const e=new Error('real runtime error'); e.code='provider_error'; e.stage='read_bytes_async'; e.status=503; e.name='TypeError'; throw e; },
+    destroy(){}
+  };
+  const engine = createAISearchEngine({ provider: prov, webSearchTool: { search: (q,c,cb)=>cb(new Error('no')) } });
+  const err = await new Promise(resolve=>{
+    engine.search('hi', { onError:e=>resolve(e), onAnswer:()=>resolve(null) });
+    setTimeout(()=>resolve(null), 800);
+  });
+  // search uses callback object or function — we passed object
+  assert.ok(err);
+  assert.equal(err.code, 'provider_error');
+  assert.equal(err.message, 'real runtime error');
+  assert.equal(err.stage, 'read_bytes_async');
+  assert.equal(err.status, 503);
+});
+

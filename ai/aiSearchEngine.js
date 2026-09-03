@@ -34,6 +34,15 @@ function _makeCancellable(external) {
     };
 }
 
+function _sanitizeEngineMessage(msg) {
+    try {
+        let s = String(msg || '');
+        s = s.replace(/Bearer\s+[A-Za-z0-9._\-~+\/]+=*/gi, 'Bearer [REDACTED]');
+        s = s.replace(/api[_-]?key\s*[:=]\s*\S+/gi, 'api_key=[REDACTED]');
+        return s;
+    } catch (e) { return String(msg || ''); }
+}
+
 function _normalizeProviderError(err) {
     const stage = (err && (err.stage || err._stage)) || null;
     const status = (err && (err.status != null ? err.status : err.httpStatus)) || null;
@@ -42,19 +51,30 @@ function _normalizeProviderError(err) {
         if (stage) { obj.stage = stage; obj._stage = stage; }
         if (status != null) { obj.status = status; obj.httpStatus = status; }
         if (name) obj.name = name;
-        // sanitize message already done at provider; keep defensive
+        if (obj.message) {
+            try { obj.message = _sanitizeEngineMessage(obj.message); } catch (e2) {}
+        }
         return obj;
     }
     if (!err) return withMeta({ code: 'provider_error', message: ERROR_MESSAGES.provider_error });
-    if (err.code === 'invalid_query') return withMeta({ code: 'invalid_query', message: err.message || ERROR_MESSAGES.invalid_query });
+    if (err.code === 'invalid_query') return withMeta({ code: 'invalid_query', message: err.message ? _sanitizeEngineMessage(err.message) : ERROR_MESSAGES.invalid_query });
     if (err.code === 'unsupported_tool') return withMeta({ code: 'unsupported_tool', message: ERROR_MESSAGES.unsupported_tool });
     if (err.code === 'invalid_response') return withMeta({ code: 'invalid_response', message: ERROR_MESSAGES.invalid_response });
-    if (err.code === 'no_results') return withMeta({ code: 'no_results', message: err.message || ERROR_MESSAGES.no_results });
+    if (err.code === 'no_results') return withMeta({ code: 'no_results', message: err.message ? _sanitizeEngineMessage(err.message) : ERROR_MESSAGES.no_results });
     if (err.code === 'timeout') return withMeta({ code: 'timeout', message: ERROR_MESSAGES.timeout });
     if (err.code === 'auth_error') return withMeta({ code: 'auth_error', message: ERROR_MESSAGES.auth_error });
     if (err.code === 'rate_limited') return withMeta({ code: 'rate_limited', message: ERROR_MESSAGES.rate_limited });
     if (err.code === 'network_error') return withMeta({ code: 'network_error', message: ERROR_MESSAGES.network_error });
     if (err.code === 'cancelled') return withMeta({ code: 'cancelled', message: null });
+    // preserve original message for provider_error and unknown errors (sanitized)
+    if (err.code === 'provider_error') {
+        const m = err.message ? _sanitizeEngineMessage(err.message) : ERROR_MESSAGES.provider_error;
+        return withMeta({ code: 'provider_error', message: m });
+    }
+    if (err.message) {
+        // unknown error with message — keep sanitized original message, map code to provider_error
+        return withMeta({ code: err.code || 'provider_error', message: _sanitizeEngineMessage(err.message) });
+    }
     return withMeta({ code: 'provider_error', message: ERROR_MESSAGES.provider_error });
 }
 
@@ -264,7 +284,8 @@ function createAISearchEngine(deps) {
                                     return _deliverAnswer(myGen, myCancellable, callbacks, res2.text, sources);
                                 });
                             } catch (e) {
-                                return _deliverError(myGen, myCancellable, callbacks, 'provider_error', ERROR_MESSAGES.provider_error);
+                                const n = _normalizeProviderError(e);
+                                return _deliverError(myGen, myCancellable, callbacks, n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
                             }
                         });
                     } catch (e) {
@@ -500,7 +521,8 @@ function createAISearchEngine(deps) {
                                 handleSecondStreamEvent
                             );
                         } catch (e) {
-                            emitError('provider_error', ERROR_MESSAGES.provider_error);
+                            const n = _normalizeProviderError(e);
+                            emitError(n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
                         }
                     });
                 } catch (e) {
