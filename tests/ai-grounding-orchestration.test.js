@@ -144,6 +144,40 @@ test('D empty sources: tool_result sources [] -> no Provider2, no_results, no fa
     assert.equal(got, null, 'no grounded answer');
     assert.ok(err, 'deterministic no_results error');
     assert.equal(err.code, 'no_results');
+    // Phase 7 §5: empty-but-valid tool_result must carry an explicit stage, never Stage: unknown
+    assert.equal(err.stage, 'web_search_normalize', 'no_results must not surface as Stage: unknown');
+    assert.equal(err._stage, 'web_search_normalize');
+});
+
+// D2 — Empty sources on the STREAMING tool-call path also carries a stage
+test('D2 empty sources streaming: tool_result sources [] -> no_results with web_search_normalize stage, no second stream', () => {
+    let stream1Cb = null, stream2Calls = 0;
+    const provider = {
+        request() { throw new Error('non-streaming must not be used'); },
+        streamRequest(payload, cancellable, onEvent) {
+            if (!payload.groundingContext) {
+                stream1Cb = onEvent;
+                return;
+            }
+            stream2Calls++;
+        }
+    };
+    const tool = captureTool((_req, _c, cb) => {
+        const tr = Gt.createToolResult('x', []);
+        assert.equal(tr.sources.length, 0);
+        cb(null, tr);
+    });
+    const engine = createAISearchEngine({ provider, webSearchTool: tool, enableGrounding: true });
+    let err = null, got = null;
+    engine.searchStream('q', { onComplete: d => { got = d; }, onError: e => { err = e; } });
+    assert.ok(stream1Cb, 'first stream pending');
+    stream1Cb({ type: 'tool_call', tool: 'web_search', arguments: { query: 'x' } });
+    assert.equal(stream2Calls, 0, 'no second stream on empty sources');
+    assert.equal(got, null, 'no grounded complete');
+    assert.ok(err, 'deterministic no_results error');
+    assert.equal(err.code, 'no_results');
+    assert.equal(err.stage, 'web_search_normalize', 'streaming empty tool_result must not surface as Stage: unknown');
+    assert.equal(err._stage, 'web_search_normalize');
 });
 
 // E — Web search error

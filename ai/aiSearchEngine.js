@@ -348,7 +348,8 @@ function createAISearchEngine(deps) {
                             const sources = wResults.sources;
                             _logWebSearchSources((wResults && wResults.query) || q, sources);
                             if (sources.length === 0) {
-                                return _deliverError(myGen, myCancellable, callbacks, 'no_results', ERROR_MESSAGES.no_results);
+                                // P6.4: tool_result valid but empty -> explicit normalize stage, never Stage: unknown
+                                return _deliverError(myGen, myCancellable, callbacks, 'no_results', ERROR_MESSAGES.no_results, { stage: 'web_search_normalize' });
                             }
                             let _groundingContextObj = null;
                             if (Gt && typeof Gt.createGroundingContext === 'function') {
@@ -593,7 +594,7 @@ function createAISearchEngine(deps) {
                         const sources = wResults.sources;
                         _logWebSearchSources((wResults && wResults.query) || toolQuery, sources);
                         if (sources.length === 0) {
-                            emitError('no_results', ERROR_MESSAGES.no_results);
+                            emitError('no_results', ERROR_MESSAGES.no_results, { stage: 'web_search_normalize' });
                             return;
                         }
                         groundedSources = sources;
