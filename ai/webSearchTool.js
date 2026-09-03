@@ -585,30 +585,51 @@ function _parseDdgHtmlForSources(html) {
     return out;
 }
 
+function _decodeDdgHref(href) {
+    // Resolve DuckDuckGo redirect wrappers (html and lite both wrap results in /l/?uddg=...)
+    // back to the real target URL. Direct external URLs pass through unchanged; DDG-internal
+    // or non-http(s) links return '' so callers can skip them.
+    const h = String(href || '').trim();
+    if (!h) return '';
+    if (/\/l\/\?(?:[^"'\s]*&)?uddg=/i.test(h) || /^\/l\/?\?uddg=/i.test(h)) {
+        const m = /[?&]uddg=([^&]+)/i.exec(h);
+        if (m && m[1]) {
+            try {
+                const decoded = decodeURIComponent(m[1]).trim();
+                if (/^https?:\/\//i.test(decoded)) return decoded;
+            } catch (e) {}
+        }
+    }
+    if (/^https?:\/\//i.test(h)) return h.replace(/&amp;/g, '&');
+    return '';
+}
+
 function _parseDdgLiteForSources(html) {
     const clean = s => String(s).replace(/<[^>]+>/g, '').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#x27;/g,"'").replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ').replace(/&#(\d+);/g,(m,n)=>String.fromCharCode(Number(n))).replace(/&[a-z]+;/gi,' ').replace(/\s+/g,' ').trim();
     const out = [];
     const htmlStr = html || '';
     const seen = new Set();
     // lite.duckduckgo.com renders one result per row: an external <a ... href="...">Title</a>,
-    // followed by a <td class="result-snippet"> snippet. Filter out DDG-internal nav links.
+    // followed by a <td class="result-snippet"> snippet. hrefs may be direct external URLs or
+    // DDG /l/?uddg=... redirect wrappers — both are decoded via _decodeDdgHref, then DDG-internal
+    // and navigation links are rejected on the normalized (decoded) target.
     const anchorRe = /<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
     let am;
     while ((am = anchorRe.exec(htmlStr)) !== null && out.length < 10) {
-        const href = am[1];
-        if (!/^https?:\/\//.test(href)) continue;
+        const target = _decodeDdgHref(am[1]);
+        if (!target) continue;
         let host = '';
-        try { host = new URL(href).hostname || ''; } catch (e) { host = ''; }
+        try { host = new URL(target).hostname || ''; } catch (e) { host = ''; }
         if (!host || host === 'duckduckgo.com' || host.endsWith('.duckduckgo.com')) continue;
         const title = clean(am[2]);
         if (title.length < 3) continue;
-        if (seen.has(href)) continue;
-        seen.add(href);
+        if (seen.has(target)) continue;
+        seen.add(target);
         let snippet = '';
         const after = htmlStr.slice(am.index, am.index + 1200);
         const sp = /<td[^>]*class="[^"]*result-snippet[^"]*"[^>]*>([\s\S]*?)<\/td>/i.exec(after);
         if (sp) snippet = clean(sp[1]);
-        out.push({ title: title.slice(0, 200), url: href, snippet: String(snippet || '').slice(0, 500) });
+        out.push({ title: title.slice(0, 200), url: target, snippet: String(snippet || '').slice(0, 500) });
     }
     return out;
 }
@@ -635,177 +656,99 @@ function _createProductionBackend(config) {
             }
             const max = typeof maxResults === 'number' && Number.isFinite(maxResults) ? Math.max(1, Math.min(10, Math.floor(maxResults))) : 5;
             if (engine === 'searxng') {
-                const urlJson = searxngUrl + '/search?q=' + encodeURIComponent(q) + '&format=json';
-                const urlHtml = searxngUrl + '/search?q=' + encodeURIComponent(q);
-                let done = false;
-                let tid = _scheduleTimeout(DEFAULT_TIMEOUT_MS, () => {
-                    if (done) return;
-                    done = true;
-                    const e = new Error('SearXNG request timeout');
-                    e.code = 'backend_unavailable';
-                    e.stage = 'web_search_request';
-                    e._stage = 'web_search_request';
-                    cb(e);
-                });
-                const tryHtmlFallback = (origErr, origDataStr) => {
-                    let htmlDone = false;
-                    let htmlTid = _scheduleTimeout(DEFAULT_TIMEOUT_MS, () => {
-                        if (htmlDone) return;
-                        htmlDone = true;
-                        const status = (origErr && (origErr.status || origErr.httpStatus)) || 0;
-                        const ct = (origErr && origErr.contentType) || 'text/html';
-                        const e = new Error('SearXNG JSON forbidden (HTTP ' + (status || 403) + '), HTML fallback timeout. Expected application/json got ' + (ct || 'text/html'));
-                        e.code = 'invalid_response';
+                // Unified fallback orchestration: SearXNG JSON -> SearXNG HTML -> DDG HTML -> DDG Lite.
+                // Every leg produces one of SUCCESS / EMPTY / FAILED / TIMEOUT; only SUCCESS stops the
+                // chain. ANY other outcome — JSON 403/5xx, connection errors, timeouts, HTML-bodied
+                // JSON, zero results, unparseable body — advances to the next backend. A final error is
+                // produced only after every leg is exhausted and lists the legs actually attempted.
+                // `settled` guarantees the caller callback fires exactly once, even when a stale HTTP
+                // or timeout callback arrives after the chain already finished.
+                const legs = [
+                    { name: 'SearXNG JSON', kind: 'searxng_json', url: searxngUrl + '/search?q=' + encodeURIComponent(q) + '&format=json' },
+                    { name: 'SearXNG HTML', kind: 'searxng_html', url: searxngUrl + '/search?q=' + encodeURIComponent(q) },
+                    { name: 'DDG HTML', kind: 'ddg_html', url: 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q) },
+                    { name: 'DDG Lite', kind: 'ddg_lite', url: 'https://lite.duckduckgo.com/lite/?q=' + encodeURIComponent(q) }
+                ];
+                let settled = false;
+                let activeTid = null;
+                let jsonStatus = 0;
+                const notes = [];
+                const settle = (err, raw) => {
+                    if (settled) return;
+                    settled = true;
+                    if (activeTid) { _cancelTimeout(activeTid); activeTid = null; }
+                    if (_isCancelled(cancellable)) return;
+                    if (err) return cb(err);
+                    cb(null, raw);
+                };
+                const runLeg = (index) => {
+                    if (settled) return;
+                    if (index >= legs.length) {
+                        const detail = notes.length ? notes.join('; ') : 'no backend responded';
+                        const e = new Error('SearXNG grounding failed — every backend unavailable: ' + detail);
+                        e.code = 'request_failed';
                         e.stage = 'web_search_request';
                         e._stage = 'web_search_request';
-                        e.httpStatus = status;
-                        e.status = status;
-                        cb(e);
+                        e.httpStatus = jsonStatus;
+                        e.status = jsonStatus;
+                        e.backend = 'searxng';
+                        e.contentType = 'text/html';
+                        return settle(e);
+                    }
+                    const leg = legs[index];
+                    let legDone = false;
+                    const note = (msg) => { notes.push(leg.name + ' ' + msg); };
+                    activeTid = _scheduleTimeout(DEFAULT_TIMEOUT_MS, () => {
+                        if (settled || legDone) return;
+                        legDone = true;
+                        activeTid = null;
+                        note('timeout');
+                        runLeg(index + 1);
                     });
-                    doGet(urlHtml, cancellable, (hErr, hDataStr) => {
-                        if (htmlDone) return;
-                        htmlDone = true;
-                        _cancelTimeout(htmlTid);
-                        if (_isCancelled(cancellable)) return;
-                        if (hErr) {
-                            // SearXNG HTML request itself failed (403/timeout/unreachable) — do not give up:
-                            // try DDG HTML, then DDG Lite, before surfacing an error.
-                            const status = (hErr.status || hErr.httpStatus) || (origErr && (origErr.status || origErr.httpStatus)) || 0;
-                            const prefix = 'SearXNG HTML fallback failed (JSON HTTP ' + (status || 403) + ' Expected application/json Got text/html): ' + (hErr.message || 'request failed');
-                            return attemptDdgFallback(prefix, status);
+                    doGet(leg.url, cancellable, (err, body) => {
+                        if (settled || legDone) return;
+                        legDone = true;
+                        if (activeTid) { _cancelTimeout(activeTid); activeTid = null; }
+                        if (_isCancelled(cancellable)) { settled = true; return; }
+                        if (err) {
+                            const status = err.status || err.httpStatus || 0;
+                            if (leg.kind === 'searxng_json') jsonStatus = status;
+                            const isHtmlBody = leg.kind === 'searxng_json' &&
+                                ((err.contentType && String(err.contentType).indexOf('html') >= 0) ||
+                                 (err.bodyText && String(err.bodyText).trim().startsWith('<')) ||
+                                 (err.message && String(err.message).indexOf('403') >= 0));
+                            note(isHtmlBody
+                                ? 'failed (HTTP ' + (status || 403) + ' Expected application/json Got text/html)' + (err.message ? ': ' + err.message : '')
+                                : 'failed (HTTP ' + (status || '-') + ')' + (err.message ? ': ' + err.message : ''));
+                            return runLeg(index + 1);
                         }
                         try {
-                            let raw = _parseSearxngHtmlForSources(hDataStr);
-                            if (raw.length === 0) {
-                                const status = (origErr && (origErr.status || origErr.httpStatus)) || 0;
-                                // SearXNG HTML returned 200 but no parseable results (e.g., "Sorry! No results found." dialog).
-                                // Fall back to DDG (html.duckduckgo.com, then lite.duckduckgo.com) which are more stable.
-                                const prefix = 'SearXNG HTML fallback returned no results (JSON HTTP ' + (status || 403) + ' Expected application/json Got text/html) Parser searxng_html Extracted 0';
-                                return attemptDdgFallback(prefix, status);
+                            let raw = null;
+                            if (leg.kind === 'searxng_json') {
+                                if (body && String(body).trim().startsWith('<')) {
+                                    note('failed (HTTP 200 Expected application/json Got text/html)');
+                                    return runLeg(index + 1);
+                                }
+                                raw = _parseSearxngJsonForSources(body);
+                            } else if (leg.kind === 'searxng_html') {
+                                raw = _parseSearxngHtmlForSources(body);
+                            } else if (leg.kind === 'ddg_html') {
+                                raw = _parseDdgHtmlForSources(body);
+                            } else {
+                                raw = _parseDdgLiteForSources(body);
                             }
-                            cb(null, raw.slice(0, max));
+                            if (!raw || raw.length === 0) {
+                                note(leg.kind === 'searxng_html' ? 'returned 0 results (Parser searxng_html Extracted 0)' : 'returned 0 results');
+                                return runLeg(index + 1);
+                            }
+                            return settle(null, raw.slice(0, max));
                         } catch (e) {
-                            const status = (origErr && (origErr.status || origErr.httpStatus)) || 0;
-                            const e2 = new Error('SearXNG HTML fallback invalid response (JSON HTTP ' + (status || 403) + ')');
-                            e2.code = 'invalid_response';
-                            e2.stage = 'web_search_request';
-                            e2._stage = 'web_search_request';
-                            e2.httpStatus = status;
-                            e2.status = status;
-                            cb(e2);
+                            note('parse failed: ' + ((e && e.message) || 'invalid response'));
+                            return runLeg(index + 1);
                         }
                     });
                 };
-                // Last-resort grounding: try DDG HTML, then DDG Lite, when SearXNG (JSON and/or HTML)
-                // failed entirely or returned no parseable results. Only when both DDG legs also fail
-                // do we surface an error — with full diagnostic context about every leg attempted.
-                const attemptDdgFallback = (prefix, status) => {
-                    const legs = [
-                        { name: 'DDG HTML', url: 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q), parser: _parseDdgHtmlForSources },
-                        { name: 'DDG Lite', url: 'https://lite.duckduckgo.com/lite/?q=' + encodeURIComponent(q), parser: _parseDdgLiteForSources }
-                    ];
-                    const failures = [];
-                    let legIndex = 0;
-                    const nextLeg = () => {
-                        if (legIndex >= legs.length) {
-                            const e = new Error(prefix + ' DDG fallback also failed' + (failures.length ? ': ' + failures.join('; ') : ''));
-                            e.code = 'request_failed';
-                            e.stage = 'web_search_request';
-                            e._stage = 'web_search_request';
-                            e.httpStatus = status;
-                            e.status = status;
-                            e.backend = 'searxng';
-                            e.contentType = 'text/html';
-                            return cb(e);
-                        }
-                        const leg = legs[legIndex++];
-                        let legDone = false;
-                        const legTid = _scheduleTimeout(DEFAULT_TIMEOUT_MS, () => {
-                            if (legDone) return;
-                            legDone = true;
-                            failures.push(leg.name + ' timeout');
-                            nextLeg();
-                        });
-                        doGet(leg.url, cancellable, (ddgErr, ddgHtml) => {
-                            if (legDone) return;
-                            legDone = true;
-                            _cancelTimeout(legTid);
-                            if (_isCancelled(cancellable)) return;
-                            if (ddgErr) {
-                                failures.push(leg.name + ' failed: ' + (ddgErr.message || 'request failed'));
-                                return nextLeg();
-                            }
-                            try {
-                                const raw = leg.parser(ddgHtml);
-                                if (raw.length === 0) {
-                                    failures.push(leg.name + ' returned 0 results');
-                                    return nextLeg();
-                                }
-                                return cb(null, raw.slice(0, max));
-                            } catch (e2) {
-                                failures.push(leg.name + ' parse failed');
-                                return nextLeg();
-                            }
-                        });
-                    };
-                    nextLeg();
-                };
-                doGet(urlJson, cancellable, (err, dataStr) => {
-                    if (done) return;
-                    done = true;
-                    _cancelTimeout(tid);
-                    if (_isCancelled(cancellable)) return;
-                    if (err) {
-                        const status = err.status || err.httpStatus || 0;
-                        const isJsonForbidden = status === 403 || (err.bodyText && String(err.bodyText).includes('Forbidden')) || (String(err.message||'').includes('403'));
-                        if (isJsonForbidden) {
-                            return tryHtmlFallback(err, null);
-                        }
-                        const e2 = new Error(err.message || 'SearXNG unavailable');
-                        e2.code = err.code || 'backend_unavailable';
-                        e2.stage = err.stage || 'web_search_request';
-                        e2._stage = err._stage || 'web_search_request';
-                        e2.status = status;
-                        e2.httpStatus = status;
-                        if (String(err.message||'').toLowerCase().includes('econnrefused') || String(err.message||'').toLowerCase().includes('enotfound')) e2.code = 'backend_unavailable';
-                        return cb(e2);
-                    }
-                    if (dataStr && String(dataStr).trim().startsWith('<')) {
-                        const e = new Error('HTTP 200 but Expected application/json Got text/html');
-                        e.status = 200;
-                        e.httpStatus = 200;
-                        e.contentType = 'text/html';
-                        e.stage = 'web_search_request';
-                        e._stage = 'web_search_request';
-                        return tryHtmlFallback(e, dataStr);
-                    }
-                    try {
-                        const raw = _parseSearxngJsonForSources(dataStr);
-                        if (raw.length === 0) {
-                            // SearXNG JSON answered 200 but with zero results — SearXNG HTML (and then DDG)
-                            // may still return results from engines that did not answer JSON. Do not give up yet.
-                            const e = new Error('SearXNG JSON returned no results');
-                            e.status = 200;
-                            e.httpStatus = 200;
-                            e.stage = 'web_search_request';
-                            e._stage = 'web_search_request';
-                            return tryHtmlFallback(e, dataStr);
-                        }
-                        cb(null, raw.slice(0, max));
-                    } catch (e) {
-                        const looksHtml = dataStr && String(dataStr).trim().startsWith('<');
-                        if (looksHtml) {
-                            return tryHtmlFallback({ status: 200, httpStatus: 200, contentType: 'text/html', message: 'Invalid JSON (got HTML)' }, dataStr);
-                        }
-                        const e2 = new Error('Invalid response: ' + (e.message || 'JSON parse failed') + ' HTTP 200 Expected application/json');
-                        e2.code = 'invalid_response';
-                        e2.stage = 'web_search_request';
-                        e2._stage = 'web_search_request';
-                        e2.status = 200;
-                        e2.httpStatus = 200;
-                        cb(e2);
-                    }
-                });
+                runLeg(0);
                 return;
             }
             if (engine === 'google' && !googleApiKey) {
@@ -969,4 +912,4 @@ function createWebSearchTool(opts) {
     return createMockWebSearchTool(opts);
 }
 
-module.exports = { createMockWebSearchTool, createWebSearchTool, createProductionWebSearchTool, _createProductionBackend, _parseSearxngJsonForSources, _parseBingHtmlForSources, _parseDdgHtmlForSources, _parseDdgLiteForSources, _isGioCancellable: typeof _isGioCancellable !== 'undefined' ? _isGioCancellable : () => false, _resolveSoupCancellable: typeof _resolveSoupCancellable !== 'undefined' ? _resolveSoupCancellable : () => ({ soupCancellable: null, bridgeCleanup: ()=>{} }), _isCancelled, __setGioSoupForTest };
+module.exports = { createMockWebSearchTool, createWebSearchTool, createProductionWebSearchTool, _createProductionBackend, _parseSearxngJsonForSources, _parseBingHtmlForSources, _parseDdgHtmlForSources, _parseDdgLiteForSources, _decodeDdgHref, _isGioCancellable: typeof _isGioCancellable !== 'undefined' ? _isGioCancellable : () => false, _resolveSoupCancellable: typeof _resolveSoupCancellable !== 'undefined' ? _resolveSoupCancellable : () => ({ soupCancellable: null, bridgeCleanup: ()=>{} }), _isCancelled, __setGioSoupForTest };
