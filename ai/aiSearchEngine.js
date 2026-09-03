@@ -45,6 +45,17 @@ function _isCancelled(c) {
     try { return !!(c && typeof c.is_cancelled === 'function' && c.is_cancelled()); } catch (e) { return false; }
 }
 
+// P5 runtime trace: log the web_search result the engine received right before it decides whether
+// sources are empty (this is where a bare no_results / Stage: unknown error originates).
+function _logWebSearchSources(query, sources) {
+    try {
+        if (typeof global === 'undefined' || typeof global.log !== 'function') return;
+        const arr = Array.isArray(sources) ? sources : [];
+        const first = (arr[0] && arr[0].url) ? String(arr[0].url).slice(0, 200) : '-';
+        global.log('[QuickSearch AI] web_search result query=' + String(query || '').slice(0, 120) + ' sources_count=' + arr.length + ' first_url=' + first);
+    } catch (e) {}
+}
+
 function _makeCancellable(external) {
     if (external && typeof external.is_cancelled === 'function') return external;
     let cancelled = false;
@@ -257,6 +268,7 @@ function createAISearchEngine(deps) {
                                     return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
                                 }
                                 const sources = wResults.sources;
+                                _logWebSearchSources((wResults && wResults.query) || q, sources);
                                 if (sources.length === 0) {
                                     return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
                                 }
@@ -334,6 +346,7 @@ function createAISearchEngine(deps) {
                                 return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
                             }
                             const sources = wResults.sources;
+                            _logWebSearchSources((wResults && wResults.query) || q, sources);
                             if (sources.length === 0) {
                                 return _deliverError(myGen, myCancellable, callbacks, 'no_results', ERROR_MESSAGES.no_results);
                             }
@@ -578,6 +591,7 @@ function createAISearchEngine(deps) {
                             return;
                         }
                         const sources = wResults.sources;
+                        _logWebSearchSources((wResults && wResults.query) || toolQuery, sources);
                         if (sources.length === 0) {
                             emitError('no_results', ERROR_MESSAGES.no_results);
                             return;

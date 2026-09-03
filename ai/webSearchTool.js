@@ -28,6 +28,10 @@ try { GLib = require('gi.GLib'); } catch (e) {}
 try { Soup = require('gi.Soup'); } catch (e) {}
 function __setGioSoupForTest(g, gl, s) { Gio = g; GLib = gl; Soup = s; }
 const DEFAULT_TIMEOUT_MS = 4000;
+// Runtime version marker — logged when the production tool is created so runtime logs can prove
+// which build of webSearchTool Cinnamon is actually executing (stale applet copies otherwise look
+// identical and produce confusing no_results / old-behavior errors).
+const WEB_SEARCH_RUNTIME_VERSION = 'p5-trace';
 function _scheduleTimeout(ms, fn) {
     if (GLib && typeof GLib.timeout_add === 'function') return GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => { fn(); return GLib.SOURCE_REMOVE; });
     return setTimeout(fn, ms);
@@ -38,6 +42,17 @@ function _cancelTimeout(id) {
     else try { clearTimeout(id); } catch (e) {}
 }
 
+// P5 runtime-trace helpers: log to Cinnamon's global.log when present (no-op under node tests).
+function _traceLog(msg) {
+    try { if (typeof global !== 'undefined' && typeof global.log === 'function') global.log('[QuickSearch WebSearch] ' + msg); } catch (e) {}
+}
+function _modulePath() {
+    try { return (typeof __filename !== 'undefined' && __filename) ? String(__filename) : '-'; } catch (e) { return '-'; }
+}
+function _shortQuery(q) { return String(q || '').slice(0, 120); }
+function _firstUrl(arr) {
+    try { const r = Array.isArray(arr) && arr[0]; return (r && r.url) ? String(r.url).slice(0, 200) : '-'; } catch (e) { return '-'; }
+}
 function _isCancelled(c) {
     try { return !!(c && typeof c.is_cancelled === 'function' && c.is_cancelled()); } catch (e) { return false; }
 }
@@ -178,6 +193,7 @@ function _normalizeResults(rawResults, maxResults) {
 // opts: { handler, backend, results|queue, errorAt }
 function createMockWebSearchTool(opts) {
     opts = opts || {};
+    const engineLabel = String((opts && (opts.engine || opts._engineLabel)) || 'unknown');
     let handler = opts.handler || null;
     let backend = opts.backend || null;
     let queue = Array.isArray(opts.results) ? opts.results.slice() : (Array.isArray(opts.queue) ? opts.queue.slice() : null);
@@ -293,10 +309,13 @@ function createMockWebSearchTool(opts) {
                         if (mapped.type === 'tool_error') return onDone(_toCallbackError(mapped));
                         const e2 = new Error('Web search unavailable'); e2.code = 'web_search_unavailable'; return onDone(e2);
                     }
+                    _traceLog('backend result engine=' + engineLabel + ' query=' + _shortQuery(query) + ' raw_count=' + rawResults.length + ' first_url=' + _firstUrl(rawResults));
                     const normalized = _normalizeResults(rawResults, maxResults);
+                    _traceLog('normalized engine=' + engineLabel + ' query=' + _shortQuery(query) + ' normalized_count=' + normalized.length + ' first_url=' + _firstUrl(normalized));
                     if (isContract) {
                         // canonical path NEVER returns raw array; always tool_result
                         const toolResult = Gt ? Gt.createToolResult(query, normalized) : { type: 'tool_result', tool: 'web_search', query, sources: normalized };
+                        _traceLog('tool_result engine=' + engineLabel + ' query=' + _shortQuery(query) + ' sources_count=' + toolResult.sources.length + ' first_url=' + _firstUrl(toolResult.sources));
                         return onDone(null, toolResult);
                     }
                     return onDone(null, normalized);
@@ -337,8 +356,10 @@ function createMockWebSearchTool(opts) {
                     return onDone(e2);
                 }
                 const normalized = _normalizeResults(results, maxResults);
+                _traceLog('normalized engine=' + engineLabel + ' query=' + _shortQuery(query) + ' normalized_count=' + normalized.length + ' first_url=' + _firstUrl(normalized));
                 if (isContract) {
                     const toolResult = Gt ? Gt.createToolResult(query, normalized) : { type: 'tool_result', tool: 'web_search', query, sources: normalized };
+                    _traceLog('tool_result engine=' + engineLabel + ' query=' + _shortQuery(query) + ' sources_count=' + toolResult.sources.length + ' first_url=' + _firstUrl(toolResult.sources));
                     return onDone(null, toolResult);
                 }
                 return onDone(null, normalized);
@@ -869,6 +890,7 @@ function _createProductionBackend(config) {
 }
 
 function createProductionWebSearchTool(config) {
+    _traceLog('runtime version=' + WEB_SEARCH_RUNTIME_VERSION + ' engine=' + String((config && config.engine) || 'unknown') + ' path=' + _modulePath());
     if (!Gt) {
         const toolErr = { type: 'tool_error', tool: 'web_search', code: 'invalid_response', message: 'Grounding contracts unavailable' };
         return {
@@ -884,7 +906,7 @@ function createProductionWebSearchTool(config) {
         };
     }
     const backend = _createProductionBackend(config);
-    const tool = createMockWebSearchTool({ backend });
+    const tool = createMockWebSearchTool({ backend, engine: (config && config.engine) || 'unknown' });
     tool.__isProduction = true;
     tool.__backend = backend;
     return tool;
@@ -912,4 +934,4 @@ function createWebSearchTool(opts) {
     return createMockWebSearchTool(opts);
 }
 
-module.exports = { createMockWebSearchTool, createWebSearchTool, createProductionWebSearchTool, _createProductionBackend, _parseSearxngJsonForSources, _parseBingHtmlForSources, _parseDdgHtmlForSources, _parseDdgLiteForSources, _decodeDdgHref, _isGioCancellable: typeof _isGioCancellable !== 'undefined' ? _isGioCancellable : () => false, _resolveSoupCancellable: typeof _resolveSoupCancellable !== 'undefined' ? _resolveSoupCancellable : () => ({ soupCancellable: null, bridgeCleanup: ()=>{} }), _isCancelled, __setGioSoupForTest };
+module.exports = { createMockWebSearchTool, createWebSearchTool, createProductionWebSearchTool, _createProductionBackend, _parseSearxngJsonForSources, _parseBingHtmlForSources, _parseDdgHtmlForSources, _parseDdgLiteForSources, _decodeDdgHref, WEB_SEARCH_RUNTIME_VERSION, _isGioCancellable: typeof _isGioCancellable !== 'undefined' ? _isGioCancellable : () => false, _resolveSoupCancellable: typeof _resolveSoupCancellable !== 'undefined' ? _resolveSoupCancellable : () => ({ soupCancellable: null, bridgeCleanup: ()=>{} }), _isCancelled, __setGioSoupForTest };

@@ -313,3 +313,34 @@ test('searxng: HTTP 403 diagnostic includes stage and content-type', async () =>
         });
     });
 });
+
+test('P5: runtime marker exported; valid raw sources stay non-empty through the full canonical chain', async () => {
+    const w = require('../ai/webSearchTool.js');
+    assert.equal(w.WEB_SEARCH_RUNTIME_VERSION, 'p5-trace', 'runtime version marker exported');
+
+    const tool = w.createProductionWebSearchTool({
+        engine: 'searxng',
+        searxngUrl: 'http://127.0.0.1:8080',
+        httpGet: (url, canc, cb) => cb(null, JSON.stringify({ results: [
+            { title: 'Test', url: 'https://example.com', content: 'test' },
+            { title: 'Two', url: 'https://example.com/two', content: 'x' }
+        ] }))
+    });
+
+    // Boundary 1: backend raw result -> tool_result (normalize + createToolResult)
+    const tr = await new Promise((res, rej) => tool.search({ query: 'test query', maxResults: 5 }, (err, r) => err ? rej(err) : res(r)));
+    assert.equal(tr.type, 'tool_result');
+    assert.equal(tr.sources.length, 2, 'backend -> normalize -> createToolResult must not empty sources, got ' + tr.sources.length);
+
+    // Boundary 2: tool_result -> AISearchEngine grounded answer keeps sources
+    const { createAISearchEngine } = require('../ai/aiSearchEngine.js');
+    const { createMockAiProvider } = require('../ai/aiProvider.js');
+    const prov = createMockAiProvider({ responses: [
+        { type: 'tool_call', tool: 'web_search', arguments: { query: 'test query' } },
+        { type: 'answer', text: 'grounded answer' }
+    ] });
+    const engine = createAISearchEngine({ provider: prov, webSearchTool: tool, enableGrounding: true });
+    const out = await new Promise((res, rej) => engine.search('test query', (err, r) => err ? rej(err) : res(r)));
+    assert.equal(out.text, 'grounded answer');
+    assert.equal(out.sources.length, 2, 'grounded sources must survive full chain into AISearchEngine, got ' + out.sources.length);
+});
