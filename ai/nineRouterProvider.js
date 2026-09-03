@@ -1007,19 +1007,6 @@ function createNineRouterProvider(opts) {
             }
             try {
                 const parsed = parseResponseText(text, status);
-                if (!parsed.text || !String(parsed.text).trim()) {
-                    let rc = '';
-                    try {
-                        const d = JSON.parse(text);
-                        rc = d && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.reasoning_content || '';
-                    } catch (e) {}
-                    if (rc && String(rc).trim()) {
-                        parsed.text = String(rc).trim();
-                        return complete(null, parsed);
-                    }
-                    const e2 = _makeStagedError('Invalid AI response', 'invalid_response', 'stream_parse');
-                    return complete(e2);
-                }
                 return complete(null, parsed);
             } catch (e) {
                 if (e._status) e.code = httpStatusToCode(e._status);
@@ -1155,18 +1142,46 @@ function createNineRouterProvider(opts) {
         } catch (e) {}
 
         let parser = null;
+        let _spLoadErrors = [];
+        function _sanitizeSpMsg(s) { try { let t=String(s||''); t=t.replace(/Bearer\s+[A-Za-z0-9._\-~+\/]+=*/gi,'Bearer [REDACTED]'); t=t.replace(/api[_-]?key\s*[:=]\s*\S+/gi,'api_key=[REDACTED]'); return t.slice(0,300);} catch(e){ return String(s||'').slice(0,300); } }
         try {
             let sp = null;
-            try { sp = require('./ai/streamParser.js'); } catch (e) {}
-            if (!sp) try { sp = require('./streamParser.js'); } catch (e) {}
-            if (!sp) try { sp = require('ai/streamParser.js'); } catch (e) {}
+            const _attempts = ['./ai/streamParser.js','./streamParser.js','ai/streamParser.js'];
+            for (const _p of _attempts) {
+                try { const _m = require(_p); if (_m) { sp = _m; break; } } catch (e) { _spLoadErrors.push({ path: _p, name: (e&&e.name)||'Error', message: _sanitizeSpMsg(e&&e.message||String(e)) }); }
+            }
+            if (!sp || typeof sp.createStreamParser !== 'function') {
+                const attempted = _attempts.join(",");
+                const diag = _spLoadErrors.map(e=>e.path+": "+e.name+": "+e.message).join(" | ");
+                try { _aiLog('streamParser unavailable attempted='+attempted+' errors='+diag); } catch(e) {}
+                try { _sanitizedLog('streamParser unavailable attempted', attempted, 'errors', diag.slice(0,400)); } catch(e) {}
+                const msg = !sp ? 'streamParser module unavailable' : 'streamParser createStreamParser not a function';
+                const se = _makeStagedError(msg, 'provider_error', 'stream_parse');
+                se._spAttempts = _attempts;
+                se._spErrors = _spLoadErrors;
+                throw se;
+            }
             parser = sp.createStreamParser({
                 onEvent: (evt) => {
                     if (state.settled || _isCancelled(cancellable)) return;
                     if (state.onEvent) state.onEvent(evt);
                 }
             });
-        } catch (e) {}
+        } catch (e) {
+            if (e && e.code === 'provider_error' && (e.stage === 'stream_parse' || e._stage === 'stream_parse')) {
+                if (state && state.onEvent) state.onEvent({ type: 'error', error: { code: e.code, message: _sanitizeSpMsg(e.message), stage: e.stage || e._stage, _stage: e.stage || e._stage } });
+                return;
+            }
+            const attempted = ['./ai/streamParser.js','./streamParser.js','ai/streamParser.js'].join(",");
+            const diag = _spLoadErrors.map(e=>e.path+": "+e.name+": "+e.message).join(" | ");
+            try { _aiLog('streamParser init failed attempted='+attempted+' err='+_sanitizeSpMsg(e&&e.message||String(e))+' errors='+diag); } catch(e2) {}
+            const se = _makeStagedError('streamParser module unavailable', 'provider_error', 'stream_parse');
+            se._spAttempts = ['./ai/streamParser.js','./streamParser.js','ai/streamParser.js'];
+            se._spErrors = _spLoadErrors;
+            if (e && e.message) try { se.cause = _sanitizeSpMsg(e.message); } catch(e2) {}
+            if (state && state.onEvent) state.onEvent({ type: 'error', error: { code: se.code, message: se.message, stage: se.stage, _stage: se._stage } });
+            return;
+        }
 
         function cleanup() {
             if (state.timeoutId) { _cancelTimeout(state.timeoutId); state.timeoutId = null; }
