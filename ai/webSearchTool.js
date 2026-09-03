@@ -26,6 +26,7 @@ let Gio = null, GLib = null, Soup = null;
 try { Gio = require('gi.Gio'); } catch (e) {}
 try { GLib = require('gi.GLib'); } catch (e) {}
 try { Soup = require('gi.Soup'); } catch (e) {}
+function __setGioSoupForTest(g, gl, s) { Gio = g; GLib = gl; Soup = s; }
 const DEFAULT_TIMEOUT_MS = 4000;
 function _scheduleTimeout(ms, fn) {
     if (GLib && typeof GLib.timeout_add === 'function') return GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => { fn(); return GLib.SOURCE_REMOVE; });
@@ -39,6 +40,59 @@ function _cancelTimeout(id) {
 
 function _isCancelled(c) {
     try { return !!(c && typeof c.is_cancelled === 'function' && c.is_cancelled()); } catch (e) { return false; }
+}
+
+function _isGioCancellable(c) {
+    if (!c || !Gio || !Gio.Cancellable) return false;
+    try {
+        if (typeof c.connect === 'function' && typeof c.cancel === 'function' && typeof c.is_cancelled === 'function') {
+            try { if (c instanceof Gio.Cancellable) return true; } catch (e) {}
+            if (typeof c.disconnect === 'function') return true;
+        }
+    } catch (e) {}
+    return false;
+}
+function _newNativeCancellable() {
+    if (Gio && Gio.Cancellable) {
+        try { return new Gio.Cancellable(); } catch (e) { return null; }
+    }
+    return null;
+}
+function _bridgeAppToNative(appCancellable, nativeCancellable) {
+    if (!appCancellable || !nativeCancellable) return { cleanup: function(){}, native: nativeCancellable };
+    try { if (typeof appCancellable.is_cancelled === 'function' && appCancellable.is_cancelled()) { try { nativeCancellable.cancel(); } catch (e) {} } } catch (e) {}
+    if (_isGioCancellable(appCancellable)) return { cleanup: function(){}, native: appCancellable };
+    if (typeof appCancellable.connect === 'function') {
+        try {
+            const id = appCancellable.connect('cancelled', function() { try { nativeCancellable.cancel(); } catch (e) {} });
+            return { cleanup: function(){ try { if (typeof appCancellable.disconnect === 'function') appCancellable.disconnect(id); } catch (e) {} }, native: nativeCancellable };
+        } catch (e) {}
+    }
+    if (typeof appCancellable.cancel === 'function') {
+        try {
+            const orig = appCancellable.cancel.bind(appCancellable);
+            const originalCancel = orig;
+            appCancellable.cancel = function bridgedCancel() {
+                let r; try { r = originalCancel(); } catch (e) {}
+                try { nativeCancellable.cancel(); } catch (e2) {}
+                return r;
+            };
+            return { cleanup: function(){ try { appCancellable.cancel = originalCancel; } catch (e) {} }, native: nativeCancellable };
+        } catch (e) {}
+    }
+    return { cleanup: function(){}, native: nativeCancellable };
+}
+function _resolveSoupCancellable(appCancellable) {
+    if (!Gio || !Gio.Cancellable) return { soupCancellable: appCancellable || null, bridgeCleanup: function(){} };
+    if (_isGioCancellable(appCancellable)) return { soupCancellable: appCancellable, bridgeCleanup: function(){} };
+    if (appCancellable) {
+        const native = _newNativeCancellable();
+        if (!native) return { soupCancellable: appCancellable, bridgeCleanup: function(){} };
+        const bridged = _bridgeAppToNative(appCancellable, native);
+        return { soupCancellable: bridged.native, bridgeCleanup: bridged.cleanup };
+    }
+    const standalone = _newNativeCancellable();
+    return { soupCancellable: standalone, bridgeCleanup: function(){} };
 }
 
 function _sanitizeMessage(msg) {
@@ -311,7 +365,11 @@ function _defaultHttpGet(url, cancellable, cb) {
             const msg = Soup.Message.new('GET', url);
             if (!msg) return cb(new Error('bad-url'));
             try { msg.request_headers.append('User-Agent', 'Mozilla/5.0 QuickSearch'); } catch (e) {}
-            session.send_and_read_async(msg, GLib ? GLib.PRIORITY_DEFAULT : 0, cancellable, (sess, res) => {
+            const resolved = _resolveSoupCancellable(cancellable);
+            const soupCancellable = resolved.soupCancellable;
+            const bridgeCleanup = resolved.bridgeCleanup;
+            session.send_and_read_async(msg, GLib ? GLib.PRIORITY_DEFAULT : 0, soupCancellable, (sess, res) => {
+                try { bridgeCleanup(); } catch (e) {}
                 try {
                     const bytes = sess.send_and_read_finish(res);
                     cb(null, new TextDecoder().decode(bytes.get_data()));
@@ -546,11 +604,15 @@ function _createProductionBackend(config) {
                             try { msg.set_request_body_from_bytes('application/json', GLib.Bytes.new(String(body))); }
                             catch(e){ msg.set_request_body_from_bytes('application/json', new GLib.Bytes(String(body))); }
                         }
+                        const resolvedG = _resolveSoupCancellable(cancellable);
+                        const soupCancellableG = resolvedG.soupCancellable;
+                        const bridgeCleanupG = resolvedG.bridgeCleanup;
                         let done=false;
-                        let tid=_scheduleTimeout(DEFAULT_TIMEOUT_MS, ()=>{ if(done) return; done=true; const e=new Error('Google request timeout'); e.code='backend_unavailable'; cb(e); });
-                        session.send_and_read_async(msg, GLib?GLib.PRIORITY_DEFAULT:0, cancellable, (sess,res)=>{
+                        let tid=_scheduleTimeout(DEFAULT_TIMEOUT_MS, ()=>{ if(done) return; done=true; try { bridgeCleanupG(); } catch(e) {} try { if (soupCancellableG && typeof soupCancellableG.cancel === 'function') soupCancellableG.cancel(); } catch(e) {} const e=new Error('Google request timeout'); e.code='backend_unavailable'; cb(e); });
+                        session.send_and_read_async(msg, GLib?GLib.PRIORITY_DEFAULT:0, soupCancellableG, (sess,res)=>{
+                            try { bridgeCleanupG(); } catch(e) {}
                             if(done) return; done=true; _cancelTimeout(tid);
-                            if(_isCancelled(cancellable)) return;
+                            if(_isCancelled(cancellable) || _isCancelled(soupCancellableG)) return;
                             try {
                                 const bytes=sess.send_and_read_finish(res);
                                 const dataStr=new TextDecoder().decode(bytes.get_data());
@@ -646,4 +708,4 @@ function createWebSearchTool(opts) {
     return createMockWebSearchTool(opts);
 }
 
-module.exports = { createMockWebSearchTool, createWebSearchTool, createProductionWebSearchTool, _createProductionBackend, _parseSearxngJsonForSources, _parseBingHtmlForSources, _parseDdgHtmlForSources };
+module.exports = { createMockWebSearchTool, createWebSearchTool, createProductionWebSearchTool, _createProductionBackend, _parseSearxngJsonForSources, _parseBingHtmlForSources, _parseDdgHtmlForSources, _isGioCancellable: typeof _isGioCancellable !== 'undefined' ? _isGioCancellable : () => false, _resolveSoupCancellable: typeof _resolveSoupCancellable !== 'undefined' ? _resolveSoupCancellable : () => ({ soupCancellable: null, bridgeCleanup: ()=>{} }), _isCancelled, __setGioSoupForTest };
