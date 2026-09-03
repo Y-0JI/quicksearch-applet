@@ -372,7 +372,36 @@ function _defaultHttpGet(url, cancellable, cb) {
                 try { bridgeCleanup(); } catch (e) {}
                 try {
                     const bytes = sess.send_and_read_finish(res);
-                    cb(null, new TextDecoder().decode(bytes.get_data()));
+                    const text = new TextDecoder().decode(bytes.get_data());
+                    let status = 0;
+                    try {
+                        if (typeof msg.get_status === 'function') status = msg.get_status();
+                        else if (typeof msg.get_status_code === 'function') status = msg.get_status_code();
+                        else if (typeof msg.status_code === 'number') status = msg.status_code;
+                    } catch (e) {}
+                    if (status >= 400) {
+                        const ct = (() => {
+                            try {
+                                if (msg.response_headers && typeof msg.response_headers.get_one === 'function') {
+                                    return msg.response_headers.get_one('Content-Type') || '';
+                                }
+                                if (typeof msg.get_response_headers === 'function') {
+                                    const h = msg.get_response_headers();
+                                    if (h && typeof h.get_one === 'function') return h.get_one('Content-Type') || '';
+                                }
+                            } catch (e) {}
+                            return '';
+                        })();
+                        const e = new Error('HTTP ' + status);
+                        e.status = status;
+                        e.httpStatus = status;
+                        e.bodyText = text;
+                        e.contentType = ct;
+                        e.stage = 'web_search_request';
+                        e._stage = 'web_search_request';
+                        return cb(e);
+                    }
+                    cb(null, text);
                 } catch (e) { cb(e); }
             });
             return;
@@ -388,6 +417,11 @@ function _defaultHttpGet(url, cancellable, cb) {
                 if (!r.ok) {
                     const e = new Error('HTTP ' + r.status);
                     e.status = r.status;
+                    e.httpStatus = r.status;
+                    try { e.contentType = r.headers.get('Content-Type') || ''; } catch (e2) { e.contentType = ''; }
+                    e.bodyText = t;
+                    e.stage = 'web_search_request';
+                    e._stage = 'web_search_request';
                     if (r.status === 429) e.code = 'backend_unavailable';
                     return cb(e);
                 }
@@ -414,6 +448,31 @@ function _parseSearxngJsonForSources(dataStr) {
         }
         return out;
     } catch (e) { throw e; }
+}
+
+function _parseSearxngHtmlForSources(html) {
+    const clean = s => String(s).replace(/<[^>]+>/g, '').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#x27;/g,"'").replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ').replace(/&#(\d+);/g,(m,n)=>String.fromCharCode(Number(n))).replace(/&[a-z]+;/gi,' ').replace(/\s+/g,' ').trim();
+    const out = [];
+    const htmlStr = html || '';
+    const articleRe = /<article[^>]*class="[^"]*\bresult\b[^"]*"[^>]*>([\s\S]*?)<\/article>/gi;
+    let am;
+    while ((am = articleRe.exec(htmlStr)) !== null && out.length < 10) {
+        const block = am[1];
+        const h3a = /<h3[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(block);
+        if (!h3a) continue;
+        const url = h3a[1];
+        const title = clean(h3a[2]);
+        if (!url || !/^https?:\/\//.test(url) || !title) continue;
+        let snippet = '';
+        const p = /<p[^>]*class="[^"]*\bcontent\b[^"]*"[^>]*>([\s\S]*?)<\/p>/i.exec(block);
+        if (p) snippet = clean(p[1]).slice(0, 500);
+        if (!snippet) {
+            const p2 = /<p[^>]*>([\s\S]*?)<\/p>/i.exec(block);
+            if (p2) snippet = clean(p2[1]).slice(0, 500);
+        }
+        out.push({ title: title.slice(0, 200), url, snippet });
+    }
+    return out;
 }
 
 function _parseGoogleSerperForSources(dataStr) {
@@ -511,37 +570,123 @@ function _createProductionBackend(config) {
             }
             const max = typeof maxResults === 'number' && Number.isFinite(maxResults) ? Math.max(1, Math.min(10, Math.floor(maxResults))) : 5;
             if (engine === 'searxng') {
-                const url = searxngUrl + '/search?q=' + encodeURIComponent(q) + '&format=json';
+                const urlJson = searxngUrl + '/search?q=' + encodeURIComponent(q) + '&format=json';
+                const urlHtml = searxngUrl + '/search?q=' + encodeURIComponent(q);
                 let done = false;
                 let tid = _scheduleTimeout(DEFAULT_TIMEOUT_MS, () => {
                     if (done) return;
                     done = true;
                     const e = new Error('SearXNG request timeout');
                     e.code = 'backend_unavailable';
+                    e.stage = 'web_search_request';
+                    e._stage = 'web_search_request';
                     cb(e);
                 });
-                doGet(url, cancellable, (err, dataStr) => {
+                const tryHtmlFallback = (origErr, origDataStr) => {
+                    let htmlDone = false;
+                    let htmlTid = _scheduleTimeout(DEFAULT_TIMEOUT_MS, () => {
+                        if (htmlDone) return;
+                        htmlDone = true;
+                        const status = (origErr && (origErr.status || origErr.httpStatus)) || 0;
+                        const ct = (origErr && origErr.contentType) || 'text/html';
+                        const e = new Error('SearXNG JSON forbidden (HTTP ' + (status || 403) + '), HTML fallback timeout. Expected application/json got ' + (ct || 'text/html'));
+                        e.code = 'invalid_response';
+                        e.stage = 'web_search_request';
+                        e._stage = 'web_search_request';
+                        e.httpStatus = status;
+                        e.status = status;
+                        cb(e);
+                    });
+                    doGet(urlHtml, cancellable, (hErr, hDataStr) => {
+                        if (htmlDone) return;
+                        htmlDone = true;
+                        _cancelTimeout(htmlTid);
+                        if (_isCancelled(cancellable)) return;
+                        if (hErr) {
+                            const status = (hErr.status || hErr.httpStatus) || (origErr && (origErr.status || origErr.httpStatus)) || 0;
+                            const e = new Error('SearXNG JSON forbidden (HTTP ' + (status || 403) + '), HTML fallback failed: ' + (hErr.message || 'request failed'));
+                            e.code = 'invalid_response';
+                            e.stage = 'web_search_request';
+                            e._stage = 'web_search_request';
+                            e.httpStatus = status;
+                            e.status = status;
+                            return cb(e);
+                        }
+                        try {
+                            const raw = _parseSearxngHtmlForSources(hDataStr);
+                            if (raw.length === 0) {
+                                const status = (origErr && (origErr.status || origErr.httpStatus)) || 0;
+                                const e = new Error('SearXNG HTML fallback returned no results (JSON HTTP ' + (status || 403) + ' Expected application/json Got text/html)');
+                                e.code = 'request_failed';
+                                e.stage = 'web_search_request';
+                                e._stage = 'web_search_request';
+                                e.httpStatus = status;
+                                e.status = status;
+                                return cb(e);
+                            }
+                            cb(null, raw.slice(0, max));
+                        } catch (e) {
+                            const status = (origErr && (origErr.status || origErr.httpStatus)) || 0;
+                            const e2 = new Error('SearXNG HTML fallback invalid response (JSON HTTP ' + (status || 403) + ')');
+                            e2.code = 'invalid_response';
+                            e2.stage = 'web_search_request';
+                            e2._stage = 'web_search_request';
+                            e2.httpStatus = status;
+                            e2.status = status;
+                            cb(e2);
+                        }
+                    });
+                };
+                doGet(urlJson, cancellable, (err, dataStr) => {
                     if (done) return;
                     done = true;
                     _cancelTimeout(tid);
                     if (_isCancelled(cancellable)) return;
                     if (err) {
+                        const status = err.status || err.httpStatus || 0;
+                        const isJsonForbidden = status === 403 || (err.bodyText && String(err.bodyText).includes('Forbidden')) || (String(err.message||'').includes('403'));
+                        if (isJsonForbidden) {
+                            return tryHtmlFallback(err, null);
+                        }
                         const e2 = new Error(err.message || 'SearXNG unavailable');
                         e2.code = err.code || 'backend_unavailable';
+                        e2.stage = err.stage || 'web_search_request';
+                        e2._stage = err._stage || 'web_search_request';
+                        e2.status = status;
+                        e2.httpStatus = status;
                         if (String(err.message||'').toLowerCase().includes('econnrefused') || String(err.message||'').toLowerCase().includes('enotfound')) e2.code = 'backend_unavailable';
                         return cb(e2);
+                    }
+                    if (dataStr && String(dataStr).trim().startsWith('<')) {
+                        const e = new Error('HTTP 200 but Expected application/json Got text/html');
+                        e.status = 200;
+                        e.httpStatus = 200;
+                        e.contentType = 'text/html';
+                        e.stage = 'web_search_request';
+                        e._stage = 'web_search_request';
+                        return tryHtmlFallback(e, dataStr);
                     }
                     try {
                         const raw = _parseSearxngJsonForSources(dataStr);
                         if (raw.length === 0) {
                             const e = new Error('No search results');
                             e.code = 'request_failed';
+                            e.stage = 'web_search_request';
+                            e._stage = 'web_search_request';
                             return cb(e);
                         }
                         cb(null, raw.slice(0, max));
                     } catch (e) {
-                        const e2 = new Error('Invalid response');
+                        const looksHtml = dataStr && String(dataStr).trim().startsWith('<');
+                        if (looksHtml) {
+                            return tryHtmlFallback({ status: 200, httpStatus: 200, contentType: 'text/html', message: 'Invalid JSON (got HTML)' }, dataStr);
+                        }
+                        const e2 = new Error('Invalid response: ' + (e.message || 'JSON parse failed') + ' HTTP 200 Expected application/json');
                         e2.code = 'invalid_response';
+                        e2.stage = 'web_search_request';
+                        e2._stage = 'web_search_request';
+                        e2.status = 200;
+                        e2.httpStatus = 200;
                         cb(e2);
                     }
                 });
