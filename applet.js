@@ -136,6 +136,7 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._aiFooter.add(this._stopButton);
         this._aiFooter.add(this._resetButton);
         this.contentLayout.add(this._aiFooter);
+        try { global.log("[quicksearch@yoji] Phase 8 footer init ok (stop/reset)"); } catch (e) {}
         try {
             this._stopButton.connect("clicked", () => {
                 try { this._applet._stopAI(); } catch (e) {}
