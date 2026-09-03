@@ -21,9 +21,28 @@ const Gt = (() => {
     try { return require('./groundingTypes.js'); } catch (e) {}
     try { return require('ai/groundingTypes.js'); } catch (e) { return null; }
 })();
+// P7: provider module resolution with multi-candidate paths (same strategy as groundingTypes above)
+// and preserved load errors. A load failure must never be silently swallowed into a bare
+// "module unavailable" — the original require error is kept for diagnostics.
 let searxngProviderMod = null;
-try { searxngProviderMod = require('./searchProviders/searxngProvider.js'); } catch (e) {}
-try { if (!searxngProviderMod) searxngProviderMod = require('ai/searchProviders/searxngProvider.js'); } catch (e) {}
+const searxngProviderLoadErrors = [];
+function _loadSearxngProviderModule() {
+    const candidates = [
+        './searchProviders/searxngProvider.js',
+        'searchProviders/searxngProvider.js',
+        './ai/searchProviders/searxngProvider.js',
+        'ai/searchProviders/searxngProvider.js'
+    ];
+    for (const p of candidates) {
+        try {
+            const m = require(p);
+            if (m) { searxngProviderMod = m; return; }
+        } catch (e) {
+            try { searxngProviderLoadErrors.push(p + ': ' + ((e && e.message) || String(e))); } catch (e2) {}
+        }
+    }
+}
+_loadSearxngProviderModule();
 
 let Gio = null, GLib = null, Soup = null;
 try { Gio = require('gi.Gio'); } catch (e) {}
@@ -55,6 +74,26 @@ function _modulePath() {
 function _shortQuery(q) { return String(q || '').slice(0, 120); }
 function _firstUrl(arr) {
     try { const r = Array.isArray(arr) && arr[0]; return (r && r.url) ? String(r.url).slice(0, 200) : '-'; } catch (e) { return '-'; }
+}
+// P7: single builder for provider-initialization failures so module-vs-backend failures are never
+// conflated and the ORIGINAL root cause stays visible in the message/stage.
+// category: 'module_unavailable' (module load/registry/construct) — still coded backend_unavailable
+// as the generic category, but message + step + causeText name the real failure point.
+function _makeSearxngProviderInitError(opts) {
+    opts = opts || {};
+    const causeText = String(opts.causeText || '').trim();
+    const step = String(opts.step || 'provider_import');
+    const msg = causeText
+        ? ('SearXNG provider init failed at step=' + step + ' — root cause: ' + causeText.slice(0, 400))
+        : ('SearXNG provider unavailable at step=' + step);
+    const e = new Error(msg);
+    e.code = 'backend_unavailable';
+    e.stage = 'web_search_init';
+    e._stage = 'web_search_init';
+    e.provider = 'searxng';
+    e.step = step;
+    if (opts.backend) e.backend = opts.backend;
+    return e;
 }
 function _isCancelled(c) {
     try { return !!(c && typeof c.is_cancelled === 'function' && c.is_cancelled()); } catch (e) { return false; }
@@ -578,29 +617,27 @@ function _createProductionBackend(config) {
             const max = typeof maxResults === 'number' && Number.isFinite(maxResults) ? Math.max(1, Math.min(10, Math.floor(maxResults))) : 5;
             if (engine === 'searxng') {
                 // P6: single canonical retrieval path — SearXNG HTML -> parseSearXngHtml -> SearchResult[].
-                // format=json is NOT used (it returns HTTP 403 on this runtime); no multi-provider retry
-                // chain lives here. Errors carry explicit stages (web_search_request / web_search_parse /
-                // web_search_normalize) so an empty/parse outcome is never reported as Stage: unknown.
+                // P7: initialization is explicitly stepped (module_import -> provider_construct -> request)
+                // and original module/construct errors are preserved instead of being swallowed.
+                _traceLog('provider engine=searxng step=module_import ok=' + (!!searxngProviderMod && typeof searxngProviderMod.createSearXngProvider === 'function'));
                 if (!searxngProviderMod || typeof searxngProviderMod.createSearXngProvider !== 'function') {
-                    const e = new Error('SearXNG provider module unavailable');
-                    e.code = 'backend_unavailable';
-                    e.stage = 'web_search_init';
-                    e._stage = 'web_search_init';
-                    return cb(e);
+                    const causeText = searxngProviderLoadErrors.length ? searxngProviderLoadErrors.join(' | ') : 'module not found by any candidate path';
+                    _traceLog('provider engine=searxng step=module_import error=' + causeText.slice(0, 400));
+                    return cb(_makeSearxngProviderInitError({ causeText, step: 'provider_import' }));
                 }
                 let provider;
                 try {
                     provider = searxngProviderMod.createSearXngProvider({ searxngUrl, httpGet: doGet });
+                    _traceLog('provider engine=searxng step=provider_construct ok=true');
                 } catch (e) {
-                    const e2 = new Error('SearXNG provider init failed: ' + ((e && e.message) || String(e)));
-                    e2.code = 'backend_unavailable';
-                    e2.stage = 'web_search_init';
-                    e2._stage = 'web_search_init';
-                    return cb(e2);
+                    _traceLog('provider engine=searxng step=provider_construct error=' + ((e && e.message) || String(e)).slice(0, 400));
+                    return cb(_makeSearxngProviderInitError({ causeText: ((e && e.message) || String(e)), step: 'provider_construct' }));
                 }
                 provider.search(q, cancellable).then((raw) => {
                     cb(null, raw.slice(0, max));
                 }).catch((err) => {
+                    // Backend reachability/request failures carry their own stage (web_search_request) and
+                    // are NOT classified as provider-module failures.
                     cb(err);
                 });
                 return;
@@ -767,4 +804,4 @@ function createWebSearchTool(opts) {
     return createMockWebSearchTool(opts);
 }
 
-module.exports = { createMockWebSearchTool, createWebSearchTool, createProductionWebSearchTool, _createProductionBackend, _parseBingHtmlForSources, _parseDdgHtmlForSources, WEB_SEARCH_RUNTIME_VERSION, _isGioCancellable: typeof _isGioCancellable !== 'undefined' ? _isGioCancellable : () => false, _resolveSoupCancellable: typeof _resolveSoupCancellable !== 'undefined' ? _resolveSoupCancellable : () => ({ soupCancellable: null, bridgeCleanup: ()=>{} }), _isCancelled, __setGioSoupForTest };
+module.exports = { createMockWebSearchTool, createWebSearchTool, createProductionWebSearchTool, _createProductionBackend, _parseBingHtmlForSources, _parseDdgHtmlForSources, WEB_SEARCH_RUNTIME_VERSION, _makeSearxngProviderInitError, _loadSearxngProviderModule, _isGioCancellable: typeof _isGioCancellable !== 'undefined' ? _isGioCancellable : () => false, _resolveSoupCancellable: typeof _resolveSoupCancellable !== 'undefined' ? _resolveSoupCancellable : () => ({ soupCancellable: null, bridgeCleanup: ()=>{} }), _isCancelled, __setGioSoupForTest };

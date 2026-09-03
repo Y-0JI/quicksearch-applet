@@ -155,3 +155,44 @@ test('7. regression: valid raw results never become empty sources at any layer',
     const out = await new Promise((res, rej) => engine.search('chelsea', (err, r) => err ? rej(err) : res(r)));
     assert.ok(out.sources.length > 0, 'sources survive into the AI grounded answer');
 });
+
+test('P7 init: SearXNG provider module loads and exposes a working factory', async () => {
+    const { createSearXngProvider } = require('../ai/searchProviders/searxngProvider.js');
+    assert.equal(typeof createSearXngProvider, 'function', 'provider factory must be exported');
+    const provider = createSearXngProvider({
+        searxngUrl: 'http://127.0.0.1:8080',
+        httpGet: fakeHttpGet((url, cb) => cb(null, searxngHtmlWithResults(), { status: 200, contentType: 'text/html' }))
+    });
+    const results = await provider.search('chelsea', null);
+    assert.ok(Array.isArray(results) && results.length > 0, 'initialized provider can search');
+    // resolution helper must also resolve the module through the production tool path
+    const w = require('../ai/webSearchTool.js');
+    w._loadSearxngProviderModule();
+    assert.ok(w._makeSearxngProviderInitError, 'init-error builder exported');
+});
+
+test('P7 init: module-unavailable diagnostic preserves root cause, step, stage', () => {
+    const w = require('../ai/webSearchTool.js');
+    const e = w._makeSearxngProviderInitError({ causeText: 'Cannot find module ./searchProviders/searxngProvider.js (ENOENT)', step: 'provider_import' });
+    assert.equal(e.code, 'backend_unavailable');
+    assert.equal(e.stage, 'web_search_init');
+    assert.equal(e.step, 'provider_import');
+    assert.equal(e.provider, 'searxng');
+    assert.ok(String(e.message).includes('provider_import'), 'message names the failing step: ' + e.message);
+    assert.ok(String(e.message).includes('ENOENT'), 'root cause must stay in the message: ' + e.message);
+    assert.ok(!String(e.message).includes('module unavailable') || String(e.message).includes('root cause'), 'original cause visible');
+});
+
+test('P7 init: backend connection failure is NOT classified as module unavailable', async () => {
+    const provider = createSearXngProvider({
+        searxngUrl: 'http://127.0.0.1:8080',
+        httpGet: fakeHttpGet((url, cb) => { const e = new Error('econnrefused'); e.code = 'backend_unavailable'; cb(e); })
+    });
+    let err = null;
+    try { await provider.search('chelsea', null); } catch (e) { err = e; }
+    assert.ok(err, 'backend failure must reject');
+    assert.equal(err.code, 'backend_unavailable');
+    assert.equal(err.stage, 'web_search_request');
+    assert.equal(err.step, undefined, 'not a provider-init failure');
+    assert.ok(!String(err.message).toLowerCase().includes('module unavailable'), 'must not be mislabeled as module problem: ' + err.message);
+});

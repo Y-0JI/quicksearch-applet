@@ -5,7 +5,14 @@
 // No multi-provider retry, no fallback chain, no AI/stream/tool-call logic in here.
 let GLib = null;
 try { GLib = require('gi.GLib'); } catch (e) {}
-const { normalizeSearchResults } = require('./searchResult.js');
+// searchResult is resolved with the same multi-candidate strategy the other modules use, because
+// Cinnamon's module resolver is not guaranteed to be file-relative (it differs from Node).
+let searchResultMod = null;
+try { searchResultMod = require('./searchResult.js'); } catch (e) {}
+try { if (!searchResultMod) searchResultMod = require('searchProviders/searchResult.js'); } catch (e) {}
+try { if (!searchResultMod) searchResultMod = require('ai/searchProviders/searchResult.js'); } catch (e) {}
+if (!searchResultMod) throw new Error('searchResult module unavailable (no candidate path resolved)');
+const { normalizeSearchResults } = searchResultMod;
 
 const PROVIDER_NAME = 'searxng_html';
 const DEFAULT_TIMEOUT_MS = 4000;
