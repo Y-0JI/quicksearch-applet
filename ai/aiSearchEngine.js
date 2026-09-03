@@ -52,7 +52,7 @@ function _logWebSearchSources(query, sources) {
         if (typeof global === 'undefined' || typeof global.log !== 'function') return;
         const arr = Array.isArray(sources) ? sources : [];
         const first = (arr[0] && arr[0].url) ? String(arr[0].url).slice(0, 200) : '-';
-        global.log('[QuickSearch AI] web_search result query=' + String(query || '').slice(0, 120) + ' sources_count=' + arr.length + ' first_url=' + first);
+        global.log('[AI Search] query=' + String(query || '').slice(0, 120) + ' received_sources=' + arr.length + ' first_url=' + first);
     } catch (e) {}
 }
 

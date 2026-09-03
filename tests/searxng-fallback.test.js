@@ -1,346 +1,157 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { _createProductionBackend } = require('../ai/webSearchTool.js');
+const { createProductionWebSearchTool, WEB_SEARCH_RUNTIME_VERSION } = require('../ai/webSearchTool.js');
+const { createSearXngProvider, parseSearXngHtml } = require('../ai/searchProviders/searxngProvider.js');
 
-function htmlWithResults() {
-  return `<html><body><div id="results">
+function searxngHtmlWithResults() {
+    return `<html><body><div id="results">
     <article class="result"><h3><a href="https://example.com/a">Title A</a></h3><p class="content">snippet a</p></article>
     <article class="result"><h3><a href="https://example.com/b">Title B</a></h3><p class="content">snippet b</p></article>
+    <article class="result"><h3><a href="#/local">Broken Local</a></h3><p class="content">skip me</p></article>
+    <article class="result"><h3><a href="javascript:void(0)">JS Link</a></h3><p class="content">skip me</p></article>
   </div></body></html>`;
 }
-function htmlNoResults(){ return `<html><body><div id="results"></div></body></html>`; }
-function ddgHtmlWithResults(){ return `<html><body><div class="result"><a class="result__a" href="https://ddg-example.com/1">Ddg One</a><a class="result__snippet">snip 1</a></div></body></html>`; }
-function liteHtmlWithResults(){ return `<html><body><a href="https://duckduckgo.com/?q=x">Web</a><table><tr><td><a rel="nofollow" href="https://lite-example.com/1">Lite One</a></td><td class="result-snippet">snip one</td></tr><tr><td><a rel="nofollow" href="https://lite-example.com/2">Lite Two</a></td></tr></table></body></html>`; }
-
-test('searxng: JSON 403 fallback to HTML succeeds', async () => {
-    const backend = _createProductionBackend({
-        engine:'searxng',
-        searxngUrl:'http://127.0.0.1:8080',
-        httpGet: (url,canc,cb)=>{
-            if (url.includes('&format=json')) {
-                const e=new Error('HTTP 403'); e.status=403; e.httpStatus=403; e.bodyText='<!doctype html><title>403'; e.contentType='text/html'; e.stage='web_search_request'; return cb(e);
-            }
-            cb(null, htmlWithResults());
-        }
-    });
-    await new Promise((res,rej)=>{
-        backend.search('chelsea',5,null,(err,raw)=>{
-            try{ assert.equal(err,null); assert.equal(raw.length,2); assert.equal(raw[0].url,'https://example.com/a'); res(); }catch(e){rej(e);}
-        });
-    });
-});
-
-test('searxng: JSON returns HTML (200 text/html) fallback to HTML', async () => {
-    const backend = _createProductionBackend({
-        engine:'searxng',
-        searxngUrl:'http://127.0.0.1:8080',
-        httpGet: (url,canc,cb)=> cb(null, htmlWithResults())
-    });
-    await new Promise((res,rej)=>{
-        backend.search('chelsea',5,null,(err,raw)=>{
-            try{ assert.equal(err,null); assert.equal(raw.length,2); res(); }catch(e){rej(e);}
-        });
-    });
-});
-
-test('searxng: HTML fallback no results -> diagnostic with HTTP status', async () => {
-    const backend = _createProductionBackend({
-        engine:'searxng',
-        searxngUrl:'http://127.0.0.1:8080',
-        httpGet: (url,canc,cb)=>{
-            if (url.includes('&format=json')) { const e=new Error('HTTP 403'); e.status=403; e.httpStatus=403; e.bodyText='<!doctype html>403'; e.contentType='text/html'; return cb(e); }
-            cb(null, htmlNoResults());
-        }
-    });
-    await new Promise((res,rej)=>{
-        backend.search('chelsea',5,null,(err,raw)=>{
-            try{
-                assert.ok(err);
-                assert.equal(err.code,'request_failed');
-                assert.equal(err.stage,'web_search_request');
-                assert.match(err.message, /HTTP 403/);
-                assert.match(err.message, /Expected application\/json/);
-                res();
-            }catch(e){rej(e);}
-        });
-    });
-});
-
-test('searxng: JSON 403 AND SearXNG HTML request failure -> DDG HTML rescues', async () => {
-    const backend = _createProductionBackend({
-        engine:'searxng',
-        searxngUrl:'http://127.0.0.1:8080',
-        httpGet: (url,canc,cb)=>{
-            if (url.includes('&format=json')) { const e=new Error('HTTP 403'); e.status=403; e.httpStatus=403; e.bodyText='<html>403'; e.contentType='text/html'; return cb(e); }
-            if (url.startsWith('http://127.0.0.1:8080/')) { const e=new Error('HTTP 500'); e.status=500; e.httpStatus=500; return cb(e); }
-            cb(null, ddgHtmlWithResults());
-        }
-    });
-    await new Promise((res,rej)=>{
-        backend.search('chelsea',5,null,(err,raw)=>{
-            try{ assert.equal(err,null); assert.equal(raw.length,1); assert.equal(raw[0].url,'https://ddg-example.com/1'); res(); }catch(e){rej(e);}
-        });
-    });
-});
-
-test('searxng: SearXNG HTML 0 results and DDG HTML 0 -> DDG Lite rescues', async () => {
-    const backend = _createProductionBackend({
-        engine:'searxng',
-        searxngUrl:'http://127.0.0.1:8080',
-        httpGet: (url,canc,cb)=>{
-            if (url.includes('&format=json')) { const e=new Error('HTTP 403'); e.status=403; e.httpStatus=403; e.bodyText='<html>403'; e.contentType='text/html'; return cb(e); }
-            if (url.startsWith('https://lite.duckduckgo.com')) return cb(null, liteHtmlWithResults());
-            cb(null, htmlNoResults());
-        }
-    });
-    await new Promise((res,rej)=>{
-        backend.search('chelsea',5,null,(err,raw)=>{
-            try{ assert.equal(err,null); assert.equal(raw.length,2); assert.equal(raw[0].url,'https://lite-example.com/1'); res(); }catch(e){rej(e);}
-        });
-    });
-});
-
-test('searxng: JSON 200 zero results still rescues via HTML/DDG chain', async () => {
-    const backend = _createProductionBackend({
-        engine:'searxng',
-        searxngUrl:'http://127.0.0.1:8080',
-        httpGet: (url,canc,cb)=>{
-            if (url.includes('&format=json')) return cb(null, JSON.stringify({ results: [] }));
-            if (url.startsWith('https://lite.duckduckgo.com')) return cb(null, liteHtmlWithResults());
-            cb(null, htmlNoResults());
-        }
-    });
-    await new Promise((res,rej)=>{
-        backend.search('chelsea',5,null,(err,raw)=>{
-            try{ assert.equal(err,null); assert.equal(raw.length,2); assert.equal(raw[0].url,'https://lite-example.com/1'); res(); }catch(e){rej(e);}
-        });
-    });
-});
-
-test('searxng: total chain failure yields request_failed diagnostic naming DDG', async () => {
-    const backend = _createProductionBackend({
-        engine:'searxng',
-        searxngUrl:'http://127.0.0.1:8080',
-        httpGet: (url,canc,cb)=>{
-            const e=new Error('HTTP 403'); e.status=403; e.httpStatus=403; e.bodyText='<html>403'; e.contentType='text/html'; return cb(e);
-        }
-    });
-    await new Promise((res,rej)=>{
-        backend.search('chelsea',5,null,(err,raw)=>{
-            try{
-                assert.ok(err);
-                assert.equal(err.code,'request_failed');
-                assert.equal(err.stage || err._stage,'web_search_request');
-                assert.ok(err.message.includes('every backend unavailable'), 'naming DDG legs: ' + err.message);
-                assert.ok(err.message.includes('DDG HTML'), 'ddg html named: ' + err.message);
-                assert.ok(err.message.includes('DDG Lite'), 'ddg lite named: ' + err.message);
-                res();
-            }catch(e){rej(e);}
-        });
-    });
-});
-
-test('_parseDdgLiteForSources: external results only, DDG-internal links skipped', () => {
-    const { _parseDdgLiteForSources } = require('../ai/webSearchTool.js');
-    const out = _parseDdgLiteForSources(liteHtmlWithResults());
-    assert.equal(out.length, 2);
-    assert.equal(out[0].url, 'https://lite-example.com/1');
-    assert.ok(out[0].snippet.includes('snip one'));
-});
-
-// ---- P4: unified fallback chain regression tests ----
-// These simulate slow/timeout legs quickly by installing a fake GLib whose timeout_add fires in 5ms.
-function useFastTimers() {
-    const w = require('../ai/webSearchTool.js');
-    w.__setGioSoupForTest(null, {
-        PRIORITY_DEFAULT: 0,
-        timeout_add: (p, ms, fn) => setTimeout(fn, 5),
-        source_remove: (id) => clearTimeout(id)
-    }, null);
-    return w;
+function searxngHtmlNoResults() {
+    return `<html><body><div id="results"><p>Sorry! No results found.</p></div></body></html>`;
 }
-function useRealTimers() { require('../ai/webSearchTool.js').__setGioSoupForTest(null, null, null); }
 
-test('chain A: SearXNG JSON timeout -> SearXNG HTML succeeds', async () => {
-    const w = useFastTimers();
-    try {
-        const backend = w._createProductionBackend({
-            engine: 'searxng', searxngUrl: 'http://127.0.0.1:8080',
-            httpGet: (url, canc, cb) => { if (url.includes('&format=json')) return; cb(null, htmlWithResults()); }
-        });
-        await Promise.race([
-            new Promise((res, rej) => backend.search('chelsea', 5, null, (err, raw) => {
-                try { assert.equal(err, null); assert.equal(raw.length, 2); assert.equal(raw[0].url, 'https://example.com/a'); res(); } catch (e) { rej(e); }
-            })),
-            new Promise((res, rej) => setTimeout(() => rej(new Error('chain A hung')), 2000))
-        ]);
-    } finally { useRealTimers(); }
+function fakeHttpGet(responder) {
+    return (url, canc, cb) => responder(url, cb);
+}
+
+test('P6 runtime marker is P6-searxng-html', () => {
+    assert.equal(WEB_SEARCH_RUNTIME_VERSION, 'P6-searxng-html');
 });
 
-test('chain B: SearXNG JSON timeout -> SearXNG HTML fails -> DDG HTML succeeds', async () => {
-    const w = useFastTimers();
-    try {
-        const backend = w._createProductionBackend({
-            engine: 'searxng', searxngUrl: 'http://127.0.0.1:8080',
-            httpGet: (url, canc, cb) => {
-                if (url.includes('&format=json')) return;
-                if (url.startsWith('http://127.0.0.1:8080/')) { const e = new Error('HTTP 500'); e.status = 500; e.httpStatus = 500; return cb(e); }
-                cb(null, ddgHtmlWithResults());
-            }
-        });
-        await Promise.race([
-            new Promise((res, rej) => backend.search('chelsea', 5, null, (err, raw) => {
-                try { assert.equal(err, null); assert.equal(raw.length, 1); assert.equal(raw[0].url, 'https://ddg-example.com/1'); res(); } catch (e) { rej(e); }
-            })),
-            new Promise((res, rej) => setTimeout(() => rej(new Error('chain B hung')), 2000))
-        ]);
-    } finally { useRealTimers(); }
+test('1. HTTP 200 HTML with valid results -> SearchResult[] length > 0 (parser)', () => {
+    const out = parseSearXngHtml(searxngHtmlWithResults());
+    assert.ok(out.length > 0, 'parser must find results');
+    assert.equal(out.length, 2, 'invalid entries are dropped (relative + javascript links)');
+    for (const r of out) {
+        assert.equal(typeof r.title, 'string');
+        assert.ok(r.title.length > 0, 'title exists');
+        assert.equal(typeof r.url, 'string');
+        assert.ok(/^https?:\/\//.test(r.url), 'destination URL present: ' + r.url);
+        assert.equal(typeof r.snippet, 'string', 'snippet normalized to string');
+    }
+    assert.equal(out[0].url, 'https://example.com/a');
 });
 
-test('chain C: SearXNG HTML timeout -> DDG HTML succeeds', async () => {
-    const w = useFastTimers();
-    try {
-        const backend = w._createProductionBackend({
-            engine: 'searxng', searxngUrl: 'http://127.0.0.1:8080',
-            httpGet: (url, canc, cb) => {
-                if (url.includes('&format=json')) { const e = new Error('HTTP 403'); e.status = 403; e.httpStatus = 403; e.bodyText = '<html>403'; e.contentType = 'text/html'; return cb(e); }
-                if (url.startsWith('http://127.0.0.1:8080/')) return;
-                cb(null, ddgHtmlWithResults());
-            }
-        });
-        await Promise.race([
-            new Promise((res, rej) => backend.search('chelsea', 5, null, (err, raw) => {
-                try { assert.equal(err, null); assert.equal(raw.length, 1); assert.equal(raw[0].url, 'https://ddg-example.com/1'); res(); } catch (e) { rej(e); }
-            })),
-            new Promise((res, rej) => setTimeout(() => rej(new Error('chain C hung')), 2000))
-        ]);
-    } finally { useRealTimers(); }
+test('2. HTTP 200 HTML but no results -> explicit no_results at web_search_parse', async () => {
+    const provider = createSearXngProvider({
+        searxngUrl: 'http://127.0.0.1:8080',
+        httpGet: fakeHttpGet((url, cb) => cb(null, searxngHtmlNoResults(), { status: 200, contentType: 'text/html' }))
+    });
+    let err = null;
+    try { await provider.search('chelsea', null); } catch (e) { err = e; }
+    assert.ok(err, 'must reject, not return empty success');
+    assert.equal(err.code, 'no_results');
+    assert.equal(err.stage, 'web_search_parse');
+    assert.equal(err.httpStatus, 200);
+    assert.equal(err.backend, 'searxng_html');
 });
 
-test('chain D: SearXNG JSON HTTP 500 -> SearXNG HTML fails -> DDG fallback succeeds', async () => {
-    const w = useFastTimers();
-    try {
-        const backend = w._createProductionBackend({
-            engine: 'searxng', searxngUrl: 'http://127.0.0.1:8080',
-            httpGet: (url, canc, cb) => {
-                if (url.startsWith('http://127.0.0.1:8080/')) { const e = new Error('HTTP ' + (url.includes('&format=json') ? 503 : 500)); e.status = url.includes('&format=json') ? 503 : 500; e.httpStatus = e.status; return cb(e); }
-                if (url.startsWith('https://lite.duckduckgo.com')) return cb(null, liteHtmlWithResults());
-                cb(null, htmlNoResults());
-            }
-        });
-        await Promise.race([
-            new Promise((res, rej) => backend.search('chelsea', 5, null, (err, raw) => {
-                try { assert.equal(err, null); assert.equal(raw.length, 2); assert.equal(raw[0].url, 'https://lite-example.com/1'); res(); } catch (e) { rej(e); }
-            })),
-            new Promise((res, rej) => setTimeout(() => rej(new Error('chain D hung')), 2000))
-        ]);
-    } finally { useRealTimers(); }
+test('3. HTTP 403 -> explicit backend/request error, never no_results', async () => {
+    const provider = createSearXngProvider({
+        searxngUrl: 'http://127.0.0.1:8080',
+        httpGet: fakeHttpGet((url, cb) => {
+            const e = new Error('HTTP 403');
+            e.status = 403; e.httpStatus = 403; e.contentType = 'text/html';
+            cb(e);
+        })
+    });
+    let err = null;
+    try { await provider.search('chelsea', null); } catch (e) { err = e; }
+    assert.ok(err);
+    assert.notEqual(err.code, 'no_results', '403 must not be reported as no_results');
+    assert.equal(err.stage, 'web_search_request');
+    assert.equal(err.httpStatus, 403);
+    assert.ok(err.message.includes('403'));
 });
 
-test('chain E: DDG Lite parser decodes redirect URLs and rejects DDG-internal links', () => {
-    const { _parseDdgLiteForSources } = require('../ai/webSearchTool.js');
-    const html = `<html><body>
-      <a href="https://lite.duckduckgo.com/l/?uddg=https%3A%2F%2Ftarget.example.com%2Fpage%3Fa%3D1&rut=abc123">Redirect One</a>
-      <a href="https://example.com/direct">Direct Two</a>
-      <a href="https://duckduckgo.com/?q=x">Nav Link</a>
-    </body></html>`;
-    const out = _parseDdgLiteForSources(html);
-    assert.equal(out.length, 2);
-    assert.equal(out[0].url, 'https://target.example.com/page?a=1');
-    assert.equal(out[1].url, 'https://example.com/direct');
+test('4. Content-Type is not text/html -> invalid_response', async () => {
+    const provider = createSearXngProvider({
+        searxngUrl: 'http://127.0.0.1:8080',
+        httpGet: fakeHttpGet((url, cb) => cb(null, searxngHtmlWithResults(), { status: 200, contentType: 'application/json' }))
+    });
+    let err = null;
+    try { await provider.search('chelsea', null); } catch (e) { err = e; }
+    assert.ok(err);
+    assert.equal(err.code, 'invalid_response');
+    assert.equal(err.stage, 'web_search_parse');
+    assert.ok(err.message.toLowerCase().includes('content-type'));
 });
 
-test('chain F: every leg times out -> exactly one error callback listing all legs tried', async () => {
-    const w = useFastTimers();
-    try {
-        const backend = w._createProductionBackend({ engine: 'searxng', searxngUrl: 'http://127.0.0.1:8080', httpGet: () => {} });
-        let calls = 0; let message = '';
-        await Promise.race([
-            new Promise((res) => backend.search('chelsea', 5, null, (err) => { calls++; message = err ? err.message : ''; setTimeout(res, 40); })),
-            new Promise((res, rej) => setTimeout(() => rej(new Error('chain F hung')), 2000))
-        ]);
-        assert.equal(calls, 1, 'callback must fire exactly once');
-        assert.ok(message.includes('SearXNG JSON timeout'), message);
-        assert.ok(message.includes('SearXNG HTML timeout'), message);
-        assert.ok(message.includes('DDG HTML timeout'), message);
-        assert.ok(message.includes('DDG Lite timeout'), message);
-        assert.ok(message.includes('every backend unavailable'), message);
-    } finally { useRealTimers(); }
+test('5. parser result items are normalized SearchResult (title/url/snippet)', () => {
+    const out = parseSearXngHtml('<html><body>' +
+        '<article class="result"><h3><a href="https://example.com/x">  Spaced &amp; Title  </a></h3><p class="content">   <b>snip</b> text   </p></article>' +
+        '</body></html>');
+    assert.equal(out.length, 1);
+    assert.equal(out[0].title, 'Spaced & Title');
+    assert.equal(out[0].url, 'https://example.com/x');
+    assert.ok(out[0].snippet.includes('snip text'));
 });
 
-test('chain G: stale late HTTP response after settle does not double-deliver', async () => {
-    const w = useFastTimers();
-    try {
-        let jsonCb = null;
-        const backend = w._createProductionBackend({
-            engine: 'searxng', searxngUrl: 'http://127.0.0.1:8080',
-            httpGet: (url, canc, cb) => { if (url.includes('&format=json')) { jsonCb = cb; return; } cb(null, htmlWithResults()); }
-        });
-        let calls = 0; let sources = null;
-        await Promise.race([
-            new Promise((res) => backend.search('chelsea', 5, null, (err, raw) => { calls++; if (!err) sources = raw; setTimeout(res, 10); })),
-            new Promise((res, rej) => setTimeout(() => rej(new Error('chain G hung')), 2000))
-        ]);
-        // Chain already settled via SearXNG HTML after the JSON leg timed out. Now the stale JSON
-        // response finally arrives — it must be ignored and the callback must not fire again.
-        if (jsonCb) jsonCb(null, JSON.stringify({ results: [{ title: 'Late', url: 'https://late.example.com', content: 'x' }] }));
-        await new Promise(r => setTimeout(r, 25));
-        assert.equal(calls, 1, 'callback must fire exactly once despite stale response');
-        assert.ok(sources && sources.length === 2 && sources[0].url === 'https://example.com/a');
-    } finally { useRealTimers(); }
-});
-
-test('searxng: HTTP 403 diagnostic includes stage and content-type', async () => {
-    const { createProductionWebSearchTool } = require('../ai/webSearchTool.js');
+test('6. E2E canonical path: SearXNG HTML -> parser -> SearchResult[] -> tool result -> AI sources', async () => {
     const tool = createProductionWebSearchTool({
-        engine:'searxng',
-        searxngUrl:'http://127.0.0.1:8080',
-        httpGet: (url,canc,cb)=>{
-            const e=new Error('HTTP 403'); e.status=403; e.httpStatus=403; e.bodyText='<!doctype html>403'; e.contentType='text/html'; e.stage='web_search_request'; return cb(e);
-        }
-    });
-    // Make HTML also fail to trigger diagnostic
-    const backend = tool.__backend;
-    // Override html to also fail so we get diagnostic
-    await new Promise((res,rej)=>{
-        tool.search({query:'chelsea',maxResults:5}, (err,result)=>{
-            try{
-                assert.ok(err);
-                // After HTML fallback fail, should still have stage web_search_request
-                assert.equal(err.stage || err._stage, 'web_search_request');
-                res();
-            }catch(e){rej(e);}
-        });
-    });
-});
-
-test('P5: runtime marker exported; valid raw sources stay non-empty through the full canonical chain', async () => {
-    const w = require('../ai/webSearchTool.js');
-    assert.equal(w.WEB_SEARCH_RUNTIME_VERSION, 'p5-trace', 'runtime version marker exported');
-
-    const tool = w.createProductionWebSearchTool({
         engine: 'searxng',
         searxngUrl: 'http://127.0.0.1:8080',
-        httpGet: (url, canc, cb) => cb(null, JSON.stringify({ results: [
-            { title: 'Test', url: 'https://example.com', content: 'test' },
-            { title: 'Two', url: 'https://example.com/two', content: 'x' }
-        ] }))
+        httpGet: fakeHttpGet((url, cb) => cb(null, searxngHtmlWithResults(), { status: 200, contentType: 'text/html' }))
     });
-
-    // Boundary 1: backend raw result -> tool_result (normalize + createToolResult)
-    const tr = await new Promise((res, rej) => tool.search({ query: 'test query', maxResults: 5 }, (err, r) => err ? rej(err) : res(r)));
+    const tr = await new Promise((res, rej) => tool.search({ query: 'cek jadwal chelsea minggu ini', maxResults: 5 }, (err, r) => err ? rej(err) : res(r)));
     assert.equal(tr.type, 'tool_result');
-    assert.equal(tr.sources.length, 2, 'backend -> normalize -> createToolResult must not empty sources, got ' + tr.sources.length);
+    assert.ok(tr.sources.length > 0, 'toolResult.sources must be > 0, got ' + tr.sources.length);
+    assert.ok(tr.sources[0].url, 'source has url');
 
-    // Boundary 2: tool_result -> AISearchEngine grounded answer keeps sources
     const { createAISearchEngine } = require('../ai/aiSearchEngine.js');
     const { createMockAiProvider } = require('../ai/aiProvider.js');
     const prov = createMockAiProvider({ responses: [
-        { type: 'tool_call', tool: 'web_search', arguments: { query: 'test query' } },
-        { type: 'answer', text: 'grounded answer' }
+        { type: 'tool_call', tool: 'web_search', arguments: { query: 'cek jadwal chelsea minggu ini' } },
+        { type: 'answer', text: 'grounded answer about chelsea' }
     ] });
     const engine = createAISearchEngine({ provider: prov, webSearchTool: tool, enableGrounding: true });
-    const out = await new Promise((res, rej) => engine.search('test query', (err, r) => err ? rej(err) : res(r)));
-    assert.equal(out.text, 'grounded answer');
-    assert.equal(out.sources.length, 2, 'grounded sources must survive full chain into AISearchEngine, got ' + out.sources.length);
+    const out = await new Promise((res, rej) => engine.search('cek jadwal chelsea minggu ini', (err, r) => err ? rej(err) : res(r)));
+    assert.equal(out.text, 'grounded answer about chelsea');
+    assert.ok(Array.isArray(out.sources) && out.sources.length > 0, 'AI must receive grounded sources, got ' + (out.sources && out.sources.length));
+});
+
+test('6b. tool-level no-results error carries explicit parse stage (never Stage unknown)', async () => {
+    const tool = createProductionWebSearchTool({
+        engine: 'searxng',
+        searxngUrl: 'http://127.0.0.1:8080',
+        httpGet: fakeHttpGet((url, cb) => cb(null, searxngHtmlNoResults(), { status: 200, contentType: 'text/html' }))
+    });
+    let err = null;
+    await new Promise((res) => tool.search({ query: 'chelsea', maxResults: 5 }, (e) => { err = e; res(); }));
+    assert.ok(err, 'no-results page must error at the tool boundary, not empty success');
+    assert.ok(String(err.message).includes('No search results'), err.message);
+    assert.equal(err.stage, 'web_search_parse');
+    assert.notEqual(err.stage, 'unknown');
+    assert.equal(err.httpStatus, 200);
+});
+
+test('7. regression: valid raw results never become empty sources at any layer', async () => {
+    const raw = [
+        { title: 'Chelsea', url: 'https://example.com/chelsea', snippet: 'fixture snippet' }
+    ];
+    // parser -> provider -> normalizeSearchResults keeps it
+    const html = '<html><body><article class="result"><h3><a href="https://example.com/chelsea">Chelsea</a></h3><p class="content">fixture snippet</p></article></body></html>';
+    const tool = createProductionWebSearchTool({
+        engine: 'searxng',
+        searxngUrl: 'http://127.0.0.1:8080',
+        httpGet: fakeHttpGet((url, cb) => cb(null, html, { status: 200, contentType: 'text/html' }))
+    });
+    const tr = await new Promise((res, rej) => tool.search({ query: 'chelsea', maxResults: 5 }, (err, r) => err ? rej(err) : res(r)));
+    assert.ok(tr.sources.length > 0, 'valid raw must survive into tool_result sources');
+    assert.equal(tr.sources[0].url, raw[0].url);
+
+    const { createAISearchEngine } = require('../ai/aiSearchEngine.js');
+    const { createMockAiProvider } = require('../ai/aiProvider.js');
+    const prov = createMockAiProvider({ responses: [
+        { type: 'tool_call', tool: 'web_search', arguments: { query: 'chelsea' } },
+        { type: 'answer', text: 'ok' }
+    ] });
+    const engine = createAISearchEngine({ provider: prov, webSearchTool: tool, enableGrounding: true });
+    const out = await new Promise((res, rej) => engine.search('chelsea', (err, r) => err ? rej(err) : res(r)));
+    assert.ok(out.sources.length > 0, 'sources survive into the AI grounded answer');
 });

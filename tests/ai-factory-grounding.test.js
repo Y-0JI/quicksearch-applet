@@ -34,7 +34,7 @@ test('B production tool: SearXNG backend success path', async () => {
     const { createProductionWebSearchTool } = require('../ai/webSearchTool.js');
     const httpGet = (url, canc, cb) => {
         assert.ok(url.includes('/search?q='), 'url contains query');
-        cb(null, JSON.stringify({ results:[{ title:'T', url:'https://example.com/a', content:'snippet'}] }));
+        cb(null, '<html><body><article class="result"><h3><a href="https://example.com/a">T</a></h3><p class="content">snippet</p></article></body></html>', { status: 200, contentType: 'text/html' });
     };
     const tool = createProductionWebSearchTool({ engine:'searxng', searxngUrl:'http://127.0.0.1:8080', httpGet });
     await new Promise((res,rej)=>{
@@ -83,7 +83,7 @@ test('C grounding disabled -> WebSearchTool not called', () => {
 });
 
 test('D tool call end-to-end via factory production injection', async () => {
-    const httpGet = (url,canc,cb)=> cb(null, JSON.stringify({ results:[{ title:'T', url:'https://example.com/a', content:'snippet for grounding'}] }));
+    const httpGet = (url,canc,cb)=> cb(null, '<html><body><article class="result"><h3><a href="https://example.com/a">T</a></h3><p class="content">snippet for grounding</p></article></body></html>', { status: 200, contentType: 'text/html' });
     const engine = createAiEngine({
         provider: createMockAiProvider({ responses:[{type:'tool_call',tool:'web_search',arguments:{query:'q'}},{type:'answer',text:'final grounded answer'}] }),
         enableGrounding:true,
