@@ -46,11 +46,51 @@ function buildChatCompletionsUrl(baseUrl) {
     return raw + '/v1/chat/completions';
 }
 
-function buildRequestBody(model, systemPrompt, userContent) {
+function buildToolsDefinition(tools) {
+    if (!Array.isArray(tools) || tools.length === 0) return null;
+    const hasWebSearch = tools.includes('web_search');
+    if (!hasWebSearch) return null;
+    return [{
+        type: 'function',
+        function: {
+            name: 'web_search',
+            description: 'Search the web for current information. Use when question needs live, recent, or external data.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: { type: 'string', description: 'Search query' }
+                },
+                required: ['query']
+            }
+        }
+    }];
+}
+
+function buildChatMessages(systemPrompt, userContent, groundingContext, searchResults) {
     const messages = [];
     if (systemPrompt) messages.push({ role: 'system', content: String(systemPrompt) });
-    messages.push({ role: 'user', content: String(userContent || '') });
-    return JSON.stringify({ model: String(model), messages, stream: false });
+    let userMsg = String(userContent || '');
+    if (groundingContext) {
+        userMsg = (userMsg ? userMsg + '\n\n' : '') + String(groundingContext);
+    } else if (Array.isArray(searchResults) && searchResults.length > 0) {
+        try {
+            const ctx = searchResults.map((r, i) => `[${i+1}] ${String(r.title||'').slice(0,200)} (${r.url}) — ${String(r.snippet||r.content||'').slice(0,500)}`).join('\n');
+            if (ctx) userMsg = (userMsg ? userMsg + '\n\n' : '') + 'Web search results:\n' + ctx;
+        } catch (e) {}
+    }
+    messages.push({ role: 'user', content: String(userMsg || '') });
+    return messages;
+}
+
+function buildRequestBody(model, systemPrompt, userContent, tools, groundingContext, searchResults) {
+    const messages = buildChatMessages(systemPrompt, userContent, groundingContext, searchResults);
+    const body = { model: String(model), messages, stream: false };
+    const toolsDef = buildToolsDefinition(tools);
+    if (toolsDef) {
+        body.tools = toolsDef;
+        body.tool_choice = 'auto';
+    }
+    return JSON.stringify(body);
 }
 
 function parseResponseText(text, status) {
@@ -776,15 +816,18 @@ function createNineRouterProvider(opts) {
         let systemPrompt = '';
         try { systemPrompt = payload.systemPrompt || ''; } catch (e) { systemPrompt = ''; }
         let userContent = '';
+        let tools = null;
+        let groundingContext = '';
+        let searchResults = null;
         try {
             if (typeof payload.query === 'string') userContent = payload.query;
             else if (typeof payload.userContent === 'string') userContent = payload.userContent;
             else if (payload.messages) {
                 userContent = String(payload.query || '');
             }
-            if (payload.groundingContext) {
-                userContent = (userContent ? userContent + '\n\n' : '') + String(payload.groundingContext);
-            }
+            if (Array.isArray(payload.tools)) tools = payload.tools;
+            if (typeof payload.groundingContext === 'string') groundingContext = payload.groundingContext;
+            if (Array.isArray(payload.searchResults)) searchResults = payload.searchResults;
         } catch (e) {
             const se = _attachStage(e, 'request_build');
             if (cb) return cb(_makeStagedError(se.message || 'Invalid AI response', 'invalid_response', 'request_build'));
@@ -801,7 +844,13 @@ function createNineRouterProvider(opts) {
         }
 
         let body;
-        try { body = buildRequestBody(model, systemPrompt, userContent); } catch (e) {
+        try {
+            body = buildRequestBody(model, systemPrompt, userContent, tools, groundingContext, searchResults);
+            try {
+                if (tools && tools.length > 0) _aiLog('Requested tools:', tools.join(','));
+                else _aiLog('Requested tools: none');
+            } catch (e) {}
+        } catch (e) {
             const se = _attachStage(e, 'request_build');
             if (cb) return cb(_makeStagedError(se.message || 'request_build failed', se.code || 'invalid_response', 'request_build'));
             return;
@@ -1063,12 +1112,15 @@ function createNineRouterProvider(opts) {
         let systemPrompt = '';
         try { systemPrompt = payload.systemPrompt || ''; } catch (e) { systemPrompt = ''; }
         let userContent = '';
+        let tools = null;
+        let groundingContext = '';
+        let searchResults = null;
         try {
             if (typeof payload.query === 'string') userContent = payload.query;
             else if (typeof payload.userContent === 'string') userContent = payload.userContent;
-            if (payload.groundingContext) {
-                userContent = (userContent ? userContent + '\n\n' : '') + String(payload.groundingContext);
-            }
+            if (Array.isArray(payload.tools)) tools = payload.tools;
+            if (typeof payload.groundingContext === 'string') groundingContext = payload.groundingContext;
+            if (Array.isArray(payload.searchResults)) searchResults = payload.searchResults;
         } catch (e) {
             const se = _attachStage(e, 'request_build');
             if (onEvent) return onEvent({ type: 'error', error: { code: se.code || 'invalid_response', message: _sanitizeDiagnosticString(se.message || 'Invalid AI response'), stage: se.stage, status: se.status } });
@@ -1086,10 +1138,18 @@ function createNineRouterProvider(opts) {
         let messages;
         let body;
         try {
-            messages = [];
-            if (systemPrompt) messages.push({ role: 'system', content: String(systemPrompt) });
-            messages.push({ role: 'user', content: String(userContent || '') });
-            body = JSON.stringify({ model: String(model), messages, stream: true });
+            messages = buildChatMessages(systemPrompt, userContent, groundingContext, searchResults);
+            const bodyObj = { model: String(model), messages, stream: true };
+            const toolsDef = buildToolsDefinition(tools);
+            if (toolsDef) {
+                bodyObj.tools = toolsDef;
+                bodyObj.tool_choice = 'auto';
+            }
+            body = JSON.stringify(bodyObj);
+            try {
+                if (tools && tools.length > 0) _aiLog('Requested tools:', tools.join(','));
+                else _aiLog('Requested tools: none');
+            } catch (e) {}
         } catch (e) {
             const se = _attachStage(e, 'request_build');
             if (onEvent) return onEvent({ type: 'error', error: { code: se.code || 'invalid_response', message: _sanitizeDiagnosticString(se.message || 'request_build failed'), stage: se.stage } });
@@ -1266,7 +1326,28 @@ function createNineRouterProvider(opts) {
             settle(e);
         });
 
-        const httpStreamFetch = opts.httpStreamFetch || createDefaultStreamingHttpFetch();
+        const httpStreamFetch = opts.httpStreamFetch || (opts.httpFetch ? function(url, opts2, onChunk, onDone) {
+            try {
+                const maybe = opts.httpFetch(url, opts2);
+                if (maybe && typeof maybe.then === 'function') {
+                    maybe.then(res => {
+                        let text = '';
+                        if (res && typeof res.bodyText === 'string') text = res.bodyText;
+                        else if (res && typeof res.body === 'string') text = res.body;
+                        else if (typeof res === 'string') text = res;
+                        else text = JSON.stringify(res);
+                        if (text) try { onChunk(text); } catch (e) {}
+                        onDone(null);
+                    }).catch(e => onDone(e));
+                } else if (typeof maybe === 'object' && maybe !== null) {
+                    let text = maybe.bodyText || maybe.body || JSON.stringify(maybe);
+                    if (text) try { onChunk(String(text)); } catch (e) {}
+                    onDone(null);
+                } else {
+                    onDone(null);
+                }
+            } catch (e) { onDone(e); }
+        } : createDefaultStreamingHttpFetch());
         let fetchAbortHandler = null;
         if (state.abortController && !cancellable) {
             fetchAbortHandler = () => settle(cancelledError);

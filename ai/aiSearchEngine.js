@@ -23,6 +23,24 @@ const ERROR_MESSAGES = {
     cancelled: null
 };
 
+function _isLiveQuery(q) {
+    const s = String(q || '').toLowerCase();
+    const liveKeywords = [
+        'jadwal', 'berita', 'harga', 'terbaru', 'hari ini', 'minggu ini', 'besok', 'kemarin',
+        'sekarang', 'live', 'skor', 'hasil', 'klasemen', 'cuaca', 'kurs', 'saham', 'bitcoin', 'crypto',
+        'update', 'latest', 'today', 'tomorrow', 'schedule', 'price', 'news', 'score', 'weather'
+    ];
+    for (const kw of liveKeywords) if (s.includes(kw)) return true;
+    return false;
+}
+
+function _shouldFallbackToSearch(q, answerText) {
+    if (!q || !answerText) return false;
+    const t = String(answerText || '').toLowerCase();
+    if (t.includes('web_search') && t.length < 500) return false;
+    return _isLiveQuery(q);
+}
+
 function _isCancelled(c) {
     try { return !!(c && typeof c.is_cancelled === 'function' && c.is_cancelled()); } catch (e) { return false; }
 }
@@ -222,9 +240,58 @@ function createAISearchEngine(deps) {
                     if (!res.text || !String(res.text).trim()) {
                         return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
                     }
+                    try { if (typeof global !== 'undefined' && global.log) global.log("[QuickSearch AI] Received tool call: none, received content: " + String(res.text||'').slice(0,120)); } catch(e){}
+                    if (enableGrounding && _isLiveQuery(q)) {
+                        try { if (typeof global !== 'undefined' && global.log) global.log("[quicksearch] search_intent live query fallback q=" + q.slice(0,80)); } catch(e){}
+                        try {
+                            const toolQuery = q;
+                            const wsRequest = Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number' ? { query: toolQuery, maxResults: Gt.DEFAULT_MAX_RESULTS } : { query: toolQuery, maxResults: 5 };
+                            webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
+                                if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                                if (wErr) {
+                                    const n2 = _normalizeWebError(wErr);
+                                    if (n2.code === 'cancelled') return;
+                                    return _deliverError(myGen, myCancellable, callbacks, n2.code, n2.message, { stage: n2.stage || wErr.stage || wErr._stage || 'web_search_request', status: n2.status || wErr.status });
+                                }
+                                if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources)) {
+                                    return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
+                                }
+                                const sources = wResults.sources;
+                                if (sources.length === 0) {
+                                    return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
+                                }
+                                let _groundingContextObj = null;
+                                if (Gt && typeof Gt.createGroundingContext === 'function') {
+                                    try { _groundingContextObj = Gt.createGroundingContext(wResults.query || toolQuery, sources); } catch (e) {}
+                                }
+                                let groundingContext = '';
+                                try { groundingContext = promptBuilder.buildGroundingContext(sources); } catch (e) { groundingContext = ''; }
+                                try {
+                                    provider.request({ query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: sources, tools: [] }, myCancellable, (err2, res2) => {
+                                        if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                                        if (err2) {
+                                            const n3 = _normalizeProviderError(err2);
+                                            if (n3.code === 'cancelled') return;
+                                            return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
+                                        }
+                                        if (!res2 || res2.type !== 'answer' || typeof res2.text !== 'string' || !String(res2.text).trim()) {
+                                            return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
+                                        }
+                                        return _deliverAnswer(myGen, myCancellable, callbacks, res2.text, sources);
+                                    });
+                                } catch (e) {
+                                    return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
+                                }
+                            });
+                        } catch (e) {
+                            return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
+                        }
+                        return;
+                    }
                     return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
                 }
-                if (res.type === 'tool_call') {
+                    if (res.type === 'tool_call') {
+                    try { if (typeof global !== 'undefined' && global.log) global.log("[QuickSearch AI] Received tool call: " + String(res.tool||'web_search') + " query=" + String(res.arguments&&res.arguments.query||'').slice(0,80)); } catch(e){}
                     if (!enableGrounding) {
                         return _deliverError(myGen, myCancellable, callbacks, 'unsupported_tool', ERROR_MESSAGES.unsupported_tool);
                     }
@@ -462,6 +529,7 @@ function createAISearchEngine(deps) {
             if (evt.type === 'tool_call') {
                 if (toolCallPending) return;
                 toolCallPending = true;
+                try { if (typeof global !== 'undefined' && global.log) global.log("[QuickSearch AI] Received tool call: " + String(evt.tool||'web_search') + " query=" + String(evt.arguments&&evt.arguments.query||'').slice(0,80)); } catch(e){}
                 if (!enableGrounding) {
                     emitError('unsupported_tool', ERROR_MESSAGES.unsupported_tool);
                     return;
@@ -541,9 +609,49 @@ function createAISearchEngine(deps) {
             }
 
             if (evt.type === 'complete') {
-                if (toolCallPending) return; // ignore first-leg complete after tool_call; second leg will complete
+                if (toolCallPending) return;
                 const finalText = (evt.result && typeof evt.result.text === 'string') ? evt.result.text : accumulatedText;
                 const sources = (evt.result && Array.isArray(evt.result.sources)) ? evt.result.sources : [];
+                try { if (typeof global !== 'undefined' && global.log) global.log("[QuickSearch AI] Received tool call: none, received content: " + String(finalText||'').slice(0,120)); } catch(e){}
+                if (enableGrounding && _isLiveQuery(q)) {
+                    try { if (typeof global !== 'undefined' && global.log) global.log("[quicksearch] search_intent live fallback q=" + q.slice(0,80)); } catch(e){}
+                    toolCallPending = true;
+                    try {
+                        const toolQuery = q;
+                        const wsRequest = Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number' ? { query: toolQuery, maxResults: Gt.DEFAULT_MAX_RESULTS } : { query: toolQuery, maxResults: 5 };
+                        webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
+                            if (_staleS() || _isCancelled(myCancellable) || destroyed || settled) return;
+                            if (wErr) {
+                                emitComplete(finalText, sources);
+                                return;
+                            }
+                            if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources) || wResults.sources.length === 0) {
+                                emitComplete(finalText, sources);
+                                return;
+                            }
+                            groundedSources = wResults.sources;
+                            let _groundingContextObj = null;
+                            if (Gt && typeof Gt.createGroundingContext === 'function') {
+                                try { _groundingContextObj = Gt.createGroundingContext(wResults.query || toolQuery, wResults.sources); } catch (e) {}
+                            }
+                            let groundingContext = '';
+                            try { groundingContext = promptBuilder.buildGroundingContext(wResults.sources); } catch (e) { groundingContext = ''; }
+                            accumulatedText = '';
+                            try {
+                                provider.streamRequest(
+                                    { query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: wResults.sources, tools: [] },
+                                    myCancellable,
+                                    handleSecondStreamEvent
+                                );
+                            } catch (e) {
+                                emitComplete(finalText, sources);
+                            }
+                        });
+                    } catch (e) {
+                        emitComplete(finalText, sources);
+                    }
+                    return;
+                }
                 emitComplete(finalText, sources);
                 return;
             }
