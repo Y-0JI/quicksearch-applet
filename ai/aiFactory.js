@@ -248,6 +248,7 @@ function createAiEngine(opts) {
     if (opts.generationStrategy && typeof opts.generationStrategy === 'object') engineOpts.generationStrategy = opts.generationStrategy;
     if (sourceContentExpander) engineOpts.sourceContentExpander = sourceContentExpander;
     if (webSearchTool !== undefined) engineOpts.webSearchTool = webSearchTool;
+    if (opts.debug || opts.debugMode) engineOpts.debug = true; // AI Debug Mode (source expansion diagnostics)
     const engine = aiSearchEngineMod.createAISearchEngine(engineOpts);
     if (webSearchToolInitError && enableGrounding) {
         try { engine.__webSearchInitError = webSearchToolInitError; } catch (e) {}

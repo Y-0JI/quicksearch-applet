@@ -898,7 +898,8 @@ class QuickSearchApplet extends Applet.IconApplet {
                 searxngUrl: searxngUrl,
                 webSearchApiKey: webSearchApiKey,
                 enableGrounding: true,
-                sourceExpansion: !!this.ai_source_expansion
+                sourceExpansion: !!this.ai_source_expansion,
+                debug: !!this.ai_debug_mode
             });
             try { global.log("[quicksearch@yoji] AI engine created ok stream=" + String(!!(this._aiEngine && this._aiEngine.searchStream)) + " grounding=" + String(!!(this._aiEngine && this._aiEngine.__webSearchInitError ? " err:" + this._aiEngine.__webSearchInitError : " ok"))); } catch (e2) {}
         } catch (e) {

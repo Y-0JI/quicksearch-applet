@@ -207,14 +207,32 @@ function createAISearchEngine(deps) {
     let providerDestroyed = false;
     const generationStrategy = deps.generationStrategy || null;
     const sourceContentExpander = deps.sourceContentExpander || null;
+    const debugMode = !!deps.debug;
 
-    // P14: minimal expansion diagnostics (no secrets) — evidence counts + budget usage.
+    // P14/P2-1: expansion diagnostics (no secrets) — summary + per-source details. Only logged
+    // when AI Debug Mode is on; never shown to normal users.
     function _logExpansionStats(stats) {
         try {
-            if (typeof global === 'undefined' || typeof global.log !== 'function' || !stats) return;
+            if (!debugMode || typeof global === 'undefined' || typeof global.log !== 'function' || !stats) return;
             global.log('[AI Search] source expansion: results=' + stats.total + ' selected=' + stats.selected +
                 ' page_content=' + stats.pageContent + ' snippet_fallback=' + stats.snippetFallback +
-                ' fetch_failed=' + stats.fetchFailed + ' chars=' + stats.totalChars + '/' + stats.budgetChars + ' budget=' + stats.budgetPercent + '%');
+                ' fetch_failed=' + stats.fetchFailed + ' full_intent=' + (!!stats.fullContentIntent) +
+                ' chars=' + stats.totalChars + '/' + stats.budgetChars + ' budget=' + stats.budgetPercent + '%');
+        } catch (e) {}
+    }
+    function _logSourceDiagnostics(evidence) {
+        try {
+            if (!debugMode || typeof global === 'undefined' || typeof global.log !== 'function' || !Array.isArray(evidence)) return;
+            for (const ev of evidence) {
+                if (!ev || typeof ev !== 'object') continue;
+                global.log('[AI Search] Source Expansion: url=' + String(ev.url || '').slice(0, 200) +
+                    ' fetch=' + String(ev.fetchStatus || '?') +
+                    ' http=' + (ev.httpStatus != null ? String(ev.httpStatus) : '-') +
+                    ' raw_html=' + (ev.rawHtmlChars != null ? String(ev.rawHtmlChars) : '-') +
+                    ' extracted=' + (ev.extractedChars != null ? String(ev.extractedChars) : '-') +
+                    ' final=' + String(ev.charCount != null ? ev.charCount : (ev.content ? ev.content.length : 0)) +
+                    ' type=' + String(ev.evidenceType || '?'));
+            }
         } catch (e) {}
     }
 
@@ -243,6 +261,7 @@ function createAISearchEngine(deps) {
                 if (_stale(myGen) || _isCancelled(cancellable) || destroyed) return;
                 if (err || !res || !Array.isArray(res.evidence) || res.evidence.length === 0) return _fallback();
                 try { _logExpansionStats(res.stats); } catch (e) {}
+                try { _logSourceDiagnostics(res.evidence); } catch (e) {}
                 let ctx = '';
                 try {
                     ctx = (promptBuilder.buildExpandedGroundingContext && typeof promptBuilder.buildExpandedGroundingContext === 'function')
