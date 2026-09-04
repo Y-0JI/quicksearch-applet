@@ -122,29 +122,52 @@
 .quicksearch-ai-loading, .quicksearch-ai-answer, .quicksearch-ai-error { padding: 10px 8px; font-size: 10pt; }
 .quicksearch-ai-error { color: rgba(255,120,120,0.95); }
 
-/* Phase AI-5: Sources UI */
-.quicksearch-ai-sources-label {
-    padding: 12px 8px 4px 8px;
+.quicksearch-ai-sources-button {
+    margin-top: 8px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background-color: rgba(255,255,255,0.06);
+}
+.quicksearch-ai-sources-button:hover {
+    background-color: rgba(255,255,255,0.12);
+}
+.quicksearch-ai-sources-button-content { spacing: 6px; }
+.quicksearch-ai-sources-button-icon { color: rgba(255,255,255,0.65); }
+.quicksearch-ai-sources-button-label { font-size: 8.5pt; color: rgba(255,255,255,0.85); }
+
+.quicksearch-sources-popover {
+    padding: 8px;
+    spacing: 6px;
+    background-color: rgba(30, 32, 40, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.50);
+}
+.quicksearch-sources-popover-header {
     font-size: 8.5pt;
     font-weight: bold;
-    color: rgba(255, 255, 255, 0.45);
-    border-top: 1px solid rgba(255, 255, 255, 0.09);
-    margin-top: 8px;
+    color: rgba(255,255,255,0.55);
+    padding: 0 4px 4px 4px;
 }
-
-.quicksearch-ai-source-row {
+.quicksearch-sources-popover-scroll {
+    padding: 2px;
+}
+.quicksearch-sources-popover-list { spacing: 4px; }
+.quicksearch-sources-popover-row {
     padding: 6px 8px;
-    border-radius: 6px;
-    cursor: pointer;
+    border-radius: 8px;
 }
-
-.quicksearch-ai-source-row:hover {
-    background-color: rgba(255, 255, 255, 0.08);
+.quicksearch-sources-popover-row:hover {
+    background-color: rgba(255,255,255,0.08);
 }
-
-.quicksearch-ai-source-title {
+.quicksearch-sources-popover-title {
     font-size: 9pt;
-    color: rgba(100, 160, 255, 0.95);
+    color: rgba(140, 180, 255, 0.95);
+}
+.quicksearch-sources-popover-domain {
+    font-size: 8pt;
+    color: rgba(255,255,255,0.45);
 }
 
 /* Phase 8: conversation UX */

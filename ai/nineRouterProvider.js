@@ -87,7 +87,7 @@ function buildChatMessages(systemPrompt, userContent, groundingContext, searchRe
     } else if (Array.isArray(searchResults) && searchResults.length > 0) {
         try {
             const ctx = searchResults.map((r, i) => `[${i+1}] ${String(r.title||'').slice(0,200)} (${r.url}) — ${String(r.snippet||r.content||'').slice(0,500)}`).join('\n');
-            if (ctx) userMsg = (userMsg ? userMsg + '\n\n' : '') + 'Web search results:\n' + ctx;
+            if (ctx) userMsg = (userMsg ? userMsg + '\n\n' : '') + 'Reference context from web search (synthesize, do not merely summarize):\n' + ctx;
         } catch (e) {}
     }
     messages.push({ role: 'user', content: String(userMsg || '') });

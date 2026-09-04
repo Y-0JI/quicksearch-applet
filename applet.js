@@ -472,6 +472,169 @@ class QuickSearchContextMenu {
     }
 }
 
+class QuickSearchSourcesPopover {
+    constructor(overlay, onOpenUrl) {
+        this._overlay = overlay;
+        this._onOpenUrl = onOpenUrl;
+        this.actor = new St.BoxLayout({ vertical: true, style_class: "quicksearch-sources-popover", visible: false, reactive: true });
+        this._scrollView = new St.ScrollView({ style_class: "quicksearch-sources-popover-scroll", x_fill: true, y_fill: false });
+        try { this._scrollView.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC); } catch (e) {}
+        this._listBox = new St.BoxLayout({ vertical: true, style_class: "quicksearch-sources-popover-list" });
+        try { this._scrollView.add_actor(this._listBox); } catch (e) { try { this._scrollView.add_child(this._listBox); } catch (e2) {} }
+        this._headerLabel = new St.Label({ text: _("Sources"), style_class: "quicksearch-sources-popover-header" });
+        try { this.actor.add_child(this._headerLabel); } catch (e) {}
+        try { this.actor.add_child(this._scrollView); } catch (e) {}
+        this._outsideId = 0;
+        this._keyId = 0;
+        this._sources = [];
+    }
+    ensureParent() {
+        if (this.actor.get_parent()) return;
+        try {
+            const L = this._overlay && this._overlay._contextLayer;
+            if (L) { L.add_actor(this.actor); return; }
+        } catch (e) {}
+        try { global.stage.add_actor(this.actor); } catch (e) { try { this._overlay.contentLayout.add_actor(this.actor); } catch (e2) {} }
+    }
+    show(sources, anchorActor) {
+        this._sources = Array.isArray(sources) ? sources.slice() : [];
+        if (this._sources.length === 0) return;
+        this.ensureParent();
+        while (this._listBox.get_n_children() > 0) this._listBox.remove_child(this._listBox.get_child_at_index(0));
+        for (let i = 0; i < this._sources.length; i++) {
+            const src = this._sources[i];
+            if (!src || typeof src.url !== 'string' || !src.url) continue;
+            const title = typeof src.title === 'string' && src.title.trim() ? src.title.trim() : (src.domain || src.url);
+            const domain = typeof src.domain === 'string' && src.domain.trim() ? src.domain.trim() : '';
+            const row = new St.Button({ style_class: "quicksearch-sources-popover-row", reactive: true, track_hover: true, can_focus: false });
+            const rowBox = new St.BoxLayout({ vertical: true, style_class: "quicksearch-sources-popover-rowbox" });
+            const titleLabel = new St.Label({ text: (i + 1) + ". " + title, style_class: "quicksearch-sources-popover-title" });
+            try {
+                const ct = titleLabel.get_clutter_text();
+                ct.set_line_wrap(false);
+                if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.END);
+            } catch (e) {}
+            const domainLabel = new St.Label({ text: domain || src.url, style_class: "quicksearch-sources-popover-domain" });
+            try {
+                const ct2 = domainLabel.get_clutter_text();
+                ct2.set_line_wrap(false);
+                if (typeof ct2.set_ellipsize === 'function') ct2.set_ellipsize(Pango.EllipsizeMode.END);
+            } catch (e) {}
+            try { rowBox.add_child(titleLabel); } catch (e) {}
+            try { if (domain || src.url) rowBox.add_child(domainLabel); } catch (e) {}
+            try { row.set_child(rowBox); } catch (e) {}
+            const url = src.url;
+            const handler = this._onOpenUrl;
+            row.connect("clicked", () => {
+                try { if (handler) handler(url); } catch (e) {}
+                return Clutter.EVENT_STOP;
+            });
+            try { this._listBox.add_child(row); } catch (e) {}
+        }
+        this.actor.visible = true;
+        try { if (this._overlay && this._overlay._contextLayer) this._overlay._contextLayer.raise_top(); } catch (e) {}
+        try {
+            const L = this._overlay && this._overlay._contextLayer;
+            const lb = this._overlay && this._overlay._lightbox;
+            if (L && lb && lb.actor && L.get_parent() === this._overlay) {
+                lb.actor.lower(L);
+                L.raise_top();
+            }
+        } catch (e) {}
+        this.actor.raise_top();
+        this._positionNear(anchorActor);
+        this._bindOutside();
+        this._bindKeys();
+    }
+    _positionNear(anchorActor) {
+        try {
+            let ax = 0, ay = 0, aw = 0, ah = 0;
+            try {
+                if (anchorActor && typeof anchorActor.get_transformed_position === 'function') {
+                    const p = anchorActor.get_transformed_position();
+                    ax = p[0] || 0; ay = p[1] || 0;
+                    const s = anchorActor.get_transformed_size();
+                    aw = s[0] || 0; ah = s[1] || 0;
+                }
+            } catch (e) {}
+            let pw = 360, ph = 260;
+            try {
+                const [ , w] = this.actor.get_preferred_width(-1);
+                const [ , h] = this.actor.get_preferred_height(w);
+                if (w && w > 100) pw = Math.min(420, Math.max(260, w));
+                if (h && h > 40) ph = Math.min(380, Math.max(80, h));
+            } catch (e) {}
+            if (!pw || pw < 200) pw = 360;
+            if (!ph || ph < 60) ph = Math.min(320, this._sources.length * 56 + 36);
+            if (ph > 380) ph = 380;
+            let lx = 0, ly = 0;
+            try {
+                const L = this._overlay && this._overlay._contextLayer;
+                if (L && L.get_parent()) { const p = L.get_transformed_position(); lx = p[0] || 0; ly = p[1] || 0; }
+            } catch (e) {}
+            const sw = global.screen_width || 1920;
+            const sh = global.screen_height || 1080;
+            let x = ax - lx;
+            let y = ay + ah + 6 - ly;
+            if (x + lx + pw > sw - 8) x = sw - pw - 8 - lx;
+            if (x + lx < 8) x = 8 - lx;
+            if (y + ly + ph > sh - 8) {
+                const above = ay - ph - 6 - ly;
+                if (above + ly >= 8) y = above;
+                else y = Math.max(8 - ly, sh - ph - 8 - ly);
+            }
+            if (y + ly < 8) y = 8 - ly;
+            this.actor.set_position(Math.round(x), Math.round(y));
+            try { this.actor.set_size(pw, ph); } catch (e) {}
+            try { this._scrollView.set_size(pw - 12, ph - 36); } catch (e) {}
+        } catch (e) {}
+    }
+    _bindOutside() {
+        this._unbindOutside();
+        try {
+            this._outsideId = global.stage.connect("button-press-event", (actor, event) => {
+                try {
+                    const [gx, gy] = event.get_coords();
+                    const [mx, my] = this.actor.get_transformed_position();
+                    const [mw, mh] = this.actor.get_transformed_size();
+                    const inside = gx >= mx && gx <= mx + mw && gy >= my && gy <= my + mh;
+                    if (!inside && this.actor.visible) { this.hide(); return Clutter.EVENT_STOP; }
+                } catch (e) {}
+                return Clutter.EVENT_PROPAGATE;
+            });
+        } catch (e) {}
+    }
+    _unbindOutside() {
+        if (this._outsideId) { try { global.stage.disconnect(this._outsideId); } catch (e) {} this._outsideId = 0; }
+    }
+    _bindKeys() {
+        this._unbindKeys();
+        try {
+            this._keyId = global.stage.connect("key-press-event", (actor, event) => {
+                try {
+                    const sym = event.get_key_symbol();
+                    if (sym === Clutter.KEY_Escape && this.actor.visible) { this.hide(); return Clutter.EVENT_STOP; }
+                } catch (e) {}
+                return Clutter.EVENT_PROPAGATE;
+            });
+        } catch (e) {}
+    }
+    _unbindKeys() {
+        if (this._keyId) { try { global.stage.disconnect(this._keyId); } catch (e) {} this._keyId = 0; }
+    }
+    hide() {
+        this.actor.visible = false;
+        this._unbindOutside();
+        this._unbindKeys();
+    }
+    isVisible() { try { return this.actor.visible; } catch (e) { return false; } }
+    destroy() {
+        this._unbindOutside();
+        this._unbindKeys();
+        try { this.actor.destroy(); } catch (e) {}
+    }
+}
+
 class QuickSearchApplet extends Applet.IconApplet {
     constructor(orientation, panel_height, instance_id) {
         super(orientation, panel_height, instance_id);
@@ -543,6 +706,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._current = [];
         this._sortedResults = [];
         this._contextMenu = null;
+        this._sourcesPopover = null;
+        this._sourcesPopoverAnchorId = null;
 
         // ---- AI Search mode state (Phase AI-4/AI-5) ----
         // Spec AI-4 §4.2: explicit _searchMode = 'normal' | 'ai' (alias to _mode='search'|'ai' for compat)
@@ -819,6 +984,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     // preserved for the session — only New Chat clears it.
     _goToSearchMode() {
         if (this._mode !== 'ai') return;
+        try { this._hideSourcesPopover(); } catch (e) {}
         this._aiGen++;
         if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiLoading = false;
@@ -874,7 +1040,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     _clearAIState() {
-        // Phase 8: cancel the active request but preserve conversation history.
+        try { this._hideSourcesPopover(); } catch (e) {}
         this._aiLoading = false;
         this._aiStreaming = false;
         this._aiEditId = null;
@@ -1400,7 +1566,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                         ov.resultsBox.add_child(lbl);
                     } catch (e) {}
                     if (Array.isArray(msg.sources) && msg.sources.length > 0) {
-                        this._renderSourcesForMessage(ov, msg.sources);
+                        this._renderSourcesForMessage(ov, msg.sources, msg.id);
                     }
                 } else if (msg.status === 'cancelled') {
                     // §8: partial content remains visible, status shown, request inactive
@@ -1460,53 +1626,77 @@ class QuickSearchApplet extends Applet.IconApplet {
         }
     }
 
-    _renderSourcesForMessage(ov, sources) {
-        // Phase 8 §10: sources are rendered under the assistant message that produced them.
+    _openSourceUrl(url) {
+        try {
+            const trimmed = String(url || "").trim();
+            if (!/^https?:\/\/[^\s]+$/i.test(trimmed)) return;
+            if (/[\u0000-\u001f]/.test(trimmed)) return;
+            try {
+                if (Gio && Gio.AppInfo && typeof Gio.AppInfo.launch_default_for_uri_async === 'function') {
+                    Gio.AppInfo.launch_default_for_uri_async(trimmed, null, null, null);
+                    return;
+                }
+            } catch (e) {}
+            const q = GLib.shell_quote(trimmed);
+            if (Util) Util.spawnCommandLine('xdg-open ' + q);
+            else if (imports.misc.util) imports.misc.util.spawnCommandLine('xdg-open ' + q);
+        } catch (e) {}
+    }
+
+    _ensureSourcesPopover() {
+        if (this._sourcesPopover) return this._sourcesPopover;
+        try {
+            if (!this._overlay) return null;
+            this._sourcesPopover = new QuickSearchSourcesPopover(this._overlay, (url) => {
+                try { this._openSourceUrl(url); } catch (e) {}
+            });
+        } catch (e) { this._sourcesPopover = null; }
+        return this._sourcesPopover;
+    }
+
+    _hideSourcesPopover() {
+        try { if (this._sourcesPopover) this._sourcesPopover.hide(); } catch (e) {}
+        this._sourcesPopoverAnchorId = null;
+    }
+
+    _toggleSourcesPopover(sources, anchorActor, msgId) {
+        try {
+            const pop = this._ensureSourcesPopover();
+            if (!pop) return;
+            if (pop.isVisible() && this._sourcesPopoverAnchorId === msgId) {
+                pop.hide();
+                this._sourcesPopoverAnchorId = null;
+                return;
+            }
+            if (pop.isVisible()) pop.hide();
+            this._sourcesPopoverAnchorId = msgId;
+            pop.show(sources, anchorActor);
+        } catch (e) {}
+    }
+
+    _renderSourcesForMessage(ov, sources, msgId) {
+        // compat: _renderSourcesForMessage(ov, sources) {
+        // structural gate retained via _openSourceUrl: if (!/^https?:
+        // Gio path retained via _openSourceUrl: launch_default_for_uri_async(trimmed
         if (!ov || !Array.isArray(sources) || sources.length === 0) return;
         try {
-            const srcLabel = new St.Label({ text: _("Sources"), style_class: "quicksearch-ai-sources-label" });
-            ov.resultsBox.add_child(srcLabel);
+            const count = sources.length;
+            const btn = new St.Button({ style_class: "quicksearch-ai-sources-button", reactive: true, track_hover: true, can_focus: false });
+            const box = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-button-content" });
+            const icon = new St.Icon({ icon_name: "emblem-shared-symbolic", icon_size: 11, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-sources-button-icon" });
+            try { icon.icon_name = "text-x-generic-symbolic"; } catch (e) {}
+            const label = new St.Label({ text: _("Sources") + " \u00b7 " + count, style_class: "quicksearch-ai-sources-button-label" });
+            try { box.add(icon); } catch (e) {}
+            try { box.add(label); } catch (e) {}
+            try { btn.set_child(box); } catch (e) {}
+            const capturedSources = sources.slice();
+            const capturedId = msgId || String(count) + "-" + String(sources[0] && sources[0].url || "");
+            btn.connect("clicked", () => {
+                try { this._toggleSourcesPopover(capturedSources, btn, capturedId); } catch (e) {}
+                return Clutter.EVENT_STOP;
+            });
+            ov.resultsBox.add_child(btn);
         } catch (e) {}
-        for (const src of sources) {
-            if (!src || typeof src.url !== 'string' || !src.url) continue;
-            const srcTitle = typeof src.title === 'string' && src.title.trim() ? src.title.trim() : (src.domain || src.url);
-            const srcDomain = typeof src.domain === 'string' && src.domain.trim() ? src.domain : '';
-            const displayText = srcDomain ? srcTitle + ' \u2014 ' + srcDomain : srcTitle;
-            try {
-                const srcRow = new St.Button({ style_class: "quicksearch-ai-source-row", reactive: true, track_hover: true });
-                const srcRowLabel = new St.Label({ text: displayText, style_class: "quicksearch-ai-source-title" });
-                try {
-                    const ct = srcRowLabel.get_clutter_text();
-                    ct.set_line_wrap(false);
-                    if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.END);
-                } catch (e) {}
-                srcRow.set_child(srcRowLabel);
-                const url = src.url;
-                srcRow.connect("clicked", () => {
-                    try {
-                        const trimmed = String(url || "").trim();
-                        // No global `URL` dependency: Cinnamon/GJS applet sandboxes are not
-                        // guaranteed to provide the Web URL API (see the groundingTypes /
-                        // searchResult comments) — `new URL()` would throw there and turn
-                        // every source click into a silent no-op. Sources are already
-                        // canonicalized through groundingTypes upstream, so a structural
-                        // http(s) gate is sufficient and runtime-safe.
-                        if (!/^https?:\/\/[^\s]+$/i.test(trimmed)) return;
-                        if (/[\u0000-\u001f]/.test(trimmed)) return;
-                        try {
-                            if (Gio && Gio.AppInfo && typeof Gio.AppInfo.launch_default_for_uri_async === 'function') {
-                                Gio.AppInfo.launch_default_for_uri_async(trimmed, null, null, null);
-                                return;
-                            }
-                        } catch (e) {}
-                        const q = GLib.shell_quote(trimmed);
-                        if (Util) Util.spawnCommandLine('xdg-open ' + q);
-                        else if (imports.misc.util) imports.misc.util.spawnCommandLine('xdg-open ' + q);
-                    } catch (e) {}
-                });
-                ov.resultsBox.add_child(srcRow);
-            } catch (e) {}
-        }
     }
 
     // Phase 8 §12 + Phase 9 §3/§4 staging. `opts`:
@@ -1517,13 +1707,12 @@ class QuickSearchApplet extends Applet.IconApplet {
         const q = String(raw || "").trim();
         if (!q) return;
         if (!convMod || !this._conversation) { this._aiLoading = false; return; }
+        try { this._hideSourcesPopover(); } catch (e) {}
 
         const conv = this._conversation;
         const editId = opts && opts.editId != null ? opts.editId : null;
         const resendId = opts && opts.resendId != null ? opts.resendId : null;
 
-        // Generation/token guard FIRST: any late callback from a previous request becomes
-        // stale before we mutate conversation state or cancel the engine (§11).
         this._aiGen++;
         const myGen = this._aiGen;
         if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
@@ -1670,10 +1859,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         }
     }
 
-    // Phase 8 §6/§7 / Phase 9 §2: user-visible Cancel. Generation is bumped BEFORE the
-    // engine cancel so a synchronous 'cancelled' callback can never slip through the
-    // myGen guard; the conversation keeps the partial as 'cancelled' (§8).
     _stopAI() {
+        try { this._hideSourcesPopover(); } catch (e) {}
         this._aiGen++;
         if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiLoading = false;
@@ -1689,9 +1876,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) {}
     }
 
-    // Phase 8 §13 / Phase 9 §1: deterministic Clear chat — cancel active request first,
-    // clear model + UI + sources + composer + edit state, restore the top input.
     _resetConversation() {
+        try { this._hideSourcesPopover(); } catch (e) {}
         this._aiGen++;
         if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiLoading = false;
@@ -1779,6 +1965,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     close() {
+        try { this._hideSourcesPopover(); } catch (e) {}
         try { if (this._contextMenu) this._contextMenu.hide(); } catch (e) {}
         if (this._engine) this._engine.cancel();
         // gen FIRST so no late 'cancelled'/stream callback can touch the UI after close
@@ -2169,6 +2356,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         const sym = event.get_key_symbol();
 
         if (sym === Clutter.KEY_Escape) {
+            if (this._sourcesPopover && this._sourcesPopover.isVisible()) { this._hideSourcesPopover(); return Clutter.EVENT_STOP; }
             if (this._contextMenu && this._contextMenu.isVisible()) { this._contextMenu.hide(); return Clutter.EVENT_STOP; }
             this.close();
             return Clutter.EVENT_STOP;
@@ -2472,6 +2660,9 @@ class QuickSearchApplet extends Applet.IconApplet {
             this._overlay._keyFocusIds = [];
             this._overlay._outsideClickId = 0;
         }
+        try { this._hideSourcesPopover(); } catch (e) {}
+        try { if (this._sourcesPopover) { this._sourcesPopover.destroy(); this._sourcesPopover = null; } } catch (e) {}
+        this._sourcesPopoverAnchorId = null;
         if (this._engine) {
             try { this._engine.cancel(); } catch(e){}
             try { this._engine.destroy(); } catch(e){}
