@@ -68,6 +68,23 @@ test('P1 live: strong temporal signal overrides conceptual intent', () => {
     assert.strictEqual(detectResponseIntent('Kapan jadwal chelsea?').flags.live, true, 'kapan + subject stays live');
 });
 
+// ── FINAL POLISH: strong temporal signal has HIGHEST priority ────────────────
+test('FINAL priority: strong temporal overrides definition + conceptual intent', () => {
+    assert.strictEqual(detectResponseIntent('Apa itu harga saham hari ini?').flags.live, true, 'definition + hari ini -> live');
+    assert.strictEqual(detectResponseIntent('Jelaskan harga BBRI sekarang').flags.live, true, 'conceptual + sekarang -> live');
+    assert.strictEqual(detectResponseIntent('Bagaimana cuaca bekerja hari ini?').flags.live, true, 'conceptual + hari ini -> live');
+});
+
+test('FINAL priority: non-temporal definition/conceptual queries stay NOT live', () => {
+    assert.strictEqual(detectResponseIntent('Apa itu harga saham?').flags.live, false);
+    assert.strictEqual(detectResponseIntent('Bagaimana harga saham bekerja?').flags.live, false);
+    assert.strictEqual(detectResponseIntent('Kenapa harga saham naik turun?').flags.live, false);
+    assert.strictEqual(detectResponseIntent('Jelaskan sistem klasemen sepak bola').flags.live, false);
+    assert.strictEqual(detectResponseIntent('Fungsi prakiraan cuaca').flags.live, false);
+    // "live" inside a technology noun (live streaming) is NOT a temporal marker
+    assert.strictEqual(detectResponseIntent('Apa itu live streaming?').flags.live, false);
+});
+
 // ── P2: final provider messages array ────────────────────────────────────────
 function groundedMessages(query, groundingContext, history) {
     return buildChatMessages('sys', query, groundingContext, null, history);

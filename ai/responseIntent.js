@@ -17,7 +17,9 @@ const _COMPLETENESS_RE = /(semua|seluruh|lengkap|lengkapnya|daftar\s*lengkap|sku
 // trigger live on their own and only ever matter when a live subject is already present.
 // This kills false positives like "Prediksi masa depan AI" or "Perkiraan ukuran file" while
 // keeping real current queries ("harga bmri", "jadwal chelsea?") live.
-const _STRONG_LIVE_RE = /(hari\s*ini|minggu\s*ini|sekarang|saat\s*ini|terbaru|terkini|\blive\b|\blatest\b|\btoday\b|\bcurrent\b|right\s*now|real-?time|besok|kemarin)/i;
+// "live" counts as a temporal marker only when it is NOT part of a technology noun phrase
+// (live streaming/chat/video/tv/…) — otherwise "Apa itu live streaming?" is vocabulary, not live.
+const _STRONG_LIVE_RE = /(hari\s*ini|minggu\s*ini|sekarang|saat\s*ini|terbaru|terkini|\blive\b(?!\s+(?:streaming|stream|chat|video|tv|show|music|concert|event|webinar|session|broadcast|feed))|\blatest\b|\btoday\b|\bcurrent\b|right\s*now|real-?time|besok|kemarin)/i;
 const _LIVE_SUBJECT_RE = /(harga|saham|kurs|cuaca|skor|klasemen|jadwal|berita|hasil\s*pertandingan|schedule|price|score|weather|news|stock|forex)/i;
 const _DATA_RE = /(berapa|statistik|spesifikasi|angka|jumlah|total|ukuran|data|persentase|rate|specs|specification|statistics)/i;
 const _LIST_RE = /(daftar|list|pemain|skuad|anggota|items|checklist|semua\s*pemain|nama\s*[-–]|menu)/i;
@@ -58,9 +60,13 @@ function _isExplanation(s) {
 }
 
 // LIVE SUBJECT CONTEXT PRECISION (AI Pipeline V3 P1 follow-up): a live subject alone is NOT
-// enough. Live detection follows this priority:
-//   1. STRONG temporal/live signal      -> LIVE        ("Jelaskan harga saham hari ini" still LIVE)
-//   2. Definition/vocabulary question   -> NOT LIVE    ("Apa itu harga pokok penjualan?")
+// enough. FINAL priority (strong temporal signal has the HIGHEST priority — it overrides both
+// definition and conceptual intent, e.g. "Apa itu harga saham hari ini?" is live because the
+// user explicitly ties the request to "hari ini"):
+//   1. STRONG temporal/live signal      -> LIVE        ("Jelaskan harga saham hari ini",
+//                                                      "Apa itu harga saham hari ini?",
+//                                                      "Bagaimana cuaca bekerja hari ini?")
+//   2. Definition/vocabulary question   -> NOT LIVE    ("Apa itu harga saham?")
 //   3. Conceptual/explanation request   -> NOT LIVE    ("Bagaimana harga saham bekerja?",
 //                                                      "Kenapa harga saham naik turun?",
 //                                                      "Jelaskan sistem klasemen",
@@ -73,8 +79,7 @@ function _isExplanation(s) {
 // subject that naturally reads as a current-value request.
 
 // Narrow definition-style check: "Apa itu …, definisi …, pengertian …, what is …, define …,
-// jelaskan apa …". Kept first so "Apa itu live streaming?" stays NOT live even though it
-// contains the word "live".
+// jelaskan apa …". Only reached when no strong temporal signal matched.
 function _isDefinitionQuery(s) {
     return /(apa\s*itu|apa\s*yang\s*dimaksud|definisi\s|pengertian\s|what\s+is|define\s+|explain\s+what|jelaskan\s+apa)/i.test(s);
 }
@@ -87,11 +92,12 @@ function _hasConceptualIntent(s) {
     return _CONCEPTUAL_RE.test(s);
 }
 
-// PRIORITY RULE (spec): strong temporal wins; then vocabulary; then conceptual; then a live
-// subject with an implicit current-value request. prediction/perkiraan/update never matter.
+// FINAL PRIORITY RULE: strong temporal/live signal is checked FIRST and always wins. Then
+// vocabulary, then conceptual; then a live subject with an implicit current-value request.
+// prediction/perkiraan/update never matter.
 function _isIntentLive(s) {
-    if (_isDefinitionQuery(s)) return false;
     if (_STRONG_LIVE_RE.test(s)) return true;
+    if (_isDefinitionQuery(s)) return false;
     if (_hasConceptualIntent(s)) return false;
     return _LIVE_SUBJECT_RE.test(s);
 }
