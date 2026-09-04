@@ -129,15 +129,60 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._autoScroll.add_actor(this.autoCompleteBox);
         this.resultsRegion.add_actor(this._autoScroll);
 
+        // AI follow-up composer: once a conversation exists, the input moves below
+        // the conversation panel so follow-up questions naturally continue the thread.
+        this._aiComposer = new St.BoxLayout({
+            style_class: "quicksearch-ai-composer",
+            vertical: false,
+            visible: false
+        });
+        this._aiFollowupEntry = new St.Entry({
+            hint_text: _("Ask a follow-up..."),
+            can_focus: true,
+            track_hover: true,
+            style_class: "quicksearch-ai-followup-entry"
+        });
+        this._aiFollowupSend = new St.Button({
+            style_class: "quicksearch-ai-followup-send",
+            can_focus: false,
+            reactive: true,
+            track_hover: true
+        });
+        this._aiFollowupSend.set_child(new St.Label({
+            text: _("Send"),
+            style_class: "quicksearch-ai-followup-send-label"
+        }));
+        const submitFollowup = () => {
+            const q = String(this._aiFollowupEntry.get_text() || "").trim();
+            if (!q) return;
+            this._aiFollowupEntry.set_text("");
+            try { this._applet._submitAIQuery(q); } catch (e) {}
+        };
+        this._aiFollowupEntry.clutter_text.connect("key-press-event", (actor, event) => {
+            const sym = event.get_key_symbol();
+            if (sym === Clutter.KEY_Return || sym === Clutter.KEY_KP_Enter) {
+                submitFollowup();
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+        this._aiFollowupSend.connect("clicked", () => {
+            submitFollowup();
+            return Clutter.EVENT_STOP;
+        });
+        this._aiComposer.add(this._aiFollowupEntry, { expand: true });
+        this._aiComposer.add(this._aiFollowupSend);
+        this.contentLayout.add(this._aiComposer);
+
         // Phase 8 §6/§13: AI footer — Stop (visible while a request is active) + Reset Conversation
         // Note: build explicit St.Label children (set_child) — the St.Button `label:` constructor
         // property is not used anywhere in this codebase and renders empty in this GJS runtime.
         this._aiFooter = new St.BoxLayout({ style_class: "quicksearch-ai-footer", vertical: false, visible: false });
         this._stopButton = new St.Button({ style_class: "quicksearch-ai-stop", can_focus: false, reactive: true, track_hover: true });
-        const _stopLabel = new St.Label({ text: _("\u23f9 Stop"), style_class: "quicksearch-ai-stop-label" });
+        const _stopLabel = new St.Label({ text: _("Cancel"), style_class: "quicksearch-ai-stop-label" });
         try { this._stopButton.set_child(_stopLabel); } catch (e) {}
         this._resetButton = new St.Button({ style_class: "quicksearch-ai-reset", can_focus: false, reactive: true, track_hover: true });
-        const _resetLabel = new St.Label({ text: _("\u21ba Reset"), style_class: "quicksearch-ai-reset-label" });
+        const _resetLabel = new St.Label({ text: _("Clear chat"), style_class: "quicksearch-ai-reset-label" });
         try { this._resetButton.set_child(_resetLabel); } catch (e) {}
         this._aiFooter.add(this._stopButton);
         this._aiFooter.add(this._resetButton);
@@ -690,6 +735,18 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) {}
         try { if (ov._aiFooter) ov._aiFooter.visible = isAi; } catch (e) {}
         try { this._syncAIFooter(); } catch (e) {}
+        try { this._syncAIComposer(); } catch (e) {}
+    }
+
+    _syncAIComposer() {
+        const ov = this._overlay;
+        if (!ov || !ov._aiComposer) return;
+        const isAi = this._mode === 'ai';
+        const hasMessages = !!(convMod && this._conversation && convMod.count(this._conversation) > 0);
+        try { ov._aiComposer.visible = isAi && hasMessages; } catch (e) {}
+        // Initial prompt stays at the top. Once chat starts, the composer becomes
+        // the continuation box below the conversation, matching chat-app UX.
+        try { if (ov._entryRow) ov._entryRow.visible = !(isAi && hasMessages); } catch (e) {}
     }
 
     _toggleMode() {
@@ -847,9 +904,32 @@ class QuickSearchApplet extends Applet.IconApplet {
             if (!msg) continue;
             if (msg.role === 'user') {
                 try {
-                    const lbl = new St.Label({ text: _("You") + ": " + String(msg.content || ''), style_class: "quicksearch-ai-user" });
+                    const card = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-user-message" });
+                    const header = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-message-header" });
+                    header.add(new St.Label({ text: _("You"), style_class: "quicksearch-ai-user" }), { expand: true });
+
+                    const actions = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-message-actions" });
+                    const editBtn = new St.Button({ style_class: "quicksearch-ai-action", reactive: true, track_hover: true });
+                    editBtn.set_child(new St.Label({ text: _("Edit"), style_class: "quicksearch-ai-action-label" }));
+                    editBtn.connect("clicked", () => {
+                        try { this._editAIUserMessage(msg.id); } catch (e) {}
+                        return Clutter.EVENT_STOP;
+                    });
+                    const resendBtn = new St.Button({ style_class: "quicksearch-ai-action", reactive: true, track_hover: true });
+                    resendBtn.set_child(new St.Label({ text: _("Resend"), style_class: "quicksearch-ai-action-label" }));
+                    resendBtn.connect("clicked", () => {
+                        try { this._resendAIUserMessage(msg.id); } catch (e) {}
+                        return Clutter.EVENT_STOP;
+                    });
+                    actions.add(editBtn);
+                    actions.add(resendBtn);
+                    header.add(actions);
+                    card.add(header);
+
+                    const lbl = new St.Label({ text: String(msg.content || ''), style_class: "quicksearch-ai-user-text" });
                     try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
-                    ov.resultsBox.add_child(lbl);
+                    card.add(lbl);
+                    ov.resultsBox.add_child(card);
                 } catch (e) {}
             } else if (msg.role === 'assistant') {
                 if (msg.status === 'streaming') {
@@ -930,7 +1010,13 @@ class QuickSearchApplet extends Applet.IconApplet {
 
         try { ov._scroll.visible = messages.length > 0; } catch (e) {}
         try { this._syncAIFooter(); } catch (e) {}
+        try { this._syncAIComposer(); } catch (e) {}
         try { this._syncRegionGeometry(); } catch (e) {}
+        try {
+            const bar = ov._scroll && ov._scroll.get_vscroll_bar ? ov._scroll.get_vscroll_bar() : null;
+            const adj = bar && bar.get_adjustment ? bar.get_adjustment() : null;
+            if (adj) adj.set_value(Math.max(adj.lower || 0, (adj.upper || 0) - (adj.page_size || 0)));
+        } catch (e) {}
         try { this._syncSelection(); } catch (e) {}
     }
 
@@ -980,10 +1066,60 @@ class QuickSearchApplet extends Applet.IconApplet {
         }
     }
 
+    _editAIUserMessage(id) {
+        if (!convMod || !this._conversation || !this._overlay) return;
+        const messages = convMod.getMessages(this._conversation);
+        const msg = messages.find(m => m && m.id === id && m.role === 'user');
+        if (!msg) return;
+        this._editingAIMessageId = id;
+        try {
+            this._overlay.setText(String(msg.content || ""));
+            this._overlay._entryRow.visible = true;
+            global.stage.set_key_focus(this._overlay._entry);
+            if (this._overlay._startCaretBlink) this._overlay._startCaretBlink();
+        } catch (e) {}
+    }
+
+    _removeConversationFrom(id) {
+        if (!this._conversation || !Array.isArray(this._conversation.messages)) return false;
+        const idx = this._conversation.messages.findIndex(m => m && m.id === id);
+        if (idx < 0) return false;
+        this._conversation.messages.splice(idx);
+        this._conversation.activeId = null;
+        return true;
+    }
+
+    _resendAIUserMessage(id) {
+        if (!convMod || !this._conversation) return;
+        const msg = convMod.getMessages(this._conversation).find(m => m && m.id === id && m.role === 'user');
+        if (!msg) return;
+        const q = String(msg.content || "").trim();
+        if (!q) return;
+        if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
+        this._aiGen++;
+        this._aiLoading = false;
+        this._aiStreaming = false;
+        if (!this._removeConversationFrom(id)) return;
+        this._editingAIMessageId = null;
+        this._submitAIQuery(q);
+    }
+
     _submitAIQuery(raw) {
         const q = String(raw || "").trim();
         if (!q) return;
         if (!convMod || !this._conversation) { this._aiLoading = false; return; }
+
+        // Editing replaces the selected user turn and all turns after it, then
+        // sends the new wording as a fresh continuation.
+        if (this._editingAIMessageId) {
+            const editingId = this._editingAIMessageId;
+            this._editingAIMessageId = null;
+            if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
+            this._aiGen++;
+            this._aiLoading = false;
+            this._aiStreaming = false;
+            this._removeConversationFrom(editingId);
+        }
 
         const conv = this._conversation;
         // Phase 8 §12 rapid-send contract: cancel the active request (partial preserved as
@@ -1125,7 +1261,12 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiGen++;
         this._aiLoading = false;
         this._aiStreaming = false;
+        this._editingAIMessageId = null;
         if (convMod && this._conversation) { try { convMod.reset(this._conversation); } catch (e) {} }
+        try {
+            if (this._overlay && this._overlay._aiFollowupEntry) this._overlay._aiFollowupEntry.set_text("");
+            if (this._overlay && this._overlay._entry) this._overlay._entry.set_text("");
+        } catch (e) {}
         try { this._renderAIState(); } catch (e) {}
     }
 
