@@ -220,6 +220,7 @@ function createAiEngine(opts) {
         }
     }
     const engineOpts = { provider, promptBuilder: opts.promptBuilder, sourceFormatter: opts.sourceFormatter, enableGrounding };
+    if (opts.generationStrategy && typeof opts.generationStrategy === 'object') engineOpts.generationStrategy = opts.generationStrategy;
     if (webSearchTool !== undefined) engineOpts.webSearchTool = webSearchTool;
     const engine = aiSearchEngineMod.createAISearchEngine(engineOpts);
     if (webSearchToolInitError && enableGrounding) {

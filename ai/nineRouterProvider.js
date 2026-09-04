@@ -104,11 +104,29 @@ function buildChatMessages(systemPrompt, userContent, groundingContext, searchRe
     return messages;
 }
 
-function buildRequestBody(model, systemPrompt, userContent, tools, groundingContext, searchResults, history, maxOutputTokens) {
+// P9 mode-specific generation strategy: the engine forwards a temperature hint per mode
+// (conversational vs grounded/web). Provider-side compatibility gate — never send a
+// temperature that could make the request fail: clamp to [0,2] and skip reasoning models
+// (o1/o3/reasoner/…) whose APIs reject or ignore temperature.
+function _sanitizeTemperature(v) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+    return Math.min(2, Math.max(0, v));
+}
+function _isReasoningModel(model) {
+    return /(^|[^a-z])(o1|o3|reasoner|reasoning)([^a-z]|$)/i.test(String(model || ''));
+}
+function _usableTemperature(model, temperature) {
+    if (_isReasoningModel(model)) return null;
+    return _sanitizeTemperature(temperature);
+}
+
+function buildRequestBody(model, systemPrompt, userContent, tools, groundingContext, searchResults, history, maxOutputTokens, temperature) {
     const messages = buildChatMessages(systemPrompt, userContent, groundingContext, searchResults, history);
     const body = { model: String(model), messages, stream: false };
     const mot = normalizeMaxOutputTokens(maxOutputTokens);
     body.max_tokens = mot;
+    const t = _usableTemperature(model, temperature);
+    if (t !== null) body.temperature = t;
     const toolsDef = buildToolsDefinition(tools);
     if (toolsDef) {
         body.tools = toolsDef;
@@ -847,6 +865,7 @@ function createNineRouterProvider(opts) {
         let groundingContext = '';
         let searchResults = null;
         let history = null;
+        let temperature = null;
         try {
             if (typeof payload.query === 'string') userContent = payload.query;
             else if (typeof payload.userContent === 'string') userContent = payload.userContent;
@@ -857,6 +876,7 @@ function createNineRouterProvider(opts) {
             if (typeof payload.groundingContext === 'string') groundingContext = payload.groundingContext;
             if (Array.isArray(payload.searchResults)) searchResults = payload.searchResults;
             if (Array.isArray(payload.history)) history = payload.history;
+            if (typeof payload.temperature === 'number') temperature = payload.temperature;
         } catch (e) {
             const se = _attachStage(e, 'request_build');
             if (cb) return cb(_makeStagedError(se.message || 'Invalid AI response', 'invalid_response', 'request_build'));
@@ -874,7 +894,7 @@ function createNineRouterProvider(opts) {
 
         let body;
         try {
-            body = buildRequestBody(model, systemPrompt, userContent, tools, groundingContext, searchResults, history, maxOutputTokens);
+            body = buildRequestBody(model, systemPrompt, userContent, tools, groundingContext, searchResults, history, maxOutputTokens, temperature);
             try {
                 if (tools && tools.length > 0) _aiLog('Requested tools:', tools.join(','));
                 else _aiLog('Requested tools: none');
@@ -1145,6 +1165,7 @@ function createNineRouterProvider(opts) {
         let groundingContext = '';
         let searchResults = null;
         let history = null;
+        let temperature = null;
         try {
             if (typeof payload.query === 'string') userContent = payload.query;
             else if (typeof payload.userContent === 'string') userContent = payload.userContent;
@@ -1152,6 +1173,7 @@ function createNineRouterProvider(opts) {
             if (typeof payload.groundingContext === 'string') groundingContext = payload.groundingContext;
             if (Array.isArray(payload.searchResults)) searchResults = payload.searchResults;
             if (Array.isArray(payload.history)) history = payload.history;
+            if (typeof payload.temperature === 'number') temperature = payload.temperature;
         } catch (e) {
             const se = _attachStage(e, 'request_build');
             if (onEvent) return onEvent({ type: 'error', error: { code: se.code || 'invalid_response', message: _sanitizeDiagnosticString(se.message || 'Invalid AI response'), stage: se.stage, status: se.status } });
@@ -1171,6 +1193,8 @@ function createNineRouterProvider(opts) {
         try {
             messages = buildChatMessages(systemPrompt, userContent, groundingContext, searchResults, history);
             const bodyObj = { model: String(model), messages, stream: true, max_tokens: maxOutputTokens };
+            const usableTemp = _usableTemperature(model, temperature);
+            if (usableTemp !== null) bodyObj.temperature = usableTemp;
             const toolsDef = buildToolsDefinition(tools);
             if (toolsDef) {
                 bodyObj.tools = toolsDef;

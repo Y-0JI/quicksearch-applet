@@ -56,6 +56,39 @@ function _logWebSearchSources(query, sources) {
     } catch (e) {}
 }
 
+// P4 dynamic runtime context: built per request (never persisted into conversation history),
+// appended to the system prompt. `grounded` marks the evidence (web search) leg of the request.
+function _buildRequestSystemPrompt(promptBuilder, grounded) {
+    let base = '';
+    try { base = promptBuilder.buildSystemPrompt(); } catch (e) { base = ''; }
+    let runtime = '';
+    try {
+        runtime = (promptBuilder.buildRuntimeContext && typeof promptBuilder.buildRuntimeContext === 'function')
+            ? promptBuilder.buildRuntimeContext({ mode: grounded ? 'web' : 'ai', webSearchUsed: !!grounded })
+            : '';
+    } catch (e) { runtime = ''; }
+    let out = base;
+    if (runtime) out = (out ? out + '\n\n' : '') + runtime;
+    return out;
+}
+
+// P9 mode-specific generation strategy. Defaults:
+//   ai  (conversational leg, no evidence)  -> leave temperature unset (provider default)
+//   web (grounded evidence leg)            -> 0.3 (stable/factual synthesis)
+// Overridable via engine deps.generationStrategy { ai?, web? }; clamped to [0,2]; a null value
+// disables the override for that mode. Provider adapter is still responsible for compatibility
+// (reasoning models that reject temperature), so this only forwards a suggestion.
+const DEFAULT_GENERATION_STRATEGY = { ai: null, web: 0.3 };
+function _modeTemperature(strategy, grounded) {
+    try {
+        const s = (strategy && typeof strategy === 'object') ? strategy : DEFAULT_GENERATION_STRATEGY;
+        const t = grounded ? s.web : s.ai;
+        if (typeof t !== 'number' || !isFinite(t)) return undefined;
+        const c = Math.min(2, Math.max(0, t));
+        return c;
+    } catch (e) { return undefined; }
+}
+
 function _makeCancellable(external) {
     if (external && typeof external.is_cancelled === 'function') return external;
     let cancelled = false;
@@ -163,8 +196,25 @@ function createAISearchEngine(deps) {
     let currentCancellable = null;
     let destroyed = false;
     let providerDestroyed = false;
+    const generationStrategy = deps.generationStrategy || null;
 
     function _stale(myGen) { return myGen !== gen; }
+
+    // P4/P9: build a grounded-leg provider payload: runtime context marks web mode +
+    // evidence used, and the web (factual) generation temperature is forwarded as a hint.
+    function _groundedPayload(q, groundingContext, groundingContextObj, sources) {
+        const p = {
+            query: q,
+            systemPrompt: _buildRequestSystemPrompt(promptBuilder, true),
+            groundingContext,
+            groundingContextObj,
+            searchResults: sources,
+            tools: []
+        };
+        const t = _modeTemperature(generationStrategy, true);
+        if (t !== undefined) p.temperature = t;
+        return p;
+    }
 
     function _deliverAnswer(myGen, cancellable, callbacks, text, sources, meta) {
         if (_stale(myGen) || _isCancelled(cancellable) || destroyed) return;
@@ -234,8 +284,7 @@ function createAISearchEngine(deps) {
             return;
         }
 
-        let systemPrompt = '';
-        try { systemPrompt = promptBuilder.buildSystemPrompt(); } catch (e) { systemPrompt = ''; }
+        let systemPrompt = _buildRequestSystemPrompt(promptBuilder, false);
 
         // Phase 8 §3: bounded conversation history (validated) attached to every provider payload.
         let historyMessages = [];
@@ -291,7 +340,7 @@ function createAISearchEngine(deps) {
                                 let groundingContext = '';
                                 try { groundingContext = promptBuilder.buildGroundingContext(sources); } catch (e) { groundingContext = ''; }
                             try {
-                                provider.request({ query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: sources, tools: [] }, myCancellable, (err2, res2) => {
+                                provider.request(_withHistory(_groundedPayload(q, groundingContext, _groundingContextObj, sources)), myCancellable, (err2, res2) => {
                                     if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
                                     if (err2) {
                                         const n3 = _normalizeProviderError(err2);
@@ -370,7 +419,7 @@ function createAISearchEngine(deps) {
                             let groundingContext = '';
                             try { groundingContext = promptBuilder.buildGroundingContext(sources); } catch (e) { groundingContext = ''; }
                             try {
-                                provider.request({ query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: sources, tools: [] }, myCancellable, (err2, res2) => {
+                                provider.request(_withHistory(_groundedPayload(q, groundingContext, _groundingContextObj, sources)), myCancellable, (err2, res2) => {
                                     if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
                                     if (err2) {
                                         const n3 = _normalizeProviderError(err2);
@@ -436,8 +485,7 @@ function createAISearchEngine(deps) {
             return;
         }
 
-        let systemPrompt = '';
-        try { systemPrompt = promptBuilder.buildSystemPrompt(); } catch (e) { systemPrompt = ''; }
+        let systemPrompt = _buildRequestSystemPrompt(promptBuilder, false);
 
         // Phase 8 §3: bounded conversation history (validated) attached to every provider payload.
         let historyMessages = [];
@@ -634,7 +682,7 @@ function createAISearchEngine(deps) {
                         accumulatedText = '';
                         try {
                             provider.streamRequest(
-                                _withHistory({ query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: sources, tools: [] }),
+                                _withHistory(_groundedPayload(q, groundingContext, _groundingContextObj, sources)),
                                 myCancellable,
                                 handleSecondStreamEvent
                             );
@@ -683,7 +731,7 @@ function createAISearchEngine(deps) {
                             accumulatedText = '';
                             try {
                                 provider.streamRequest(
-                                    _withHistory({ query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: wResults.sources, tools: [] }),
+                                    _withHistory(_groundedPayload(q, groundingContext, _groundingContextObj, wResults.sources)),
                                     myCancellable,
                                     handleSecondStreamEvent
                                 );

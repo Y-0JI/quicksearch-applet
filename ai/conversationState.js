@@ -155,7 +155,7 @@ function getHistory(conv, limit) {
         }
         // streaming/cancelled/error assistant turns are not sent as context
     }
-    return out.slice(-n);
+    return _tailWindow(out, n);
 }
 
 // Full context view: prior history + the most recent user message (§4: current user
@@ -170,7 +170,26 @@ function getContextMessages(conv, limit) {
     if (!lastUser) return hist;
     const out = hist.slice();
     out.push({ role: 'user', content: String(lastUser.content || '') });
-    return out.slice(-(limit > 0 ? limit : DEFAULT_HISTORY_LIMIT));
+    return _tailWindow(out, limit > 0 ? limit : DEFAULT_HISTORY_LIMIT);
+}
+
+// P-trim: context-window trimming must never leave an orphan leading assistant turn
+// (an assistant message whose paired user message was cut by the limit). Real histories
+// start with a user message; after slicing the most recent `n`, if the window happens to
+// begin on an assistant (odd cut), slide forward so the window starts on a user message.
+function _tailWindow(messages, n) {
+    if (!Array.isArray(messages) || messages.length === 0) return [];
+    const limit = (typeof n === 'number' && n > 0) ? n : DEFAULT_HISTORY_LIMIT;
+    if (messages.length <= limit) return messages.slice();
+    let start = messages.length - limit;
+    // n is odd -> window starts on an assistant whose user was trimmed: drop it so the
+    // user/assistant turn pairing stays intact (never send an orphan assistant turn).
+    while (start < messages.length && messages[start] && messages[start].role === 'assistant') {
+        start++;
+    }
+    // degenerate: window would be entirely assistant(s) — keep at least one message
+    if (start >= messages.length) start = messages.length - 1;
+    return messages.slice(start);
 }
 
 // §12 rapid-send contract: cancel the active request (preserve partial as 'cancelled'),

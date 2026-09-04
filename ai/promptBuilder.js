@@ -1,6 +1,10 @@
 // ai/promptBuilder.js — pure, no network/UI. Builds system prompt + grounding context.
 // ponytail: single string prompt, not messages array. Upgrade to structured messages when streaming is added.
 const SYSTEM_PROMPT = [
+    'You are QuickSearch AI, a desktop assistant running on the user\'s computer.',
+    'You are a natural conversational assistant that is context-aware and helpful.',
+    'You are factual when evidence is available and clear/concise by default.',
+    '',
     'You are a helpful conversational assistant.',
     '',
     'You are not a search-results summarizer.',
@@ -117,9 +121,58 @@ function buildUserPrompt(query, searchResults) {
     return q + '\n\n' + buildGroundingContext(searchResults);
 }
 
-// Phase 8 §3/§4: conversation history for multi-turn context.
+// ── P4 Dynamic runtime context ──────────────────────────────────────────────────────────
+// Runtime metadata (current date/time/timezone/mode) is built AT REQUEST TIME and injected
+// into the system prompt. It is NEVER persisted into conversation history or treated as a
+// user/assistant message. Pure + deterministic (injectable `now`) so it is unit-testable.
+const _MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const _DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function _pad2(n) {
+    return (n < 10 ? '0' : '') + String(n);
+}
+
+function _tzOffsetLabel(now) {
+    // getTimezoneOffset() = minutes BEHIND UTC (e.g. UTC+7 -> -420)
+    const offMin = -now.getTimezoneOffset();
+    const sign = offMin >= 0 ? '+' : '-';
+    const abs = Math.abs(offMin);
+    const hh = Math.floor(abs / 60);
+    const mm = abs % 60;
+    return 'UTC' + sign + _pad2(hh) + ':' + _pad2(mm);
+}
+
+// opts: { now?: Date, timezoneLabel?: string, mode?: 'ai'|'web', webSearchUsed?: boolean }
+// mode 'web' is used for the grounded (evidence) leg of a request; 'ai' for conversational.
+function buildRuntimeContext(opts) {
+    try {
+        opts = opts || {};
+        const now = (opts.now instanceof Date && !isNaN(opts.now.valueOf())) ? opts.now : new Date();
+        const tz = (typeof opts.timezoneLabel === 'string' && opts.timezoneLabel.trim())
+            ? opts.timezoneLabel.trim()
+            : _tzOffsetLabel(now);
+        const modeLabel = opts.mode === 'web' ? 'Web Search' : 'AI';
+        const dateStr = _DAYS[now.getDay()] + ', ' + now.getDate() + ' ' + _MONTHS[now.getMonth()] + ' ' + now.getFullYear();
+        const timeStr = _pad2(now.getHours()) + ':' + _pad2(now.getMinutes());
+        const lines = [
+            'Current date: ' + dateStr,
+            'Current time: ' + timeStr,
+            'Timezone: ' + tz,
+            'Current mode: ' + modeLabel
+        ];
+        if (opts.webSearchUsed) lines.push('Web search evidence was used for this request.');
+        return lines.join('\n');
+    } catch (e) {
+        return '';
+    }
+}
+
+// Phase 8 §3/§4 + P6: conversation history for multi-turn context.
 // Validates roles (user/assistant only), drops empty content, bounds to `limit`
 // (most recent preserved, order kept) and caps per-message length.
+// P6: trimming never starts on an orphan assistant turn — if cutting the window to
+// `limit` would begin on an assistant whose user message was trimmed away, the window
+// slides forward so the first kept message is a user turn (pair structure preserved).
 // Returns an array of { role, content } ready to be pushed as chat messages.
 const DEFAULT_HISTORY_LIMIT = 10;
 const MAX_HISTORY_MSG_LEN = 2000;
@@ -136,7 +189,12 @@ function buildHistoryMessages(history, limit) {
         if (!content) continue;
         out.push({ role, content: content.slice(0, MAX_HISTORY_MSG_LEN) });
     }
-    return out.slice(-n);
+    if (out.length <= n) return out;
+    let start = out.length - n;
+    // never leave an orphan leading assistant turn (its user message was trimmed away)
+    while (start < out.length && out[start] && out[start].role === 'assistant') start++;
+    if (start >= out.length) start = out.length - 1;
+    return out.slice(start);
 }
 
-module.exports = { buildSystemPrompt, buildGroundingContext, buildUserPrompt, buildHistoryMessages, SYSTEM_PROMPT, DEFAULT_HISTORY_LIMIT };
+module.exports = { buildSystemPrompt, buildGroundingContext, buildUserPrompt, buildHistoryMessages, buildRuntimeContext, SYSTEM_PROMPT, DEFAULT_HISTORY_LIMIT };

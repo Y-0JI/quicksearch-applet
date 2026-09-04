@@ -68,9 +68,19 @@ test('15.2b promptBuilder.buildHistoryMessages validates roles, drops empty, bou
         { role: 'user', content: 'U2' }
     ]);
     const bounded = promptBuilder.buildHistoryMessages(out, 2);
+    // P6 pair-safe trimming: last-2 of [A1,U1,A2,U2] would start on assistant A2 whose
+    // user (U1) was trimmed — the window slides forward so it never starts on an orphan
+    // assistant turn. Canonical conversation history always starts with a user message.
     assert.deepStrictEqual(bounded, [
-        { role: 'assistant', content: 'A2' },
         { role: 'user', content: 'U2' }
+    ]);
+    // canonical alternating history (user-led) keeps full pairs when the limit is even
+    const pairs = promptBuilder.buildHistoryMessages(
+        [{ role: 'user', content: 'U0' }, { role: 'assistant', content: 'A0' },
+         { role: 'user', content: 'U1' }, { role: 'assistant', content: 'A1' }], 2);
+    assert.deepStrictEqual(pairs, [
+        { role: 'user', content: 'U1' },
+        { role: 'assistant', content: 'A1' }
     ]);
     assert.deepStrictEqual(promptBuilder.buildHistoryMessages(null, 10), []);
     assert.deepStrictEqual(promptBuilder.buildHistoryMessages([], 10), []);
