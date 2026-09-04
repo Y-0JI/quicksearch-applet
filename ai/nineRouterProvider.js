@@ -6,7 +6,17 @@ try { Gio = require('gi.Gio'); } catch (e) {}
 try { GLib = require('gi.GLib'); } catch (e) {}
 try { Soup = require('gi.Soup'); } catch (e) {}
 
-const DEFAULT_TIMEOUT_MS = 30000; // ponytail: reasoning_content adds ~3-6s before first delta; 15s margin too tight (measured 13.6s). Upgrade via setting when needed.
+const DEFAULT_TIMEOUT_MS = 30000;
+const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+const MIN_MAX_OUTPUT_TOKENS = 512;
+const MAX_MAX_OUTPUT_TOKENS = 16384;
+function normalizeMaxOutputTokens(v) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return DEFAULT_MAX_OUTPUT_TOKENS;
+    let n = Math.floor(v);
+    if (n < MIN_MAX_OUTPUT_TOKENS) return MIN_MAX_OUTPUT_TOKENS;
+    if (n > MAX_MAX_OUTPUT_TOKENS) return MAX_MAX_OUTPUT_TOKENS;
+    return n;
+}
 const _knownApiKeys = new Set();
 function _redactKnownKeys(str) {
     let s = String(str);
@@ -94,9 +104,11 @@ function buildChatMessages(systemPrompt, userContent, groundingContext, searchRe
     return messages;
 }
 
-function buildRequestBody(model, systemPrompt, userContent, tools, groundingContext, searchResults, history) {
+function buildRequestBody(model, systemPrompt, userContent, tools, groundingContext, searchResults, history, maxOutputTokens) {
     const messages = buildChatMessages(systemPrompt, userContent, groundingContext, searchResults, history);
     const body = { model: String(model), messages, stream: false };
+    const mot = normalizeMaxOutputTokens(maxOutputTokens);
+    body.max_tokens = mot;
     const toolsDef = buildToolsDefinition(tools);
     if (toolsDef) {
         body.tools = toolsDef;
@@ -142,7 +154,9 @@ function parseResponseText(text, status) {
     if (!content.trim() && choice.message.reasoning_content && String(choice.message.reasoning_content).trim()) {
         content = String(choice.message.reasoning_content).trim();
     }
-    return { type: 'answer', text: content };
+    const finishReason = typeof choice.finish_reason === 'string' ? choice.finish_reason : null;
+    const truncated = finishReason === 'length';
+    return { type: 'answer', text: content, finishReason, truncated };
 }
 
 function httpStatusToCode(status) {
@@ -773,6 +787,7 @@ function createNineRouterProvider(opts) {
     if (apiKey) try { _knownApiKeys.add(String(apiKey)); } catch (e) {}
     const model = opts.model;
     const timeoutMs = typeof opts.timeoutMs === 'number' ? opts.timeoutMs : DEFAULT_TIMEOUT_MS;
+    const maxOutputTokens = normalizeMaxOutputTokens(opts.maxOutputTokens != null ? opts.maxOutputTokens : opts.maxTokens);
     const httpFetch = opts.httpFetch || createDefaultHttpFetch();
 
     if (!baseUrl) throw _attachStage(new Error('NineRouterProvider: baseUrl required'), 'provider_create');
@@ -859,7 +874,7 @@ function createNineRouterProvider(opts) {
 
         let body;
         try {
-            body = buildRequestBody(model, systemPrompt, userContent, tools, groundingContext, searchResults, history);
+            body = buildRequestBody(model, systemPrompt, userContent, tools, groundingContext, searchResults, history, maxOutputTokens);
             try {
                 if (tools && tools.length > 0) _aiLog('Requested tools:', tools.join(','));
                 else _aiLog('Requested tools: none');
@@ -1155,7 +1170,7 @@ function createNineRouterProvider(opts) {
         let body;
         try {
             messages = buildChatMessages(systemPrompt, userContent, groundingContext, searchResults, history);
-            const bodyObj = { model: String(model), messages, stream: true };
+            const bodyObj = { model: String(model), messages, stream: true, max_tokens: maxOutputTokens };
             const toolsDef = buildToolsDefinition(tools);
             if (toolsDef) {
                 bodyObj.tools = toolsDef;
@@ -1454,7 +1469,7 @@ function createNineRouterProvider(opts) {
         }
     }
 
-    return { request, streamRequest, destroy, _buildUrl: buildChatCompletionsUrl };
+    return { request, streamRequest, destroy, _buildUrl: buildChatCompletionsUrl, maxOutputTokens };
 }
 
-module.exports = { createNineRouterProvider, NineRouterProvider: createNineRouterProvider, buildChatCompletionsUrl, buildRequestBody, parseResponseText, DEFAULT_TIMEOUT_MS };
+module.exports = { createNineRouterProvider, NineRouterProvider: createNineRouterProvider, buildChatCompletionsUrl, buildRequestBody, parseResponseText, DEFAULT_TIMEOUT_MS, DEFAULT_MAX_OUTPUT_TOKENS, normalizeMaxOutputTokens };

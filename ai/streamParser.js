@@ -41,6 +41,7 @@ function createStreamParser(opts) {
     let pendingToolCall = null;
     let toolCallId = null;
     let toolCallEmitted = false;
+    let lastFinishReason = null;
 
     function feed(rawChunk) {
         if (done) return;
@@ -120,7 +121,8 @@ function createStreamParser(opts) {
         }
 
         if (payload && typeof payload === 'object') {
-            // Try tool_calls first (streaming tool_call path)
+            const fr = _extractFinishReason(payload);
+            if (fr) lastFinishReason = fr;
             const tc = _extractToolCallDelta(payload);
             if (tc !== null) {
                 if (toolCallEmitted) return;
@@ -175,6 +177,18 @@ function createStreamParser(opts) {
             }
         }
         // Unknown payload shape — safely ignored per spec
+    }
+
+    function _extractFinishReason(payload) {
+        try {
+            if (!Array.isArray(payload.choices) || payload.choices.length === 0) return null;
+            const c = payload.choices[0];
+            if (!c || typeof c !== 'object') return null;
+            const fr = c.finish_reason;
+            if (fr === null || fr === undefined) return null;
+            if (typeof fr === 'string' && fr) return fr;
+            return null;
+        } catch (e) { return null; }
     }
 
     function _extractDeltaText(payload) {
@@ -314,7 +328,9 @@ function createStreamParser(opts) {
             result: {
                 text: accumulatedText,
                 sources: [],
-                grounded: false
+                grounded: false,
+                finishReason: lastFinishReason,
+                truncated: lastFinishReason === 'length'
             }
         });
     }
@@ -348,8 +364,9 @@ function createStreamParser(opts) {
 
     function isDone() { return done; }
     function getAccumulatedText() { return accumulatedText; }
+    function getFinishReason() { return lastFinishReason; }
 
-    return { feed, flush, isDone, getAccumulatedText };
+    return { feed, flush, isDone, getAccumulatedText, getFinishReason };
 }
 
 module.exports = { createStreamParser };

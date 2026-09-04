@@ -107,6 +107,15 @@
         "description": "AI model (e.g. gpt-4o-mini, coba9router)",
         "default": ""
     },
+    "ai-max-output-tokens": {
+        "type": "spinbutton",
+        "description": "Maximum AI response length",
+        "default": 4096,
+        "min": 512,
+        "max": 16384,
+        "step": 256,
+        "units": "tokens"
+    },
     "ai-debug-mode": {
         "type": "switch",
         "description": "AI Debug Mode (show diagnostic Stage/Error/Status)",

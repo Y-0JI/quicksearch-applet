@@ -74,12 +74,14 @@ function updateAssistant(conv, id, fullText) {
     return true;
 }
 
-function completeAssistant(conv, id, text, sources) {
+function completeAssistant(conv, id, text, sources, meta) {
     const m = _find(conv, id);
     if (!m || m.role !== 'assistant' || m.status !== 'streaming') return false;
     m.content = String(text || '');
     m.sources = Array.isArray(sources) ? sources.slice() : [];
     m.status = 'complete';
+    if (meta && typeof meta.finishReason === 'string') m.finishReason = meta.finishReason;
+    m.truncated = !!(meta && (meta.truncated || meta.finishReason === 'length'));
     if (conv.activeId === id) conv.activeId = null;
     return true;
 }

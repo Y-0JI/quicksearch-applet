@@ -691,6 +691,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.settings.bind("ai-model", "ai_model", () => this._rebuildAiEngine());
         this.ai_debug_mode = false;
         this.settings.bind("ai-debug-mode", "ai_debug_mode");
+        this.ai_max_output_tokens = 4096;
+        this.settings.bind("ai-max-output-tokens", "ai_max_output_tokens", () => this._rebuildAiEngine());
 
         this._applySearchEngineSetting();
 
@@ -815,6 +817,14 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._createEngine();
     }
 
+    _normalizeMaxOutputTokens(v) {
+        let n = Number(v);
+        if (!Number.isFinite(n)) return 4096;
+        n = Math.floor(n);
+        if (n < 512) return 512;
+        if (n > 16384) return 16384;
+        return n;
+    }
     _createAiEngine() {
         if (this._aiEngine) {
             try { this._aiEngine.destroy(); } catch (e) {}
@@ -882,6 +892,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 baseUrl: baseUrl,
                 apiKey: apiKey,
                 model: model,
+                maxOutputTokens: this._normalizeMaxOutputTokens(this.ai_max_output_tokens),
                 searchEngine: searchEngine,
                 searxngUrl: searxngUrl,
                 webSearchApiKey: webSearchApiKey,
@@ -1601,6 +1612,13 @@ class QuickSearchApplet extends Applet.IconApplet {
                         } catch (e) {}
                         ov.resultsBox.add_child(lbl);
                     } catch (e) {}
+                    if (msg.truncated) {
+                        try {
+                            const tLbl = new St.Label({ text: _("Jawaban terhenti karena mencapai batas output."), style_class: "quicksearch-ai-truncated" });
+                            try { tLbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+                            ov.resultsBox.add_child(tLbl);
+                        } catch (e) {}
+                    }
                     if (Array.isArray(msg.sources) && msg.sources.length > 0) {
                         this._renderSourcesForMessage(ov, msg.sources, msg.id);
                     }
@@ -1821,7 +1839,8 @@ class QuickSearchApplet extends Applet.IconApplet {
                         self._aiStreaming = false;
                         const text = data && typeof data.text === 'string' ? data.text : String((data && data.text) || '');
                         const sources = Array.isArray(data && data.sources) ? data.sources : [];
-                        convMod.completeAssistant(conv, assistantId, text, sources);
+                        const meta = data && (data.truncated || data.finishReason) ? { finishReason: data.finishReason || null, truncated: !!data.truncated } : null;
+                        convMod.completeAssistant(conv, assistantId, text, sources, meta);
                         _render();
                     },
                     onError: function(err) {
@@ -1846,15 +1865,15 @@ class QuickSearchApplet extends Applet.IconApplet {
             return;
         }
 
-        // Fallback: non-streaming path
         const cbs = {
             onAnswer: (data) => {
                 if (_check()) return;
                 self._aiLoading = false;
                 self._aiStreaming = false;
+                const meta = data && (data.truncated || data.finishReason) ? { finishReason: data.finishReason || null, truncated: !!data.truncated } : null;
                 convMod.completeAssistant(conv, assistantId,
                     data && typeof data.text === 'string' ? data.text : String((data && data.text) || ''),
-                    Array.isArray(data && data.sources) ? data.sources : []);
+                    Array.isArray(data && data.sources) ? data.sources : [], meta);
                 _render();
             },
             onError: (err) => {
@@ -1878,7 +1897,8 @@ class QuickSearchApplet extends Applet.IconApplet {
                 } else if (data) {
                     self._aiLoading = false;
                     self._aiStreaming = false;
-                    convMod.completeAssistant(conv, assistantId, data.text || '', Array.isArray(data.sources) ? data.sources : []);
+                    const meta2 = data.truncated || data.finishReason ? { finishReason: data.finishReason || null, truncated: !!data.truncated } : null;
+                    convMod.completeAssistant(conv, assistantId, data.text || '', Array.isArray(data.sources) ? data.sources : [], meta2);
                     _render();
                 }
             }

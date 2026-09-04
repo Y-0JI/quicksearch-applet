@@ -157,6 +157,7 @@ function createAiEngine(opts) {
                 if (nineRouterProviderMod && typeof nineRouterProviderMod.createNineRouterProvider === 'function') {
                     const pOpts = { baseUrl, apiKey, model };
                     if (typeof timeoutMs === 'number') pOpts.timeoutMs = timeoutMs;
+                    if (opts.maxOutputTokens != null || opts.maxTokens != null) pOpts.maxOutputTokens = opts.maxOutputTokens != null ? opts.maxOutputTokens : opts.maxTokens;
                     if (opts.httpFetch) { pOpts.httpFetch = opts.httpFetch; pOpts.httpStreamFetch = opts.httpFetch; }
                     if (opts.httpStreamFetch) pOpts.httpStreamFetch = opts.httpStreamFetch;
                     provider = nineRouterProviderMod.createNineRouterProvider(pOpts);

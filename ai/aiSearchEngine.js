@@ -166,15 +166,17 @@ function createAISearchEngine(deps) {
 
     function _stale(myGen) { return myGen !== gen; }
 
-    function _deliverAnswer(myGen, cancellable, callbacks, text, sources) {
+    function _deliverAnswer(myGen, cancellable, callbacks, text, sources, meta) {
         if (_stale(myGen) || _isCancelled(cancellable) || destroyed) return;
         let payload;
         if (Gt && typeof Gt.createGroundedAnswer === 'function') {
-            payload = Gt.createGroundedAnswer(text, sources || []);
+            payload = Gt.createGroundedAnswer(text, sources || [], meta || null);
         } else {
             const normalizedSources = sourceFormatter.formatSources(sources || []);
             const grounded = normalizedSources.length > 0;
             payload = { type: 'answer', text, grounded, sources: normalizedSources };
+            if (meta && meta.finishReason) payload.finishReason = meta.finishReason;
+            payload.truncated = !!(meta && meta.truncated);
         }
         if (typeof callbacks === 'function') return callbacks(null, payload);
         if (callbacks && typeof callbacks.onAnswer === 'function') return callbacks.onAnswer(payload);
@@ -288,19 +290,19 @@ function createAISearchEngine(deps) {
                                 }
                                 let groundingContext = '';
                                 try { groundingContext = promptBuilder.buildGroundingContext(sources); } catch (e) { groundingContext = ''; }
-                                try {
-                                    provider.request(_withHistory({ query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: sources, tools: [] }), myCancellable, (err2, res2) => {
-                                        if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
-                                        if (err2) {
-                                            const n3 = _normalizeProviderError(err2);
-                                            if (n3.code === 'cancelled') return;
-                                            return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
-                                        }
-                                        if (!res2 || res2.type !== 'answer' || typeof res2.text !== 'string' || !String(res2.text).trim()) {
-                                            return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
-                                        }
-                                        return _deliverAnswer(myGen, myCancellable, callbacks, res2.text, sources);
-                                    });
+                            try {
+                                provider.request({ query: q, systemPrompt, groundingContext, groundingContextObj: _groundingContextObj, searchResults: sources, tools: [] }, myCancellable, (err2, res2) => {
+                                    if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                                    if (err2) {
+                                        const n3 = _normalizeProviderError(err2);
+                                        if (n3.code === 'cancelled') return;
+                                        return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], res2 && res2.truncated ? { finishReason: res2.finishReason, truncated: true } : null);
+                                    }
+                                    if (!res2 || res2.type !== 'answer' || typeof res2.text !== 'string' || !String(res2.text).trim()) {
+                                        return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], res2 && res2.truncated ? { finishReason: res2.finishReason, truncated: true } : null);
+                                    }
+                                    return _deliverAnswer(myGen, myCancellable, callbacks, res2.text, sources, res2.truncated || res2.finishReason ? { finishReason: res2.finishReason || null, truncated: !!res2.truncated } : null);
+                                });
                                 } catch (e) {
                                     return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
                                 }
@@ -454,7 +456,7 @@ function createAISearchEngine(deps) {
 
         function _staleS() { return myGen !== gen; }
 
-        function emitComplete(finalText, sources) {
+        function emitComplete(finalText, sources, metaExtra) {
             if (settled || _staleS() || _isCancelled(myCancellable) || destroyed) return;
             settled = true;
             const effectiveText = typeof finalText === 'string' ? finalText : accumulatedText;
@@ -487,10 +489,12 @@ function createAISearchEngine(deps) {
             if (callbacks && typeof callbacks.onComplete === 'function') {
                 let payload;
                 if (Gt && typeof Gt.createGroundedAnswer === 'function') {
-                    payload = Gt.createGroundedAnswer(effectiveText, effectiveSources);
+                    payload = Gt.createGroundedAnswer(effectiveText, effectiveSources, metaExtra || null);
                 } else {
                     const normalizedSources = sourceFormatter.formatSources(effectiveSources);
                     payload = { type: 'answer', text: effectiveText, grounded: normalizedSources.length > 0, sources: normalizedSources };
+                    if (metaExtra && metaExtra.finishReason) payload.finishReason = metaExtra.finishReason;
+                    payload.truncated = !!(metaExtra && metaExtra.truncated);
                 }
                 callbacks.onComplete(payload);
             }
@@ -532,7 +536,9 @@ function createAISearchEngine(deps) {
             if (evt.type === 'complete') {
                 const finalText = (evt.result && typeof evt.result.text === 'string') ? evt.result.text : accumulatedText;
                 const sources = (evt.result && Array.isArray(evt.result.sources)) ? evt.result.sources : [];
-                emitComplete(finalText, sources);
+                const fr = evt.result && typeof evt.result.finishReason === 'string' ? evt.result.finishReason : null;
+                const trunc = !!(evt.result && evt.result.truncated) || fr === 'length';
+                emitComplete(finalText, sources, fr || trunc ? { finishReason: fr, truncated: trunc } : null);
                 return;
             }
             if (evt.type === 'error') {
@@ -647,6 +653,9 @@ function createAISearchEngine(deps) {
                 if (toolCallPending) return;
                 const finalText = (evt.result && typeof evt.result.text === 'string') ? evt.result.text : accumulatedText;
                 const sources = (evt.result && Array.isArray(evt.result.sources)) ? evt.result.sources : [];
+                const fr0 = evt.result && typeof evt.result.finishReason === 'string' ? evt.result.finishReason : null;
+                const trunc0 = !!(evt.result && evt.result.truncated) || fr0 === 'length';
+                const meta0 = fr0 || trunc0 ? { finishReason: fr0, truncated: trunc0 } : null;
                 try { if (typeof global !== 'undefined' && global.log) global.log("[QuickSearch AI] Received tool call: none, received content: " + String(finalText||'').slice(0,120)); } catch(e){}
                 if (enableGrounding && _isLiveQuery(q)) {
                     try { if (typeof global !== 'undefined' && global.log) global.log("[quicksearch] search_intent live fallback q=" + q.slice(0,80)); } catch(e){}
@@ -657,11 +666,11 @@ function createAISearchEngine(deps) {
                         webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
                             if (_staleS() || _isCancelled(myCancellable) || destroyed || settled) return;
                             if (wErr) {
-                                emitComplete(finalText, sources);
+                                emitComplete(finalText, sources, meta0);
                                 return;
                             }
                             if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources) || wResults.sources.length === 0) {
-                                emitComplete(finalText, sources);
+                                emitComplete(finalText, sources, meta0);
                                 return;
                             }
                             groundedSources = wResults.sources;
@@ -679,15 +688,15 @@ function createAISearchEngine(deps) {
                                     handleSecondStreamEvent
                                 );
                             } catch (e) {
-                                emitComplete(finalText, sources);
+                                emitComplete(finalText, sources, meta0);
                             }
                         });
                     } catch (e) {
-                        emitComplete(finalText, sources);
+                        emitComplete(finalText, sources, meta0);
                     }
                     return;
                 }
-                emitComplete(finalText, sources);
+                emitComplete(finalText, sources, meta0);
                 return;
             }
 

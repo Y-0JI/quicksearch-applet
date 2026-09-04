@@ -367,3 +367,9 @@
     background-color: rgba(255, 255, 255, 0.05);
     border-color: rgba(255, 255, 255, 0.06);
 }
+.quicksearch-ai-truncated {
+    padding: 6px 8px;
+    font-size: 8.5pt;
+    font-style: italic;
+    color: rgba(255, 220, 120, 0.90);
+}

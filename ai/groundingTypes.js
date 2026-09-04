@@ -192,11 +192,16 @@ function createGroundingContext(query, sources) {
     return { type: 'grounding_context', query: q, sources: src };
 }
 
-function createGroundedAnswer(text, sources) {
+function createGroundedAnswer(text, sources, meta) {
     const t = String(text || '');
     const src = canonicalizeSources(sources);
     const grounded = src.length > 0;
-    return { type: 'answer', text: t, grounded, sources: src };
+    const finishReason = meta && typeof meta.finishReason === 'string' ? meta.finishReason : null;
+    const truncated = !!(meta && meta.truncated) || finishReason === 'length';
+    const out = { type: 'answer', text: t, grounded, sources: src };
+    if (finishReason) out.finishReason = finishReason;
+    out.truncated = truncated;
+    return out;
 }
 
 function validateRequest(req) {
