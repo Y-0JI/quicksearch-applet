@@ -5,8 +5,6 @@ const Gio = require('gi.Gio');
 const GLib = require('gi.GLib');
 const Mainloop = require('mainloop');
 
-const StClipboardHack = null; // clipboard handled in UI layer
-
 function createSearchEngine(helpers) {
     const {
         makeResult, scoreResult, processResults, classifyQuery,

@@ -319,6 +319,18 @@ test('sticky auto-scroll: follow only while near the bottom', () => {
     assert.ok(APPLET_SRC.includes('_cancelAIScroll'), 'scroll timer cleanup present');
 });
 
+// Phase 15: sources are clickable on every runtime — the click handler must not
+// depend on the global Web `URL` API (missing in some Cinnamon/GJS sandboxes, where
+// `new URL()` throws and silently kills the click). Structural http(s) gate only.
+test('source-row click is runtime-safe: no global URL dependency', () => {
+    const start = APPLET_SRC.indexOf('_renderSourcesForMessage(ov, sources) {');
+    assert.ok(start !== -1, '_renderSourcesForMessage definition exists');
+    const section = APPLET_SRC.slice(start, start + 2600);
+    assert.ok(!section.includes('new URL(trimmed'), 'click handler must not construct from the global URL API');
+    assert.ok(section.includes('if (!/^https?:'), 'structural http(s) gate present');
+    assert.ok(section.includes('launch_default_for_uri_async(trimmed'), 'Gio launch path intact');
+});
+
 test('action row keeps a clear consistent gap below every user text', () => {
     const actionsCss = CSS_SRC.slice(CSS_SRC.indexOf('.quicksearch-ai-msg-actions'), CSS_SRC.indexOf('.quicksearch-ai-msg-actions') + 400);
     assert.ok(actionsCss.includes('padding: 5px 0 3px 10px;'), 'explicit 5px top gap between text and action row');

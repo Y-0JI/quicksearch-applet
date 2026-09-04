@@ -8,11 +8,10 @@ const Gio = require('gi.Gio');
 const GLib = require('gi.GLib');
 const GObject = require('gi.GObject');
 const Pango = require('gi.Pango');
-let FileUtils = null, Util = null, AppFavorites = null, XApp = null, Mainloop = null;
+let FileUtils = null, Util = null, AppFavorites = null, Mainloop = null;
 try { FileUtils = imports.misc.fileUtils; } catch (e) {}
 try { Util = imports.misc.util; } catch (e) {}
 try { AppFavorites = imports.ui.appFavorites; } catch (e) {}
-try { XApp = imports.gi.XApp; } catch (e) {}
 try { Mainloop = imports.mainloop; } catch (e) { try { Mainloop = require('mainloop'); } catch (e2) {} }
 let TooltipsMod = null;
 try { TooltipsMod = imports.ui.tooltips; } catch (e) {}
@@ -1446,11 +1445,14 @@ class QuickSearchApplet extends Applet.IconApplet {
                 srcRow.connect("clicked", () => {
                     try {
                         const trimmed = String(url || "").trim();
-                        if (!/^https?:\/\/.+/i.test(trimmed)) return;
-                        try {
-                            const parsed = new URL(trimmed);
-                            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
-                        } catch (e) { return; }
+                        // No global `URL` dependency: Cinnamon/GJS applet sandboxes are not
+                        // guaranteed to provide the Web URL API (see the groundingTypes /
+                        // searchResult comments) — `new URL()` would throw there and turn
+                        // every source click into a silent no-op. Sources are already
+                        // canonicalized through groundingTypes upstream, so a structural
+                        // http(s) gate is sufficient and runtime-safe.
+                        if (!/^https?:\/\/[^\s]+$/i.test(trimmed)) return;
+                        if (/[\u0000-\u001f]/.test(trimmed)) return;
                         try {
                             if (Gio && Gio.AppInfo && typeof Gio.AppInfo.launch_default_for_uri_async === 'function') {
                                 Gio.AppInfo.launch_default_for_uri_async(trimmed, null, null, null);
