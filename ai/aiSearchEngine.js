@@ -206,6 +206,60 @@ function createAISearchEngine(deps) {
     let destroyed = false;
     let providerDestroyed = false;
     const generationStrategy = deps.generationStrategy || null;
+    const sourceContentExpander = deps.sourceContentExpander || null;
+
+    // P14: minimal expansion diagnostics (no secrets) — evidence counts + budget usage.
+    function _logExpansionStats(stats) {
+        try {
+            if (typeof global === 'undefined' || typeof global.log !== 'function' || !stats) return;
+            global.log('[AI Search] source expansion: results=' + stats.total + ' selected=' + stats.selected +
+                ' page_content=' + stats.pageContent + ' snippet_fallback=' + stats.snippetFallback +
+                ' fetch_failed=' + stats.fetchFailed + ' chars=' + stats.totalChars + '/' + stats.budgetChars + ' budget=' + stats.budgetPercent + '%');
+        } catch (e) {}
+    }
+
+    // Grounded second leg: when a sourceContentExpander is wired, fetch full page content for the
+    // selected sources and build the expanded grounding context; ANY failure falls back to the
+    // classic snippet context so a fetch problem never blocks the answer. cb is invoked only while
+    // the request is still current (stale/cancel/destroy guards) — otherwise the result is dropped.
+    function _prepareGroundingContext(myGen, cancellable, q, sources, expandQuery, cb) {
+        const ctxQuery = expandQuery || q; // query the evidence belongs to (tool query when re-queried)
+        function _fallback() {
+            if (_stale(myGen) || _isCancelled(cancellable) || destroyed) return;
+            let obj = null;
+            if (Gt && typeof Gt.createGroundingContext === 'function') {
+                try { obj = Gt.createGroundingContext(ctxQuery, sources); } catch (e) { obj = null; }
+            }
+            let ctx = '';
+            try { ctx = promptBuilder.buildGroundingContext(sources); } catch (e) { ctx = ''; }
+            cb({ groundingContext: ctx, groundingContextObj: obj });
+        }
+        if (!sourceContentExpander || typeof sourceContentExpander.expand !== 'function' || !Array.isArray(sources) || sources.length === 0) {
+            _fallback();
+            return;
+        }
+        try {
+            sourceContentExpander.expand({ query: expandQuery || q, sources: sources, cancellable: cancellable }, (err, res) => {
+                if (_stale(myGen) || _isCancelled(cancellable) || destroyed) return;
+                if (err || !res || !Array.isArray(res.evidence) || res.evidence.length === 0) return _fallback();
+                try { _logExpansionStats(res.stats); } catch (e) {}
+                let ctx = '';
+                try {
+                    ctx = (promptBuilder.buildExpandedGroundingContext && typeof promptBuilder.buildExpandedGroundingContext === 'function')
+                        ? promptBuilder.buildExpandedGroundingContext(res.evidence, q)
+                        : '';
+                } catch (e) { ctx = ''; }
+                if (!ctx) return _fallback();
+                let obj = null;
+                if (Gt && typeof Gt.createGroundingContext === 'function') {
+                    try { obj = Gt.createGroundingContext(ctxQuery, sources); } catch (e) { obj = null; }
+                }
+                cb({ groundingContext: ctx, groundingContextObj: obj });
+            });
+        } catch (e) {
+            _fallback();
+        }
+    }
 
     function _stale(myGen) { return myGen !== gen; }
 
@@ -354,14 +408,10 @@ function createAISearchEngine(deps) {
                                 if (sources.length === 0) {
                                     return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
                                 }
-                                let _groundingContextObj = null;
-                                if (Gt && typeof Gt.createGroundingContext === 'function') {
-                                    try { _groundingContextObj = Gt.createGroundingContext(wResults.query || toolQuery, sources); } catch (e) {}
-                                }
-                                let groundingContext = '';
-                                try { groundingContext = promptBuilder.buildGroundingContext(sources); } catch (e) { groundingContext = ''; }
-                            try {
-                                provider.request(_withHistory(_groundedPayload(q, groundingContext, _groundingContextObj, sources)), myCancellable, (err2, res2) => {
+                                _prepareGroundingContext(myGen, myCancellable, q, sources, toolQuery, (ctxInfo) => {
+                                    if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                                    try {
+                                        provider.request(_withHistory(_groundedPayload(q, ctxInfo.groundingContext, ctxInfo.groundingContextObj, sources)), myCancellable, (err2, res2) => {
                                     if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
                                     if (err2) {
                                         const n3 = _normalizeProviderError(err2);
@@ -373,9 +423,10 @@ function createAISearchEngine(deps) {
                                     }
                                     return _deliverAnswer(myGen, myCancellable, callbacks, res2.text, sources, _metaOf(res2));
                                 });
-                                } catch (e) {
-                                    return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
-                                }
+                                    } catch (e) {
+                                        return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
+                                    }
+                                });
                             });
                         } catch (e) {
                             return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
@@ -433,14 +484,10 @@ function createAISearchEngine(deps) {
                                 // P6.4: tool_result valid but empty -> explicit normalize stage, never Stage: unknown
                                 return _deliverError(myGen, myCancellable, callbacks, 'no_results', ERROR_MESSAGES.no_results, { stage: 'web_search_normalize' });
                             }
-                            let _groundingContextObj = null;
-                            if (Gt && typeof Gt.createGroundingContext === 'function') {
-                                try { _groundingContextObj = Gt.createGroundingContext(wResults.query || toolQuery, sources); } catch (e) {}
-                            }
-                            let groundingContext = '';
-                            try { groundingContext = promptBuilder.buildGroundingContext(sources); } catch (e) { groundingContext = ''; }
-                            try {
-                                provider.request(_withHistory(_groundedPayload(q, groundingContext, _groundingContextObj, sources)), myCancellable, (err2, res2) => {
+                            _prepareGroundingContext(myGen, myCancellable, q, sources, toolQuery, (ctxInfo) => {
+                                if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                                try {
+                                    provider.request(_withHistory(_groundedPayload(q, ctxInfo.groundingContext, ctxInfo.groundingContextObj, sources)), myCancellable, (err2, res2) => {
                                     if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
                                     if (err2) {
                                         const n3 = _normalizeProviderError(err2);
@@ -455,10 +502,11 @@ function createAISearchEngine(deps) {
                                     }
                                     return _deliverAnswer(myGen, myCancellable, callbacks, res2.text, sources, _metaOf(res2));
                                 });
-                            } catch (e) {
-                                const n = _normalizeProviderError(e);
-                                return _deliverError(myGen, myCancellable, callbacks, n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
-                            }
+                                } catch (e) {
+                                    const n = _normalizeProviderError(e);
+                                    return _deliverError(myGen, myCancellable, callbacks, n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
+                                }
+                            });
                         });
                     } catch (e) {
                         return _deliverError(myGen, myCancellable, callbacks, 'grounding_error', ERROR_MESSAGES.grounding_error);
@@ -696,24 +744,21 @@ function createAISearchEngine(deps) {
                             return;
                         }
                         groundedSources = sources;
-                        let _groundingContextObj = null;
-                        if (Gt && typeof Gt.createGroundingContext === 'function') {
-                            try { _groundingContextObj = Gt.createGroundingContext(wResults.query || toolQuery, sources); } catch (e) {}
-                        }
-                        let groundingContext = '';
-                        try { groundingContext = promptBuilder.buildGroundingContext(sources); } catch (e) { groundingContext = ''; }
-                        // Reset accumulation for grounded answer streaming
-                        accumulatedText = '';
-                        try {
-                            provider.streamRequest(
-                                _withHistory(_groundedPayload(q, groundingContext, _groundingContextObj, sources)),
-                                myCancellable,
-                                handleSecondStreamEvent
-                            );
-                        } catch (e) {
-                            const n = _normalizeProviderError(e);
-                            emitError(n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
-                        }
+                        _prepareGroundingContext(myGen, myCancellable, q, sources, toolQuery, (ctxInfo) => {
+                            if (_staleS() || _isCancelled(myCancellable) || destroyed || settled) return;
+                            // Reset accumulation for grounded answer streaming
+                            accumulatedText = '';
+                            try {
+                                provider.streamRequest(
+                                    _withHistory(_groundedPayload(q, ctxInfo.groundingContext, ctxInfo.groundingContextObj, sources)),
+                                    myCancellable,
+                                    handleSecondStreamEvent
+                                );
+                            } catch (e) {
+                                const n = _normalizeProviderError(e);
+                                emitError(n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
+                            }
+                        });
                     });
                 } catch (e) {
                     emitError('grounding_error', ERROR_MESSAGES.grounding_error);
@@ -746,22 +791,19 @@ function createAISearchEngine(deps) {
                                 return;
                             }
                             groundedSources = wResults.sources;
-                            let _groundingContextObj = null;
-                            if (Gt && typeof Gt.createGroundingContext === 'function') {
-                                try { _groundingContextObj = Gt.createGroundingContext(wResults.query || toolQuery, wResults.sources); } catch (e) {}
-                            }
-                            let groundingContext = '';
-                            try { groundingContext = promptBuilder.buildGroundingContext(wResults.sources); } catch (e) { groundingContext = ''; }
-                            accumulatedText = '';
-                            try {
-                                provider.streamRequest(
-                                    _withHistory(_groundedPayload(q, groundingContext, _groundingContextObj, wResults.sources)),
-                                    myCancellable,
-                                    handleSecondStreamEvent
-                                );
-                            } catch (e) {
-                                emitComplete(finalText, sources, meta0);
-                            }
+                            _prepareGroundingContext(myGen, myCancellable, q, wResults.sources, toolQuery, (ctxInfo) => {
+                                if (_staleS() || _isCancelled(myCancellable) || destroyed || settled) return;
+                                accumulatedText = '';
+                                try {
+                                    provider.streamRequest(
+                                        _withHistory(_groundedPayload(q, ctxInfo.groundingContext, ctxInfo.groundingContextObj, wResults.sources)),
+                                        myCancellable,
+                                        handleSecondStreamEvent
+                                    );
+                                } catch (e) {
+                                    emitComplete(finalText, sources, meta0);
+                                }
+                            });
                         });
                     } catch (e) {
                         emitComplete(finalText, sources, meta0);

@@ -128,6 +128,34 @@ function buildUserPrompt(query, searchResults) {
     return q + '\n\n' + buildGroundingContext(searchResults);
 }
 
+// P8: grounding context built from EXPANDED evidence (full page content preferred).
+// Each item: { title, url, evidenceType: 'page_content'|'snippet_fallback', content }
+// The AI is told which evidence is strong (full page) vs weak (snippet fallback), and that
+// complete data present in the context must be answered in full (no "did not fit in the snippet").
+function buildExpandedGroundingContext(evidence, query) {
+    if (!Array.isArray(evidence) || evidence.length === 0) return '';
+    const lines = [];
+    lines.push('Reference context from web search (full page content extracted where available; synthesize, do not merely summarize; select only relevant evidence):');
+    if (String(query || '').trim()) {
+        lines.push('');
+        lines.push('USER QUESTION: ' + String(query).trim().slice(0, 500));
+    }
+    for (let i = 0; i < evidence.length; i++) {
+        const ev = evidence[i] || {};
+        const label = (ev.evidenceType === 'page_content') ? 'FULL PAGE CONTENT' : 'SNIPPET FALLBACK';
+        lines.push('');
+        lines.push('[' + (i + 1) + ']');
+        lines.push('TITLE: ' + String(ev.title || '').slice(0, 200));
+        lines.push('URL: ' + String(ev.url || '').slice(0, 300));
+        lines.push('EVIDENCE TYPE: ' + label);
+        lines.push('CONTENT:');
+        lines.push(String(ev.content || '').slice(0, 12000));
+    }
+    lines.push('');
+    lines.push('INSTRUCTION: Answer the user question from the evidence above. If a source contains the complete information the user asked for (for example a full list, squad, table, or schedule), provide it in full rather than summarizing it away. Never say the data "did not fit in the snippet" or tell the user to open the source for the full list when page content is available above. Do not invent facts that are not present in the evidence; if the evidence is genuinely incomplete, briefly say which part could not be verified.');
+    return lines.join('\n');
+}
+
 // ── P4 Dynamic runtime context ──────────────────────────────────────────────────────────
 // Runtime metadata (current date/time/timezone/mode) is built AT REQUEST TIME and injected
 // into the system prompt. It is NEVER persisted into conversation history or treated as a
@@ -204,4 +232,4 @@ function buildHistoryMessages(history, limit) {
     return out.slice(start);
 }
 
-module.exports = { buildSystemPrompt, buildGroundingContext, buildUserPrompt, buildHistoryMessages, buildRuntimeContext, SYSTEM_PROMPT, DEFAULT_HISTORY_LIMIT };
+module.exports = { buildSystemPrompt, buildGroundingContext, buildUserPrompt, buildHistoryMessages, buildRuntimeContext, buildExpandedGroundingContext, SYSTEM_PROMPT, DEFAULT_HISTORY_LIMIT };

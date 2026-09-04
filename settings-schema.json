@@ -121,6 +121,11 @@
         "description": "AI Debug Mode (show diagnostic Stage/Error/Status)",
         "default": false
     },
+    "ai-source-expansion": {
+        "type": "switch",
+        "description": "AI Source Content Expansion (fetch full page content of top sources instead of relying only on search snippets)",
+        "default": true
+    },
     "sec-advanced": {
         "type": "section",
         "description": "Advanced"

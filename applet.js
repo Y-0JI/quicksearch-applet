@@ -693,6 +693,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.settings.bind("ai-debug-mode", "ai_debug_mode");
         this.ai_max_output_tokens = 4096;
         this.settings.bind("ai-max-output-tokens", "ai_max_output_tokens", () => this._rebuildAiEngine());
+        this.settings.bind("ai-source-expansion", "ai_source_expansion", () => this._rebuildAiEngine());
 
         this._applySearchEngineSetting();
 
@@ -896,7 +897,8 @@ class QuickSearchApplet extends Applet.IconApplet {
                 searchEngine: searchEngine,
                 searxngUrl: searxngUrl,
                 webSearchApiKey: webSearchApiKey,
-                enableGrounding: true
+                enableGrounding: true,
+                sourceExpansion: !!this.ai_source_expansion
             });
             try { global.log("[quicksearch@yoji] AI engine created ok stream=" + String(!!(this._aiEngine && this._aiEngine.searchStream)) + " grounding=" + String(!!(this._aiEngine && this._aiEngine.__webSearchInitError ? " err:" + this._aiEngine.__webSearchInitError : " ok"))); } catch (e2) {}
         } catch (e) {

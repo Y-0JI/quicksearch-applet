@@ -74,6 +74,15 @@ if (!webSearchToolMod) {
         global.log("[quicksearch@yoji] aiFactory load webSearchTool failed all paths attempted=" + _r.errors.map(e=>e.path).join(",") + " errors=" + diag);
     } catch (e2) {}
 }
+let sourceContentExpanderMod = null;
+_r = _tryRequireWithDiagnostics('sourceContentExpander', ['./ai/sourceContentExpander.js', './sourceContentExpander.js', 'ai/sourceContentExpander.js']);
+sourceContentExpanderMod = _r.module;
+if (!sourceContentExpanderMod) {
+    try {
+        const diag = _r.errors.map(e => e.path + ": " + e.name + ": " + e.message).join(" | ");
+        global.log("[quicksearch@yoji] aiFactory load sourceContentExpander failed all paths attempted=" + _r.errors.map(e=>e.path).join(",") + " errors=" + diag);
+    } catch (e2) {}
+}
 
 function _trim(s) { return String(s || '').trim(); }
 
@@ -219,8 +228,25 @@ function createAiEngine(opts) {
             };
         }
     }
+    // Source content expansion (full page evidence): wired only when explicitly requested
+    // (opts.sourceExpansion === true) or an expander is injected — never by default, so
+    // existing factory consumers and unit tests keep the classic snippet grounding path.
+    let sourceContentExpander = opts.sourceContentExpander || null;
+    if (!sourceContentExpander && opts.sourceExpansion === true && sourceContentExpanderMod && typeof sourceContentExpanderMod.createSourceContentExpander === 'function') {
+        try {
+            const eOpts = {};
+            if (typeof opts.httpGet === 'function') eOpts.httpGet = opts.httpGet;
+            if (typeof opts.expansionTimeoutMs === 'number') eOpts.timeoutMs = opts.expansionTimeoutMs;
+            sourceContentExpander = sourceContentExpanderMod.createSourceContentExpander(eOpts);
+            try { global.log("[quicksearch@yoji] sourceContentExpander wired (full page content evidence)"); } catch (e2) {}
+        } catch (e) {
+            sourceContentExpander = null;
+            try { global.log("[quicksearch@yoji] sourceContentExpander init failed: " + _sanitizeRequireMsg(e && e.message || String(e))); } catch (e2) {}
+        }
+    }
     const engineOpts = { provider, promptBuilder: opts.promptBuilder, sourceFormatter: opts.sourceFormatter, enableGrounding };
     if (opts.generationStrategy && typeof opts.generationStrategy === 'object') engineOpts.generationStrategy = opts.generationStrategy;
+    if (sourceContentExpander) engineOpts.sourceContentExpander = sourceContentExpander;
     if (webSearchTool !== undefined) engineOpts.webSearchTool = webSearchTool;
     const engine = aiSearchEngineMod.createAISearchEngine(engineOpts);
     if (webSearchToolInitError && enableGrounding) {
