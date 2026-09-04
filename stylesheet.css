@@ -207,7 +207,7 @@
     color: rgba(255, 255, 255, 0.92);
 }
 
-/* chat header pinned above the results panel: compact [+ New Chat] top-right */
+/* chat header pinned above the results panel: [Search] switch + compact [+ New Chat] top-right */
 .quicksearch-ai-chat-header {
     spacing: 6px;
     padding: 3px 8px;
@@ -215,6 +215,37 @@
     border: 1px solid rgba(255, 255, 255, 0.09);
     border-bottom: 0;
     border-radius: 16px 16px 0 0;
+}
+
+/* Phase 15: always-reachable AI -> Search switch (chat header). Small, subtle. */
+.quicksearch-ai-header-mode {
+    padding: 2px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+.quicksearch-ai-header-mode-content {
+    spacing: 5px;
+}
+
+.quicksearch-ai-header-mode-icon {
+    color: rgba(200, 200, 200, 0.90);
+}
+
+.quicksearch-ai-header-mode-label {
+    font-size: 8.5pt;
+    color: rgba(200, 200, 200, 0.90);
+}
+
+.quicksearch-ai-header-mode:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+    border-color: rgba(120, 180, 255, 0.35);
+}
+
+.quicksearch-ai-header-mode:hover .quicksearch-ai-header-mode-label,
+.quicksearch-ai-header-mode:hover .quicksearch-ai-header-mode-icon {
+    color: rgba(255, 255, 255, 0.95);
 }
 
 /* results scroll attached under the chat header (chat mode only) */
@@ -261,7 +292,7 @@
     background-color: rgba(255, 196, 0, 0.24);
 }
 
-/* small pill buttons reused for Cancel (inline) and New Chat (header) */
+/* small pill buttons: Stop (replaces Send while a request is active) and New Chat (header) */
 .quicksearch-ai-stop, .quicksearch-ai-reset {
     padding: 3px 10px;
     border-radius: 999px;

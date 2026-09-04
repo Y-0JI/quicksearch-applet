@@ -267,14 +267,36 @@ test('applet wires per-message Copy/Edit and conditional Resend as small icon ac
     assert.ok(!(userSection.match(/_rows\.push\(/g) || []).length, 'conversation rows never enter keyboard _rows');
 });
 
-test('chat controls: Cancel inline while active, New Chat in header while conversation exists', () => {
-    assert.ok(APPLET_SRC.includes('Cancel'), 'Cancel label present');
+test('chat controls: single Stop/Send action slot, New Chat + Search switch in header', () => {
+    assert.ok(APPLET_SRC.includes('Stop'), 'Stop label present');
     assert.ok(APPLET_SRC.includes('New Chat'), 'New Chat label present');
-    assert.ok(APPLET_SRC.includes('ov._stopButton.visible = isAi && hasConv && active'), 'Cancel gated on active request');
-    assert.ok(APPLET_SRC.includes('ov._resetButton.visible = isAi && hasConv'), 'New Chat gated on conversation');
+    assert.ok(APPLET_SRC.includes('ov._stopButton.visible = composerActive && active'), 'Stop gated on active request');
+    assert.ok(APPLET_SRC.includes('ov._composerSend.visible = composerActive && !active'), 'Send hidden while request active (single action slot)');
+    assert.ok(APPLET_SRC.includes('ov._resetButton.visible = composerActive'), 'New Chat gated on conversation');
     assert.ok(APPLET_SRC.includes('ov._aiComposer.visible = composerActive'), 'composer gated on conversation');
     assert.ok(APPLET_SRC.includes('convMod.reset(this._conversation)'), 'New Chat resets the message model');
     assert.ok(APPLET_SRC.includes('_aiHeader'), 'chat header container exists');
+});
+
+test('mode switch is a two-way door: header Search switch + safe AI->Search lifecycle', () => {
+    assert.ok(APPLET_SRC.includes('_goToAiMode') && APPLET_SRC.includes('_goToSearchMode'), 'directional mode methods exist');
+    assert.ok(APPLET_SRC.includes('_headerModeButton'), 'header mode switch exists');
+    assert.ok(APPLET_SRC.includes('_goToSearchMode(); }'), 'header Search switch wired');
+    // AI->Search must stop any active request and invalidate stale callbacks: gen bump
+    // FIRST, engine cancel second (repo invariant), then model/UI cleanup
+    const def = APPLET_SRC.slice(APPLET_SRC.indexOf('_goToSearchMode() {'), APPLET_SRC.indexOf('_goToSearchMode() {') + 1000);
+    assert.ok(def.indexOf('this._aiGen++') !== -1, 'gen bumped on leave');
+    assert.ok(def.indexOf('this._aiEngine.cancel()') !== -1, 'engine cancelled on leave');
+    assert.ok(def.indexOf('this._aiGen++') < def.indexOf('this._aiEngine.cancel()'), 'gen bump BEFORE engine cancel');
+    assert.ok(def.includes('_cancelAIScroll()'), 'scroll timer cleaned on leave');
+    assert.ok(def.includes("this._mode = 'search'"), 'mode reset to search');
+    assert.ok(def.includes('_deactivateComposerInput()'), 'composer/header hidden on leave');
+    assert.ok(def.includes('convMod.cancelActive'), 'active AI request cancelled on leave');
+    // conversation is preserved across mode switches (only New Chat resets it)
+    assert.ok(APPLET_SRC.includes('_clearAIState()'), 'AI state clear helper exists');
+    const clearDef = APPLET_SRC.slice(APPLET_SRC.indexOf('_clearAIState() {'), APPLET_SRC.indexOf('_clearAIState() {') + 200);
+    assert.ok(!clearDef.includes('convMod.reset'), 'switching modes never resets the conversation');
+    assert.ok(APPLET_SRC.includes("this._mode !== 'ai'") || APPLET_SRC.includes("this._mode === 'ai'"), 'mode-aware branching present');
 });
 
 test('layout: no expanded region, composer packs under the results panel', () => {

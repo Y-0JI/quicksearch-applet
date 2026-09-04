@@ -162,7 +162,7 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         });
         try { this._composerEntry.clutter_text.set_cursor_visible(true); } catch (e) {}
         this._stopButton = new St.Button({ style_class: "quicksearch-ai-stop", can_focus: false, reactive: true, track_hover: true, visible: false });
-        const _stopLabel = new St.Label({ text: _("\u23f9 Cancel"), style_class: "quicksearch-ai-stop-label" });
+        const _stopLabel = new St.Label({ text: _("\u23f9 Stop"), style_class: "quicksearch-ai-stop-label" });
         try { this._stopButton.set_child(_stopLabel); } catch (e) {}
         this._composerSend = new St.Button({ style_class: "quicksearch-ai-send", can_focus: false, reactive: false, track_hover: true });
         const _sendLabel = new St.Label({ text: _("Send"), style_class: "quicksearch-ai-send-label" });
@@ -174,19 +174,37 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this.contentLayout.add(this._aiComposer);
         // conversation header pinned above the results panel (chat mode only): [+ New Chat]
         this._aiHeader = new St.BoxLayout({ style_class: "quicksearch-ai-chat-header", vertical: false, visible: false });
+        // Phase 15: the header lives above the conversation in AI chat mode, so it is
+        // ALWAYS reachable (streaming, follow-up composer, edit mode) — this is how the
+        // user gets back to normal Search without closing the applet or New Chat. The
+        // entry-row pill alone cannot do that: it is hidden as soon as a conversation
+        // starts (bug: no way back to Search Mode).
+        this._headerModeButton = new St.Button({ style_class: "quicksearch-ai-header-mode", can_focus: false, reactive: true, track_hover: true });
+        const _hmIcon = new St.Icon({ icon_name: "system-search", icon_size: 12, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-header-mode-icon" });
+        const _hmLabel = new St.Label({ text: _("Search"), style_class: "quicksearch-ai-header-mode-label" });
+        const _hmContent = new St.BoxLayout({ style_class: "quicksearch-ai-header-mode-content", vertical: false });
+        try { _hmContent.add(_hmIcon); } catch (e) {}
+        try { _hmContent.add(_hmLabel); } catch (e) {}
+        try { this._headerModeButton.set_child(_hmContent); } catch (e) {}
         this._resetButton = new St.Button({ style_class: "quicksearch-ai-reset", can_focus: false, reactive: true, track_hover: true });
         const _newLabel = new St.Label({ text: _("\u271a New Chat"), style_class: "quicksearch-ai-reset-label" });
         try { this._resetButton.set_child(_newLabel); } catch (e) {}
         const _headerGap = new St.Widget({ x_expand: true, y_expand: false });
+        this._aiHeader.add(this._headerModeButton);
         this._aiHeader.add(_headerGap, { expand: true });
         this._aiHeader.add(this._resetButton);
         this.resultsRegion.add_actor(this._aiHeader);
         try { if (this._applet && this._applet._attachTooltip) this._applet._attachTooltip(this._resetButton, _("New Chat")); } catch (e) {}
-        try { if (this._applet && this._applet._attachTooltip) this._applet._attachTooltip(this._stopButton, _("Cancel current response")); } catch (e) {}
-        try { global.log("[quicksearch@yoji] Phase 9 chat layout init ok (header/new-chat/composer/cancel)"); } catch (e) {}
+        try { if (this._applet && this._applet._attachTooltip) this._applet._attachTooltip(this._headerModeButton, _("Switch to search mode")); } catch (e) {}
+        try { if (this._applet && this._applet._attachTooltip) this._applet._attachTooltip(this._stopButton, _("Stop generating")); } catch (e) {}
+        try { global.log("[quicksearch@yoji] Phase 9 chat layout init ok (header/search-switch/new-chat/composer)"); } catch (e) {}
         try {
             this._stopButton.connect("clicked", () => {
                 try { this._applet._stopAI(); } catch (e) {}
+                return Clutter.EVENT_STOP;
+            });
+            this._headerModeButton.connect("clicked", () => {
+                try { this._applet._goToSearchMode(); } catch (e) {}
                 return Clutter.EVENT_STOP;
             });
             this._resetButton.connect("clicked", () => {
@@ -762,54 +780,70 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { this._syncAIFooter(); } catch (e) {}
     }
 
+    // Phase 15: mode switching is a two-way door. Entry-row pill and the chat-header
+    // "Search" switch both land here; each direction is a dedicated method so AI→Search
+    // always cancels any active AI request and Search→AI preserves the conversation.
     _toggleMode() {
-        const toAi = this._mode !== 'ai';
-        if (toAi) {
-            if (this._engine) try { this._engine.cancel(); } catch (e) {}
-            this._clearNormalResultsForModeSwitch();
-            this._clearAIState();
-            this._mode = 'ai';
-            this._aiGen++;
-            this._aiLoading = false;
-            this._aiEditId = null;
-            this._syncModeUI();
-            this._renderAIState();
-            if (this._hasConversation()) {
-                // preserved conversation → bottom composer owns the input
-                try { this._activateComposerInput(); } catch (e) {}
-            } else {
-                try {
-                    if (this._overlay && this._overlay._entry) {
-                        if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(this._overlay._entry);
-                        if (this._overlay._startCaretBlink) this._overlay._startCaretBlink();
-                    }
-                } catch (e) {}
-            }
+        if (this._mode === 'ai') this._goToSearchMode();
+        else this._goToAiMode();
+    }
+
+    _goToAiMode() {
+        if (this._mode === 'ai' || !this._overlay) return;
+        if (this._engine) try { this._engine.cancel(); } catch (e) {}
+        this._clearNormalResultsForModeSwitch();
+        this._clearAIState();
+        this._mode = 'ai';
+        this._aiGen++;
+        this._aiLoading = false;
+        this._aiEditId = null;
+        this._syncModeUI();
+        this._renderAIState();
+        if (this._hasConversation()) {
+            // preserved conversation → bottom composer owns the input
+            try { this._activateComposerInput(); } catch (e) {}
         } else {
-            if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
-            this._aiGen++;
-            this._aiLoading = false;
-            this._aiStreaming = false;
-            this._aiEditId = null;
-            if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
-            this._mode = 'search';
-            this._syncModeUI();
-            // clear AI visuals
-            try { this._clearAIStateVisualOnly(); } catch (e) { this._clearAIState(); }
-            // restore normal panel empty, then re-run query if text present
-            this.renderResults([]);
-            try { this._deactivateComposerInput(); } catch (e) {}
             try {
                 if (this._overlay && this._overlay._entry) {
                     if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(this._overlay._entry);
                     if (this._overlay._startCaretBlink) this._overlay._startCaretBlink();
                 }
             } catch (e) {}
-            const txt = this._overlay ? this._overlay.getText() : "";
-            if (txt && String(txt).trim()) {
-                // re-trigger normal search for current text
-                try { this.onTextChanged(txt); } catch (e) {}
+        }
+    }
+
+    // AI → Search. Safe under every AI state: an active/streaming request is stopped
+    // FIRST (gen bump precedes engine cancel so no sync 'cancelled' callback can slip
+    // through), stale callbacks are invalidated by the gen + mode guards, the composer/
+    // edit state is cleaned and the normal Search UI is restored. The conversation is
+    // preserved for the session — only New Chat clears it.
+    _goToSearchMode() {
+        if (this._mode !== 'ai') return;
+        this._aiGen++;
+        if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
+        this._aiLoading = false;
+        this._aiStreaming = false;
+        this._aiEditId = null;
+        this._aiMsgActors = {};
+        this._cancelAIScroll();
+        if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
+        this._mode = 'search';
+        this._syncModeUI();
+        // clear AI visuals
+        try { this._clearAIStateVisualOnly(); } catch (e) { this._clearAIState(); }
+        // restore normal panel empty, then re-run query if text present
+        this.renderResults([]);
+        try { this._deactivateComposerInput(); } catch (e) {}
+        try {
+            if (this._overlay && this._overlay._entry) {
+                if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(this._overlay._entry);
+                if (this._overlay._startCaretBlink) this._overlay._startCaretBlink();
             }
+        } catch (e) {}
+        const txt = this._overlay ? this._overlay.getText() : "";
+        if (txt && String(txt).trim()) {
+            // re-trigger normal search for current text
+            try { this.onTextChanged(txt); } catch (e) {}
         }
     }
 
@@ -898,22 +932,25 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) { return 'AI request failed'; }
     }
 
-    // Chat-mode control states: Cancel is a small inline button next to Send (visible
-    // only while a request is active), + New Chat lives in the chat header (visible as
-    // long as a conversation exists). No big footer row is created anymore (§7).
+    // Chat-mode control states (Phase 15): ONE compact action slot next to the entry —
+    // [Stop] replaces [Send] while a request is active, never both (ChatGPT-style §5/§6).
+    // + New Chat stays top-right in the chat header, and the header Search switch always
+    // offers the way back to normal Search mode. No big footer row exists (§7).
     _syncAIFooter() {
         const ov = this._overlay;
         if (!ov || !ov._stopButton) return;
         const isAi = this._mode === 'ai';
         const hasConv = this._hasConversation();
+        const composerActive = isAi && hasConv;
         const active = !!this._aiLoading || !!this._aiStreaming ||
             (convMod && this._conversation ? !!convMod.hasActive(this._conversation) : false);
-        // Cancel: inline in the composer row, only while loading/streaming (§2/§7)
-        try { ov._stopButton.visible = isAi && hasConv && active; } catch (e) {}
+        // single action slot: Stop while loading/streaming, Send otherwise (§5/§6)
+        try { ov._stopButton.visible = composerActive && active; } catch (e) {}
+        try { ov._composerSend.visible = composerActive && !active; } catch (e) {}
         // + New Chat: pinned top-right of the chat panel while a conversation exists (§3)
-        try { if (ov._resetButton) ov._resetButton.visible = isAi && hasConv; } catch (e) {}
+        try { if (ov._resetButton) ov._resetButton.visible = composerActive; } catch (e) {}
         // edit-in-progress hint row inside the composer (§6)
-        try { if (ov._aiEditRow) ov._aiEditRow.visible = isAi && hasConv && this._aiEditId != null; } catch (e) {}
+        try { if (ov._aiEditRow) ov._aiEditRow.visible = composerActive && this._aiEditId != null; } catch (e) {}
         try { this._syncComposerSendState(); } catch (e) {}
     }
 
@@ -999,7 +1036,10 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!ov || !ov._composerEntry || !ov._composerSend) return;
         let text = '';
         try { text = String(ov._composerEntry.get_text ? ov._composerEntry.get_text() : '') || ''; } catch (e) {}
-        const enabled = this._mode === 'ai' && this._hasConversation() && !!String(text).trim();
+        const active = !!this._aiLoading || !!this._aiStreaming ||
+            (convMod && this._conversation ? !!convMod.hasActive(this._conversation) : false);
+        // Send is only meaningful while idle; during a request the Stop slot owns the row.
+        const enabled = this._mode === 'ai' && this._hasConversation() && !active && !!String(text).trim();
         try {
             ov._composerSend.reactive = enabled;
             if (enabled) ov._composerSend.remove_style_class_name('quicksearch-ai-send-disabled');
