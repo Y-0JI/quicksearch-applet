@@ -1073,10 +1073,12 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!msg) return;
         this._editingAIMessageId = id;
         try {
-            this._overlay.setText(String(msg.content || ""));
-            this._overlay._entryRow.visible = true;
-            global.stage.set_key_focus(this._overlay._entry);
-            if (this._overlay._startCaretBlink) this._overlay._startCaretBlink();
+            // Edit in the bottom composer when a conversation is already visible.
+            // This avoids moving the top input back into the layout while typing.
+            const target = this._overlay._aiFollowupEntry || this._overlay._entry;
+            if (!target) return;
+            target.set_text(String(msg.content || ""));
+            global.stage.set_key_focus(target);
         } catch (e) {}
     }
 
