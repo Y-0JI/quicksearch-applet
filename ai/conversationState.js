@@ -192,6 +192,73 @@ function reset(conv) {
     conv.seq = 0;
 }
 
+function _indexOf(conv, id) {
+    if (!conv || !Array.isArray(conv.messages) || id == null) return -1;
+    for (let i = 0; i < conv.messages.length; i++) {
+        if (conv.messages[i] && conv.messages[i].id === id) return i;
+    }
+    return -1;
+}
+
+function findMessage(conv, id) {
+    return _find(conv, id);
+}
+
+// Phase 9 §Edit: keep messages up to and including `id`, drop every later turn.
+// The active request is cancelled first (its partial is preserved as 'cancelled', then
+// dropped with the truncated tail) so no stale request can outlive the cut point.
+function truncateAfter(conv, id) {
+    const i = _indexOf(conv, id);
+    if (i < 0) return false;
+    cancelActive(conv);
+    conv.messages = conv.messages.slice(0, i + 1);
+    if (conv.activeId != null && _indexOf(conv, conv.activeId) < 0) conv.activeId = null;
+    return true;
+}
+
+// Phase 9 §Resend: remove `id` and everything after it (the target message itself is
+// dropped too — the same text is re-appended as a fresh user message on resend).
+function removeFrom(conv, id) {
+    const i = _indexOf(conv, id);
+    if (i < 0) return false;
+    cancelActive(conv);
+    conv.messages = conv.messages.slice(0, i);
+    if (conv.activeId != null && _indexOf(conv, conv.activeId) < 0) conv.activeId = null;
+    return true;
+}
+
+// Phase 9 §Edit send contract:
+//   messages before the edited message
+//   → edited user message (new content, same identity)
+//   → fresh streaming assistant message
+// Everything after the edited message is removed. Returns { userMsgId, assistantId }.
+function editAndRestart(conv, userMsgId, newText) {
+    const q = String(newText || '').trim();
+    const m = _find(conv, userMsgId);
+    if (!conv || !m || m.role !== 'user' || !q) return null;
+    truncateAfter(conv, userMsgId);
+    m.content = q;
+    const assistantId = appendAssistant(conv);
+    return { userMsgId: m.id, assistantId };
+}
+
+// Phase 9 §Resend contract:
+//   messages before the target user message
+//   → the same user message (fresh message, single copy)
+//   → fresh streaming assistant message
+// The target message and everything after it are removed first, so no duplicate user
+// message can exist. Returns { userMsgId, assistantId }.
+function resendFrom(conv, userMsgId) {
+    const m = _find(conv, userMsgId);
+    if (!conv || !m || m.role !== 'user') return null;
+    const text = String(m.content || '').trim();
+    if (!text) return null;
+    removeFrom(conv, userMsgId);
+    const newUser = appendUser(conv, text);
+    const assistantId = appendAssistant(conv);
+    return { userMsgId: newUser, assistantId };
+}
+
 function count(conv) {
     return conv && Array.isArray(conv.messages) ? conv.messages.length : 0;
 }
@@ -214,5 +281,10 @@ module.exports = {
     rapidSend,
     reset,
     count,
+    findMessage,
+    truncateAfter,
+    removeFrom,
+    editAndRestart,
+    resendFrom,
     DEFAULT_HISTORY_LIMIT
 };

@@ -103,6 +103,7 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this.contentLayout.add(entryRow);
         this._caretBlinkId = 0;
         this._caretVisible = true;
+        this._blinkEntry = this._entry;
 
         this.resultsBox = new St.BoxLayout({ vertical: true });
         this._scroll = new St.ScrollView({
@@ -129,65 +130,52 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._autoScroll.add_actor(this.autoCompleteBox);
         this.resultsRegion.add_actor(this._autoScroll);
 
-        // AI follow-up composer: once a conversation exists, the input moves below
-        // the conversation panel so follow-up questions naturally continue the thread.
-        this._aiComposer = new St.BoxLayout({
-            style_class: "quicksearch-ai-composer",
-            vertical: false,
-            visible: false
-        });
-        this._aiFollowupEntry = new St.Entry({
+        // Phase 8 §6/§13 + Phase 9: AI bottom area — Cancel (visible while a request is
+        // active) + Clear chat (visible once a conversation exists) + bottom follow-up
+        // composer. The whole block is hidden until a conversation actually exists.
+        // Note: build explicit St.Label children (set_child) — the St.Button `label:`
+        // constructor property is not used anywhere in this codebase and renders empty
+        // in this GJS runtime.
+        this._aiComposer = new St.BoxLayout({ style_class: "quicksearch-ai-composer", vertical: true, visible: false });
+        // edit-in-progress hint row (shown while an earlier user message is being edited)
+        this._aiEditRow = new St.BoxLayout({ style_class: "quicksearch-ai-composer-editrow", vertical: false, visible: false });
+        this._aiEditLabel = new St.Label({ text: _("Editing message..."), style_class: "quicksearch-ai-composer-editlabel" });
+        this._aiEditCancel = new St.Button({ style_class: "quicksearch-ai-composer-editcancel", can_focus: false, reactive: true, track_hover: true });
+        const _editCancelLabel = new St.Label({ text: _("\u2715 Cancel edit"), style_class: "quicksearch-ai-composer-editcancel-label" });
+        try { this._aiEditCancel.set_child(_editCancelLabel); } catch (e) {}
+        this._aiEditRow.add(this._aiEditLabel);
+        this._aiEditRow.add(this._aiEditCancel);
+        this._aiComposer.add(this._aiEditRow);
+        // footer row: Cancel (active request) + Clear chat (conversation exists)
+        this._aiFooter = new St.BoxLayout({ style_class: "quicksearch-ai-footer", vertical: false, visible: true });
+        this._stopButton = new St.Button({ style_class: "quicksearch-ai-stop", can_focus: false, reactive: true, track_hover: true });
+        const _stopLabel = new St.Label({ text: _("\u23f9 Cancel"), style_class: "quicksearch-ai-stop-label" });
+        try { this._stopButton.set_child(_stopLabel); } catch (e) {}
+        this._resetButton = new St.Button({ style_class: "quicksearch-ai-reset", can_focus: false, reactive: true, track_hover: true });
+        const _resetLabel = new St.Label({ text: _("\u21ba Clear chat"), style_class: "quicksearch-ai-reset-label" });
+        try { this._resetButton.set_child(_resetLabel); } catch (e) {}
+        this._aiFooter.add(this._stopButton);
+        const _footerGap = new St.Widget({ x_expand: true, y_expand: false });
+        this._aiFooter.add(_footerGap, { expand: true });
+        this._aiFooter.add(this._resetButton);
+        this._aiComposer.add(this._aiFooter);
+        // follow-up composer row: entry + Send
+        this._composerRow = new St.BoxLayout({ style_class: "quicksearch-ai-composer-row", vertical: false });
+        this._composerEntry = new St.Entry({
             hint_text: _("Ask a follow-up..."),
             can_focus: true,
             track_hover: true,
-            style_class: "quicksearch-ai-followup-entry"
+            style_class: "quicksearch-ai-composer-entry"
         });
-        this._aiFollowupSend = new St.Button({
-            style_class: "quicksearch-ai-followup-send",
-            can_focus: false,
-            reactive: true,
-            track_hover: true
-        });
-        this._aiFollowupSend.set_child(new St.Label({
-            text: _("Send"),
-            style_class: "quicksearch-ai-followup-send-label"
-        }));
-        const submitFollowup = () => {
-            const q = String(this._aiFollowupEntry.get_text() || "").trim();
-            if (!q) return;
-            this._aiFollowupEntry.set_text("");
-            try { this._applet._submitAIQuery(q); } catch (e) {}
-        };
-        this._aiFollowupEntry.clutter_text.connect("key-press-event", (actor, event) => {
-            const sym = event.get_key_symbol();
-            if (sym === Clutter.KEY_Return || sym === Clutter.KEY_KP_Enter) {
-                submitFollowup();
-                return Clutter.EVENT_STOP;
-            }
-            return Clutter.EVENT_PROPAGATE;
-        });
-        this._aiFollowupSend.connect("clicked", () => {
-            submitFollowup();
-            return Clutter.EVENT_STOP;
-        });
-        this._aiComposer.add(this._aiFollowupEntry, { expand: true });
-        this._aiComposer.add(this._aiFollowupSend);
+        try { this._composerEntry.clutter_text.set_cursor_visible(true); } catch (e) {}
+        this._composerSend = new St.Button({ style_class: "quicksearch-ai-send", can_focus: false, reactive: false, track_hover: true });
+        const _sendLabel = new St.Label({ text: _("Send"), style_class: "quicksearch-ai-send-label" });
+        try { this._composerSend.set_child(_sendLabel); } catch (e) {}
+        this._composerRow.add(this._composerEntry, { expand: true });
+        this._composerRow.add(this._composerSend);
+        this._aiComposer.add(this._composerRow);
         this.contentLayout.add(this._aiComposer);
-
-        // Phase 8 §6/§13: AI footer — Stop (visible while a request is active) + Reset Conversation
-        // Note: build explicit St.Label children (set_child) — the St.Button `label:` constructor
-        // property is not used anywhere in this codebase and renders empty in this GJS runtime.
-        this._aiFooter = new St.BoxLayout({ style_class: "quicksearch-ai-footer", vertical: false, visible: false });
-        this._stopButton = new St.Button({ style_class: "quicksearch-ai-stop", can_focus: false, reactive: true, track_hover: true });
-        const _stopLabel = new St.Label({ text: _("Cancel"), style_class: "quicksearch-ai-stop-label" });
-        try { this._stopButton.set_child(_stopLabel); } catch (e) {}
-        this._resetButton = new St.Button({ style_class: "quicksearch-ai-reset", can_focus: false, reactive: true, track_hover: true });
-        const _resetLabel = new St.Label({ text: _("Clear chat"), style_class: "quicksearch-ai-reset-label" });
-        try { this._resetButton.set_child(_resetLabel); } catch (e) {}
-        this._aiFooter.add(this._stopButton);
-        this._aiFooter.add(this._resetButton);
-        this.contentLayout.add(this._aiFooter);
-        try { global.log("[quicksearch@yoji] Phase 8 footer init ok (stop/reset)"); } catch (e) {}
+        try { global.log("[quicksearch@yoji] Phase 9 composer init ok (cancel/clear/follow-up)"); } catch (e) {}
         try {
             this._stopButton.connect("clicked", () => {
                 try { this._applet._stopAI(); } catch (e) {}
@@ -197,6 +185,22 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
                 try { this._applet._resetConversation(); } catch (e) {}
                 return Clutter.EVENT_STOP;
             });
+            this._aiEditCancel.connect("clicked", () => {
+                try { this._applet._cancelEdit(); } catch (e) {}
+                return Clutter.EVENT_STOP;
+            });
+            this._composerSend.connect("clicked", () => {
+                try { this._applet._onComposerSend(); } catch (e) {}
+                return Clutter.EVENT_STOP;
+            });
+            this._composerEntry.clutter_text.connect("text-changed", () => {
+                try { this._applet._onComposerChanged(); } catch (e) {}
+            });
+            this._composerEntry.clutter_text.connect("key-press-event", (actor, event) => {
+                try { return this._applet._onComposerKeyPress(event); } catch (e) { return Clutter.EVENT_PROPAGATE; }
+            });
+            this._composerEntry.connect("key-focus-in", () => this._startCaretBlink(this._composerEntry));
+            this._composerEntry.connect("key-focus-out", () => this._stopCaretBlink(this._composerEntry));
         } catch (e) {}
 
         // dedicated popup layer for context menu — must be above the
@@ -276,13 +280,17 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         }
     }
 
-    _startCaretBlink() {
+    // Phase 9: caret blink is bound to whichever entry currently owns keyboard focus
+    // (top entry while the conversation is empty, bottom follow-up composer afterwards).
+    _startCaretBlink(entry) {
         this._stopCaretBlink();
+        this._blinkEntry = entry || this._entry;
+        if (!this._blinkEntry) return;
         this._caretVisible = true;
-        try { this._entry.clutter_text.set_cursor_visible(true); } catch (e) {}
+        try { this._blinkEntry.clutter_text.set_cursor_visible(true); } catch (e) {}
         this._caretBlinkId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 530, () => {
             this._caretVisible = !this._caretVisible;
-            try { this._entry.clutter_text.set_cursor_visible(this._caretVisible); } catch (e) {}
+            try { this._blinkEntry.clutter_text.set_cursor_visible(this._caretVisible); } catch (e) {}
             return GLib.SOURCE_CONTINUE;
         });
     }
@@ -292,7 +300,7 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             try { GLib.source_remove(this._caretBlinkId); } catch (e) {}
             this._caretBlinkId = 0;
         }
-        try { this._entry.clutter_text.set_cursor_visible(true); } catch (e) {}
+        try { if (this._blinkEntry) this._blinkEntry.clutter_text.set_cursor_visible(true); } catch (e) {}
         this._caretVisible = true;
     }
 
@@ -518,6 +526,13 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiStreaming = false;
         this._aiGen = 0;
         this._aiEngine = null;
+        // Phase 9: chat-actions state — edit target, sticky auto-scroll, per-message actors
+        this._aiEditId = null;
+        this._aiMsgActors = {};
+        this._aiStickBottom = true;
+        this._aiScrollId = 0;
+        this._aiScrollAdjIds = [];
+        this._aiScrollBound = false;
         // Phase 8: canonical conversation state (message model, history, per-message sources)
         this._conversation = null;
         if (convMod && typeof convMod.createConversation === 'function') {
@@ -733,20 +748,8 @@ class QuickSearchApplet extends Applet.IconApplet {
                 ov._modeButton.remove_style_class_name("quicksearch-mode-active");
             }
         } catch (e) {}
-        try { if (ov._aiFooter) ov._aiFooter.visible = isAi; } catch (e) {}
+        try { this._syncAIComposerState(); } catch (e) {}
         try { this._syncAIFooter(); } catch (e) {}
-        try { this._syncAIComposer(); } catch (e) {}
-    }
-
-    _syncAIComposer() {
-        const ov = this._overlay;
-        if (!ov || !ov._aiComposer) return;
-        const isAi = this._mode === 'ai';
-        const hasMessages = !!(convMod && this._conversation && convMod.count(this._conversation) > 0);
-        try { ov._aiComposer.visible = isAi && hasMessages; } catch (e) {}
-        // Initial prompt stays at the top. Once chat starts, the composer becomes
-        // the continuation box below the conversation, matching chat-app UX.
-        try { if (ov._entryRow) ov._entryRow.visible = !(isAi && hasMessages); } catch (e) {}
     }
 
     _toggleMode() {
@@ -758,19 +761,26 @@ class QuickSearchApplet extends Applet.IconApplet {
             this._mode = 'ai';
             this._aiGen++;
             this._aiLoading = false;
+            this._aiEditId = null;
             this._syncModeUI();
             this._renderAIState();
-            try {
-                if (this._overlay && this._overlay._entry) {
-                    if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(this._overlay._entry);
-                    if (this._overlay._startCaretBlink) this._overlay._startCaretBlink();
-                }
-            } catch (e) {}
+            if (this._hasConversation()) {
+                // preserved conversation → bottom composer owns the input
+                try { this._activateComposerInput(); } catch (e) {}
+            } else {
+                try {
+                    if (this._overlay && this._overlay._entry) {
+                        if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(this._overlay._entry);
+                        if (this._overlay._startCaretBlink) this._overlay._startCaretBlink();
+                    }
+                } catch (e) {}
+            }
         } else {
             if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
             this._aiGen++;
             this._aiLoading = false;
             this._aiStreaming = false;
+            this._aiEditId = null;
             if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
             this._mode = 'search';
             this._syncModeUI();
@@ -778,6 +788,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             try { this._clearAIStateVisualOnly(); } catch (e) { this._clearAIState(); }
             // restore normal panel empty, then re-run query if text present
             this.renderResults([]);
+            try { this._deactivateComposerInput(); } catch (e) {}
             try {
                 if (this._overlay && this._overlay._entry) {
                     if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(this._overlay._entry);
@@ -822,17 +833,22 @@ class QuickSearchApplet extends Applet.IconApplet {
         // Phase 8: cancel the active request but preserve conversation history.
         this._aiLoading = false;
         this._aiStreaming = false;
+        this._aiEditId = null;
+        this._cancelAIScroll();
+        this._aiMsgActors = {};
         if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
     }
 
     _clearAIStateVisualOnly() {
         this._aiLoading = false;
         this._aiStreaming = false;
+        this._aiEditId = null;
         if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
         const ov = this._overlay;
         if (!ov || !ov.resultsBox) return;
         try { while (ov.resultsBox.get_n_children() > 0) ov.resultsBox.remove_child(ov.resultsBox.get_child_at_index(0)); } catch (e) {}
         this._mainRows = [];
+        this._aiMsgActors = {};
         // keep _rows recomputed via _syncSelection/_render paths; but ensure scroll hidden until normal renders
         try { if (ov._scroll) ov._scroll.visible = false; } catch (e) {}
         try { this._syncRegionGeometry(); } catch (e) {}
@@ -872,15 +888,313 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) { return 'AI request failed'; }
     }
 
+    // §8 footer + composer states: the bottom block exists only in AI mode once a
+    // conversation has started. Idle+empty conversation → everything hidden and the
+    // top input is the active input.
     _syncAIFooter() {
         const ov = this._overlay;
         if (!ov || !ov._stopButton) return;
         const isAi = this._mode === 'ai';
-        try { ov._aiFooter.visible = isAi; } catch (e) {}
+        const hasConv = this._hasConversation();
         const active = !!this._aiLoading || !!this._aiStreaming ||
             (convMod && this._conversation ? !!convMod.hasActive(this._conversation) : false);
-        try { ov._stopButton.visible = isAi && active; } catch (e) {}
-        try { if (ov._resetButton) ov._resetButton.visible = isAi; } catch (e) {}
+        try { ov._aiComposer.visible = isAi && hasConv; } catch (e) {}
+        // Cancel only while a request is loading/streaming (§2/§8)
+        try { ov._stopButton.visible = isAi && hasConv && active; } catch (e) {}
+        // Clear chat whenever a conversation exists (§1/§8); hidden when empty
+        try { if (ov._resetButton) ov._resetButton.visible = isAi && hasConv; } catch (e) {}
+        // edit-in-progress hint row (§3)
+        try { if (ov._aiEditRow) ov._aiEditRow.visible = isAi && hasConv && this._aiEditId != null; } catch (e) {}
+        try { this._syncComposerSendState(); } catch (e) {}
+    }
+
+    // ---- Phase 9: bottom follow-up composer + per-message chat actions ----
+
+    _hasConversation() {
+        return !!(convMod && this._conversation && convMod.count(this._conversation) > 0);
+    }
+
+    // Visibility/reactivity of the bottom composer block vs. the top search entry.
+    // Conversation started → composer is the only AI input (top entry inert);
+    // no conversation → top entry is the input and the composer stays hidden (§5).
+    _syncAIComposerState() {
+        const ov = this._overlay;
+        if (!ov || !ov._composerEntry) return;
+        const composerActive = this._mode === 'ai' && this._hasConversation();
+        try { ov._aiComposer.visible = composerActive; } catch (e) {}
+        try {
+            ov._entry.reactive = !composerActive;
+            ov._entry.can_focus = !composerActive;
+        } catch (e) {}
+        const editing = composerActive && this._aiEditId != null;
+        try { if (ov._aiEditRow) ov._aiEditRow.visible = !!editing; } catch (e) {}
+        if (editing && ov._aiEditLabel) {
+            try {
+                const m = convMod.findMessage(this._conversation, this._aiEditId);
+                const excerpt = m ? String(m.content || '') : '';
+                const shown = excerpt.length > 42 ? excerpt.slice(0, 42) + '...' : excerpt;
+                ov._aiEditLabel.set_text(_("Editing message") + (shown ? ': \u201c' + shown + '\u201d' : '...'));
+            } catch (e) {}
+        }
+        try { this._syncAIFooter(); } catch (e) {}
+    }
+
+    // Switch the UI to "conversation running" mode: hide+disable the top entry and show
+    // the bottom composer with keyboard focus on it. Stale top-entry text is cleared so
+    // it can never be mistaken for a new AI query (§5).
+    _activateComposerInput() {
+        const ov = this._overlay;
+        if (!ov || !ov._composerEntry) return;
+        try { ov._aiComposer.visible = true; } catch (e) {}
+        try {
+            ov._entry.reactive = false;
+            ov._entry.can_focus = false;
+            try { if (String(ov._entry.get_text ? ov._entry.get_text() : '') !== '') ov._entry.set_text(''); } catch (e2) {}
+        } catch (e) {}
+        try {
+            const ct = ov._composerEntry.clutter_text;
+            if (ct && typeof ct.set_cursor_visible === 'function') ct.set_cursor_visible(true);
+        } catch (e) {}
+        try { this._syncAIFooter(); } catch (e) {}
+        try { this._syncComposerSendState(); } catch (e) {}
+        try {
+            if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(ov._composerEntry);
+            if (ov._startCaretBlink) ov._startCaretBlink(ov._composerEntry);
+        } catch (e) {}
+    }
+
+    // Switch back to "no conversation / initial chat" mode: re-enable the top entry,
+    // hide the composer and clear its text + any edit state (§1 Clear chat / §5).
+    _deactivateComposerInput() {
+        const ov = this._overlay;
+        if (!ov) return;
+        this._aiEditId = null;
+        this._aiMsgActors = {};
+        try { if (ov._aiComposer) ov._aiComposer.visible = false; } catch (e) {}
+        try { if (ov._composerEntry) ov._composerEntry.set_text(''); } catch (e) {}
+        try {
+            ov._entry.reactive = true;
+            ov._entry.can_focus = true;
+        } catch (e) {}
+        try { this._syncAIFooter(); } catch (e) {}
+    }
+
+    _syncComposerSendState() {
+        const ov = this._overlay;
+        if (!ov || !ov._composerEntry || !ov._composerSend) return;
+        let text = '';
+        try { text = String(ov._composerEntry.get_text ? ov._composerEntry.get_text() : '') || ''; } catch (e) {}
+        const enabled = this._mode === 'ai' && this._hasConversation() && !!String(text).trim();
+        try {
+            ov._composerSend.reactive = enabled;
+            if (enabled) ov._composerSend.remove_style_class_name('quicksearch-ai-send-disabled');
+            else ov._composerSend.add_style_class_name('quicksearch-ai-send-disabled');
+        } catch (e) {}
+    }
+
+    _onComposerKeyPress(event) {
+        const sym = event.get_key_symbol();
+        if (sym === Clutter.KEY_Escape) {
+            if (this._aiEditId != null) {
+                try { this._cancelEdit(); } catch (e) {}
+            } else {
+                try { this.close(); } catch (e) {}
+            }
+            return Clutter.EVENT_STOP;
+        }
+        if (sym === Clutter.KEY_Return || sym === Clutter.KEY_KP_Enter) {
+            try { this._onComposerSend(); } catch (e) {}
+            return Clutter.EVENT_STOP;
+        }
+        return Clutter.EVENT_PROPAGATE;
+    }
+
+    _onComposerChanged() {
+        try { this._syncComposerSendState(); } catch (e) {}
+    }
+
+    _onComposerSend() {
+        const ov = this._overlay;
+        if (!ov || !ov._composerEntry) return;
+        if (this._mode !== 'ai' || !this._hasConversation()) {
+            // conversation was cleared while the composer was visible → back to top input
+            try { this._deactivateComposerInput(); } catch (e) {}
+            return;
+        }
+        let text = '';
+        try { text = String(ov._composerEntry.get_text ? ov._composerEntry.get_text() : '') || ''; } catch (e) {}
+        if (!String(text).trim()) {
+            // empty input never sends (§5)
+            try {
+                if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(ov._composerEntry);
+            } catch (e) {}
+            return;
+        }
+        try { ov._composerEntry.set_text(''); } catch (e) {}
+        const editId = this._aiEditId != null ? this._aiEditId : null;
+        try { this._syncComposerSendState(); } catch (e) {}
+        try {
+            if (editId != null) this._submitAIQuery(text, { editId });
+            else this._submitAIQuery(text);
+        } catch (e) {}
+        // keep the composer focused for the next follow-up
+        try {
+            if (this._mode === 'ai' && this._hasConversation()) {
+                if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(ov._composerEntry);
+                if (ov._startCaretBlink) ov._startCaretBlink(ov._composerEntry);
+            }
+        } catch (e) {}
+    }
+
+    // §3 Edit: load the selected user message into the composer. Any running request is
+    // cancelled first (partial stays as 'cancelled'), so no stale callback can race the
+    // edit. The rewrite only happens when the edited text is sent.
+    _beginEditUserMessage(id) {
+        const ov = this._overlay;
+        if (!ov || !convMod || !this._conversation) return;
+        const m = convMod.findMessage(this._conversation, id);
+        if (!m || m.role !== 'user') return;
+        if (this._aiLoading || this._aiStreaming || convMod.hasActive(this._conversation)) {
+            try { this._stopAI(); } catch (e) {}
+        }
+        this._aiEditId = id;
+        try { this._activateComposerInput(); } catch (e) {}
+        try {
+            const content = String(m.content || '');
+            ov._composerEntry.set_text(content);
+            const ct = ov._composerEntry.clutter_text;
+            if (ct && typeof ct.set_cursor_position === 'function') ct.set_cursor_position(content.length);
+        } catch (e) {}
+        try { this._syncAIComposerState(); } catch (e) {}
+        try { this._renderAIState(); } catch (e) {}
+        try { this._scrollAIMessageIntoView(id); } catch (e) {}
+    }
+
+    _cancelEdit() {
+        this._aiEditId = null;
+        try { this._syncAIComposerState(); } catch (e) {}
+        try { this._renderAIState(); } catch (e) {}
+        const ov = this._overlay;
+        try {
+            if (ov && ov._composerEntry && global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(ov._composerEntry);
+        } catch (e) {}
+    }
+
+    // §4 Resend: restart the conversation at the selected user message — everything from
+    // that message down is dropped and the same text is re-sent once (no duplicate).
+    _resendUserMessage(id) {
+        if (!convMod || !this._conversation) return;
+        const m = convMod.findMessage(this._conversation, id);
+        if (!m || m.role !== 'user') return;
+        const text = String(m.content || '');
+        if (!String(text).trim()) return;
+        this._aiEditId = null;
+        try { this._submitAIQuery(text, { resendId: id }); } catch (e) {}
+    }
+
+    // ---- Phase 9 §6: sticky auto-scroll ----
+
+    _cancelAIScroll() {
+        if (this._aiScrollId) {
+            try { GLib.source_remove(this._aiScrollId); } catch (e) {}
+            this._aiScrollId = 0;
+        }
+    }
+
+    _ensureScrollTracking() {
+        const ov = this._overlay;
+        if (!ov || !ov._scroll || this._aiScrollBound) return;
+        try {
+            const vbar = ov._scroll.get_vscroll_bar();
+            const adj = vbar.get_adjustment();
+            if (!adj || typeof adj.connect !== 'function') return;
+            const handler = () => {
+                try { this._onAIUserScroll(); } catch (e) {}
+            };
+            // St.Adjustment signal naming varies across Cinnamon/GJS versions — bind every
+            // candidate; whichever exists drives the sticky-scroll state.
+            for (const sig of ['notify::value', 'value-changed', 'changed']) {
+                try { this._aiScrollAdjIds.push(adj.connect(sig, handler)); } catch (e) {}
+            }
+            this._aiScrollBound = this._aiScrollAdjIds.length > 0;
+        } catch (e) {}
+    }
+
+    _onAIUserScroll() {
+        const ov = this._overlay;
+        if (!ov || !ov._scroll) return;
+        try {
+            const vbar = ov._scroll.get_vscroll_bar();
+            const adj = vbar.get_adjustment();
+            const upper = Number(adj.upper) || 0;
+            const ps = Number(adj.page_size) || 0;
+            const val = Number(adj.value) || 0;
+            // only follow the stream while (near) the bottom; reading older turns stops it
+            this._aiStickBottom = (upper - ps - val) <= 48;
+        } catch (e) {}
+    }
+
+    _scheduleAIScroll(force) {
+        const ov = this._overlay;
+        if (!ov || !ov._scroll) return;
+        if (!force && !this._aiStickBottom) return;
+        this._cancelAIScroll();
+        const self = this;
+        this._aiScrollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 20, () => {
+            self._aiScrollId = 0;
+            try {
+                const ov2 = self._overlay;
+                if (!ov2 || !ov2._scroll || !ov2._scroll.visible) return GLib.SOURCE_REMOVE;
+                const vbar = ov2._scroll.get_vscroll_bar();
+                const adj = vbar.get_adjustment();
+                const upper = Number(adj.upper) || 0;
+                const ps = Number(adj.page_size) || 0;
+                adj.set_value(Math.max(Number(adj.lower) || 0, upper - ps));
+                self._aiStickBottom = true;
+            } catch (e) {}
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _scrollAIMessageIntoView(id) {
+        this._cancelAIScroll();
+        const self = this;
+        this._aiScrollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 20, () => {
+            self._aiScrollId = 0;
+            try {
+                const ov2 = self._overlay;
+                if (!ov2 || !ov2._scroll || !ov2._scroll.visible) return GLib.SOURCE_REMOVE;
+                const actor = self._aiMsgActors ? self._aiMsgActors[id] : null;
+                if (!actor) return GLib.SOURCE_REMOVE;
+                const vbar = ov2._scroll.get_vscroll_bar();
+                const adj = vbar.get_adjustment();
+                const [, sy] = ov2._scroll.get_transformed_position();
+                const [, by] = actor.get_transformed_position();
+                if (typeof by !== 'number') return GLib.SOURCE_REMOVE;
+                const rowTop = by - sy + (Number(adj.value) || 0);
+                const rowH = Number(actor.get_transformed_size()[1]) || 0;
+                const viewH = Number(adj.page_size) || 0;
+                const curVal = Number(adj.value) || 0;
+                if (rowTop < curVal) adj.set_value(Math.max(Number(adj.lower) || 0, rowTop - 4));
+                else if (rowTop + rowH > curVal + viewH) adj.set_value(rowTop + rowH - viewH + 4);
+                const upper = Number(adj.upper) || 0;
+                self._aiStickBottom = (upper - viewH - (Number(adj.value) || 0)) <= 48;
+            } catch (e) {}
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _buildMessageActionButton(text, styleClass, onActivate) {
+        const btn = new St.Button({ style_class: styleClass, reactive: true, can_focus: false, track_hover: true });
+        const lbl = new St.Label({ text: text, style_class: styleClass + "-label" });
+        try { btn.set_child(lbl); } catch (e) {}
+        try {
+            btn.connect("clicked", () => {
+                try { onActivate(); } catch (e) {}
+                return Clutter.EVENT_STOP;
+            });
+        } catch (e) {}
+        return btn;
     }
 
     _renderAIState() {
@@ -893,6 +1207,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._rows = [];
         this._selIdx = -1;
         this._sortedResults = [];
+        this._aiMsgActors = {};
 
         // Phase 8 §1/§2: render the full conversation from the message model — never
         // just the latest answer. Each assistant message owns its content + sources (§10)
@@ -904,32 +1219,26 @@ class QuickSearchApplet extends Applet.IconApplet {
             if (!msg) continue;
             if (msg.role === 'user') {
                 try {
-                    const card = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-user-message" });
-                    const header = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-message-header" });
-                    header.add(new St.Label({ text: _("You"), style_class: "quicksearch-ai-user" }), { expand: true });
-
-                    const actions = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-message-actions" });
-                    const editBtn = new St.Button({ style_class: "quicksearch-ai-action", reactive: true, track_hover: true });
-                    editBtn.set_child(new St.Label({ text: _("Edit"), style_class: "quicksearch-ai-action-label" }));
-                    editBtn.connect("clicked", () => {
-                        try { this._editAIUserMessage(msg.id); } catch (e) {}
-                        return Clutter.EVENT_STOP;
-                    });
-                    const resendBtn = new St.Button({ style_class: "quicksearch-ai-action", reactive: true, track_hover: true });
-                    resendBtn.set_child(new St.Label({ text: _("Resend"), style_class: "quicksearch-ai-action-label" }));
-                    resendBtn.connect("clicked", () => {
-                        try { this._resendAIUserMessage(msg.id); } catch (e) {}
-                        return Clutter.EVENT_STOP;
-                    });
-                    actions.add(editBtn);
-                    actions.add(resendBtn);
-                    header.add(actions);
-                    card.add(header);
-
-                    const lbl = new St.Label({ text: String(msg.content || ''), style_class: "quicksearch-ai-user-text" });
+                    // Phase 9 §3/§4/§7: each user message is a block with Edit + Resend
+                    // actions. Actions are plain St.Buttons — they never join the
+                    // keyboard-searchable _rows list and never trigger row activation.
+                    const block = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-user-block" });
+                    const editing = this._aiEditId === msg.id;
+                    if (editing) try { block.add_style_class_name("quicksearch-ai-user-editing"); } catch (e) {}
+                    const lbl = new St.Label({ text: _("You") + ": " + String(msg.content || ''), style_class: "quicksearch-ai-user" });
                     try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
-                    card.add(lbl);
-                    ov.resultsBox.add_child(card);
+                    block.add(lbl);
+                    const actions = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-msg-actions" });
+                    const uid = msg.id;
+                    actions.add(this._buildMessageActionButton(_("Edit"), "quicksearch-ai-msg-action", () => {
+                        this._beginEditUserMessage(uid);
+                    }));
+                    actions.add(this._buildMessageActionButton(_("Resend"), "quicksearch-ai-msg-action", () => {
+                        this._resendUserMessage(uid);
+                    }));
+                    block.add(actions);
+                    ov.resultsBox.add_child(block);
+                    if (this._aiMsgActors) this._aiMsgActors[uid] = block;
                 } catch (e) {}
             } else if (msg.role === 'assistant') {
                 if (msg.status === 'streaming') {
@@ -1010,14 +1319,15 @@ class QuickSearchApplet extends Applet.IconApplet {
 
         try { ov._scroll.visible = messages.length > 0; } catch (e) {}
         try { this._syncAIFooter(); } catch (e) {}
-        try { this._syncAIComposer(); } catch (e) {}
         try { this._syncRegionGeometry(); } catch (e) {}
-        try {
-            const bar = ov._scroll && ov._scroll.get_vscroll_bar ? ov._scroll.get_vscroll_bar() : null;
-            const adj = bar && bar.get_adjustment ? bar.get_adjustment() : null;
-            if (adj) adj.set_value(Math.max(adj.lower || 0, (adj.upper || 0) - (adj.page_size || 0)));
-        } catch (e) {}
         try { this._syncSelection(); } catch (e) {}
+        try { this._syncAIComposerState(); } catch (e) {}
+        if (messages.length > 0) {
+            // §6: follow the stream only while the user is near the bottom; never force
+            // the viewport down while they are reading older messages.
+            try { this._ensureScrollTracking(); } catch (e) {}
+            try { this._scheduleAIScroll(false); } catch (e) {}
+        }
     }
 
     _renderSourcesForMessage(ov, sources) {
@@ -1066,74 +1376,46 @@ class QuickSearchApplet extends Applet.IconApplet {
         }
     }
 
-    _editAIUserMessage(id) {
-        if (!convMod || !this._conversation || !this._overlay) return;
-        const messages = convMod.getMessages(this._conversation);
-        const msg = messages.find(m => m && m.id === id && m.role === 'user');
-        if (!msg) return;
-        this._editingAIMessageId = id;
-        try {
-            // Edit in the bottom composer when a conversation is already visible.
-            // This avoids moving the top input back into the layout while typing.
-            const target = this._overlay._aiFollowupEntry || this._overlay._entry;
-            if (!target) return;
-            target.set_text(String(msg.content || ""));
-            global.stage.set_key_focus(target);
-        } catch (e) {}
-    }
-
-    _removeConversationFrom(id) {
-        if (!this._conversation || !Array.isArray(this._conversation.messages)) return false;
-        const idx = this._conversation.messages.findIndex(m => m && m.id === id);
-        if (idx < 0) return false;
-        this._conversation.messages.splice(idx);
-        this._conversation.activeId = null;
-        return true;
-    }
-
-    _resendAIUserMessage(id) {
-        if (!convMod || !this._conversation) return;
-        const msg = convMod.getMessages(this._conversation).find(m => m && m.id === id && m.role === 'user');
-        if (!msg) return;
-        const q = String(msg.content || "").trim();
-        if (!q) return;
-        if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
-        this._aiGen++;
-        this._aiLoading = false;
-        this._aiStreaming = false;
-        if (!this._removeConversationFrom(id)) return;
-        this._editingAIMessageId = null;
-        this._submitAIQuery(q);
-    }
-
-    _submitAIQuery(raw) {
+    // Phase 8 §12 + Phase 9 §3/§4 staging. `opts`:
+    //   { editId }   — rewrite that user message in place, drop every later turn, stream
+    //   { resendId } — drop that user message + everything after, re-send the same text
+    // (no opts)        — plain first message / follow-up (rapid-send contract)
+    _submitAIQuery(raw, opts) {
         const q = String(raw || "").trim();
         if (!q) return;
         if (!convMod || !this._conversation) { this._aiLoading = false; return; }
 
-        // Editing replaces the selected user turn and all turns after it, then
-        // sends the new wording as a fresh continuation.
-        if (this._editingAIMessageId) {
-            const editingId = this._editingAIMessageId;
-            this._editingAIMessageId = null;
-            if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
-            this._aiGen++;
-            this._aiLoading = false;
-            this._aiStreaming = false;
-            this._removeConversationFrom(editingId);
-        }
-
         const conv = this._conversation;
-        // Phase 8 §12 rapid-send contract: cancel the active request (partial preserved as
-        // 'cancelled'), append the new user message, open a fresh streaming assistant message.
-        const settled = convMod.rapidSend(conv, q);
-        const assistantId = settled ? settled.assistantId : null;
+        const editId = opts && opts.editId != null ? opts.editId : null;
+        const resendId = opts && opts.resendId != null ? opts.resendId : null;
+
+        // Generation/token guard FIRST: any late callback from a previous request becomes
+        // stale before we mutate conversation state or cancel the engine (§11).
         this._aiGen++;
         const myGen = this._aiGen;
         if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
+
+        let settled = null;
+        if (editId != null) {
+            settled = convMod.editAndRestart(conv, editId, q);
+            this._aiEditId = null;
+        } else if (resendId != null) {
+            settled = convMod.resendFrom(conv, resendId);
+        } else {
+            settled = convMod.rapidSend(conv, q);
+        }
+        if (!settled) {
+            // defensive: invalid edit/resend target → plain follow-up send
+            settled = convMod.rapidSend(conv, q);
+            this._aiEditId = null;
+        }
+        const assistantId = settled ? settled.assistantId : null;
         this._aiLoading = true;
         this._aiStreaming = false;
+        this._aiStickBottom = true;
         this._renderAIState();
+        // a conversation now exists → the bottom follow-up composer owns the input (§5)
+        try { this._activateComposerInput(); } catch (e) {}
         if (!this._aiEngine) this._createAiEngine();
         if (!this._aiEngine) {
             if (myGen !== this._aiGen || this._mode !== 'ai') return;
@@ -1142,33 +1424,42 @@ class QuickSearchApplet extends Applet.IconApplet {
             this._renderAIState();
             return;
         }
+        this._runAIRequestStream(q, assistantId, myGen);
+    }
+
+    // Shared streaming/answer runner for first message, follow-up, edit and resend.
+    // Chunks always append to the single assistant message created by the staging step
+    // above — never to a replaced/older message.
+    _runAIRequestStream(q, assistantId, myGen) {
+        const conv = this._conversation;
+        if (!convMod || !conv || assistantId == null) return;
+        const self = this;
+        function _check() { return myGen !== self._aiGen || self._mode !== 'ai'; }
+        function _render() { if (!_check()) self._renderAIState(); }
 
         // Phase 8 §3/§4: bounded prior history (excludes the current user message — the
         // engine always sends it as the live query).
         const history = convMod.getHistory(conv, 10);
-        const self = this;
-        function _check() { return myGen !== self._aiGen || self._mode !== 'ai'; }
-        function _render() { if (!_check()) self._renderAIState(); }
 
         // Try streaming path first (§5: chunks append to the same assistant message)
         if (typeof this._aiEngine.searchStream === 'function') {
             try {
                 this._aiEngine.searchStream(q, null, {
                     onStart: function() {
-                        if (_check() || assistantId == null) return;
+                        if (_check()) return;
                         self._aiLoading = false;
                         self._aiStreaming = true;
                         _render();
                     },
                     onDelta: function(chunk, fullText) {
-                        if (_check() || assistantId == null) return;
+                        if (_check()) return;
                         self._aiLoading = false;
                         self._aiStreaming = true;
                         convMod.updateAssistant(conv, assistantId, fullText || '');
                         _render();
                     },
                     onComplete: function(data) {
-                        if (_check() || assistantId == null) return;
+                        if (_check()) return;
                         self._aiLoading = false;
                         self._aiStreaming = false;
                         const text = data && typeof data.text === 'string' ? data.text : String((data && data.text) || '');
@@ -1177,7 +1468,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                         _render();
                     },
                     onError: function(err) {
-                        if (_check() || assistantId == null) return;
+                        if (_check()) return;
                         const code = err && err.code ? err.code : 'provider_error';
                         self._aiLoading = false;
                         self._aiStreaming = false;
@@ -1192,7 +1483,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             } catch (e) {
                 if (_check()) return;
                 self._aiLoading = false;
-                if (assistantId != null) convMod.failAssistant(conv, assistantId, { code: 'provider_error', message: e && e.message });
+                convMod.failAssistant(conv, assistantId, { code: 'provider_error', message: e && e.message });
                 _render();
             }
             return;
@@ -1201,7 +1492,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         // Fallback: non-streaming path
         const cbs = {
             onAnswer: (data) => {
-                if (_check() || assistantId == null) return;
+                if (_check()) return;
                 self._aiLoading = false;
                 self._aiStreaming = false;
                 convMod.completeAssistant(conv, assistantId,
@@ -1210,7 +1501,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 _render();
             },
             onError: (err) => {
-                if (_check() || assistantId == null) return;
+                if (_check()) return;
                 const code = err && err.code ? err.code : 'provider_error';
                 self._aiLoading = false;
                 self._aiStreaming = false;
@@ -1219,7 +1510,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 _render();
             },
             onDone: (err, data) => {
-                if (_check() || assistantId == null) return;
+                if (_check()) return;
                 if (err) {
                     const code = err.code || 'provider_error';
                     self._aiLoading = false;
@@ -1241,35 +1532,53 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) {
             if (_check()) return;
             self._aiLoading = false;
-            if (assistantId != null) convMod.failAssistant(conv, assistantId, { code: 'provider_error', message: e && e.message });
+            convMod.failAssistant(conv, assistantId, { code: 'provider_error', message: e && e.message });
             _render();
         }
     }
 
-    // Phase 8 §6/§7: user-visible Stop — calls the existing internal cancellation lifecycle
-    // (engine.cancel() invalidates late callbacks; conversation marks the message 'cancelled').
+    // Phase 8 §6/§7 / Phase 9 §2: user-visible Cancel. Generation is bumped BEFORE the
+    // engine cancel so a synchronous 'cancelled' callback can never slip through the
+    // myGen guard; the conversation keeps the partial as 'cancelled' (§8).
     _stopAI() {
-        if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiGen++;
+        if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiLoading = false;
         this._aiStreaming = false;
         if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
         try { this._renderAIState(); } catch (e) {}
+        // composer stays focused so the next follow-up can be typed immediately
+        const ov = this._overlay;
+        try {
+            if (ov && ov._composerEntry && this._mode === 'ai' && this._hasConversation() && global.stage && typeof global.stage.set_key_focus === 'function') {
+                global.stage.set_key_focus(ov._composerEntry);
+            }
+        } catch (e) {}
     }
 
-    // Phase 8 §13: deterministic conversation reset — cancel active, clear model + UI.
+    // Phase 8 §13 / Phase 9 §1: deterministic Clear chat — cancel active request first,
+    // clear model + UI + sources + composer + edit state, restore the top input.
     _resetConversation() {
-        if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiGen++;
+        if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiLoading = false;
         this._aiStreaming = false;
-        this._editingAIMessageId = null;
+        this._aiEditId = null;
+        this._aiMsgActors = {};
+        this._aiStickBottom = true;
+        this._cancelAIScroll();
         if (convMod && this._conversation) { try { convMod.reset(this._conversation); } catch (e) {} }
-        try {
-            if (this._overlay && this._overlay._aiFollowupEntry) this._overlay._aiFollowupEntry.set_text("");
-            if (this._overlay && this._overlay._entry) this._overlay._entry.set_text("");
-        } catch (e) {}
         try { this._renderAIState(); } catch (e) {}
+        try { this._deactivateComposerInput(); } catch (e) {}
+        // back to the initial-chat state: top input visible and focused (§1/§5)
+        const ov = this._overlay;
+        try {
+            if (ov && ov._entry && global.stage && typeof global.stage.set_key_focus === 'function') {
+                ov._entry.set_text('');
+                global.stage.set_key_focus(ov._entry);
+                if (ov._startCaretBlink) ov._startCaretBlink();
+            }
+        } catch (e) {}
     }
 
     _applySearchEngineSetting() {
@@ -1309,10 +1618,13 @@ class QuickSearchApplet extends Applet.IconApplet {
             this._overlay = new QuickSearchOverlay(this);
         }
         // AI-2: every open starts in Normal Search (§16); conversation history is preserved
-        // across open/close — only the Reset button clears it (§13).
+        // across open/close — only Clear chat removes it (§13/§1).
         this._mode = 'search';
         this._aiLoading = false;
         this._aiStreaming = false;
+        this._aiEditId = null;
+        this._aiMsgActors = {};
+        this._cancelAIScroll();
         if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiGen++;
         if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
@@ -1321,6 +1633,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         global.stage.set_key_focus(this._overlay._entry);
         this._overlay._startCaretBlink();
         this._overlay.setText("");
+        if (this._overlay._composerEntry) try { this._overlay._composerEntry.set_text(''); } catch (e) {}
         this._syncModeUI();
         this._clearAIState();
         try { while (this._overlay.resultsBox.get_n_children() > 0) this._overlay.resultsBox.remove_child(this._overlay.resultsBox.get_child_at_index(0)); } catch (e) {}
@@ -1335,16 +1648,34 @@ class QuickSearchApplet extends Applet.IconApplet {
     close() {
         try { if (this._contextMenu) this._contextMenu.hide(); } catch (e) {}
         if (this._engine) this._engine.cancel();
-        if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
+        // gen FIRST so no late 'cancelled'/stream callback can touch the UI after close
         this._aiGen++;
+        if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiLoading = false;
         this._aiStreaming = false;
+        this._aiEditId = null;
+        this._aiMsgActors = {};
+        this._cancelAIScroll();
+        if (this._aiScrollAdjIds && this._aiScrollAdjIds.length > 0) {
+            try {
+                if (this._overlay && this._overlay._scroll) {
+                    const vbar = this._overlay._scroll.get_vscroll_bar();
+                    const adj = vbar.get_adjustment();
+                    for (const id of this._aiScrollAdjIds) {
+                        try { adj.disconnect(id); } catch (e) {}
+                    }
+                }
+            } catch (e) {}
+            this._aiScrollAdjIds = [];
+            this._aiScrollBound = false;
+        }
         if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
         this._cancelPopupHide();
         this._ptrInEntry = false;
         this._ptrInPopup = false;
         if (this._overlay) {
             try { this._overlay._stopCaretBlink(); } catch (e) {}
+            if (this._overlay._composerEntry) try { this._overlay._composerEntry.set_text(''); } catch (e) {}
             this._overlay.close(global.get_current_time());
         }
     }
@@ -1572,7 +1903,16 @@ class QuickSearchApplet extends Applet.IconApplet {
         const w = pw || this._lastPanelWidth || 690;
         const pillTf = ov._entryRow.get_transformed_position();
         const pillBottom = (pillTf[1] || 146) + (ov._entryRow.get_transformed_size()[1] || 54);
-        const roomCap = Math.max(320, global.screen_height - pillBottom - 6 - 12);
+        // Phase 9: keep the results area clear of the bottom composer + footer so a long
+        // conversation never renders underneath the follow-up bar (§5).
+        let bottomReserve = 0;
+        if (this._mode === 'ai' && ov._aiComposer && ov._aiComposer.visible) {
+            try {
+                const [, ch] = ov._aiComposer.get_preferred_height(w);
+                bottomReserve = (Number(ch) || 0) + 10;
+            } catch (e) { bottomReserve = 110; }
+        }
+        const roomCap = Math.max(320, global.screen_height - pillBottom - 6 - bottomReserve - 12);
         let h = 0;
         if (ov._scroll.visible) {
             let natH = 0;
@@ -1678,7 +2018,16 @@ class QuickSearchApplet extends Applet.IconApplet {
         }
         if (this._mode === 'ai') {
             if (sym === Clutter.KEY_Return || sym === Clutter.KEY_KP_Enter) {
-                try { this._submitAIQuery(this._overlay ? this._overlay.getText() : ""); } catch (e) {}
+                if (this._hasConversation()) {
+                    // §5: after the first message the top entry is inert — keep the
+                    // follow-up composer as the only send path
+                    const ov = this._overlay;
+                    try {
+                        if (ov && ov._composerEntry && global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(ov._composerEntry);
+                    } catch (e) {}
+                } else {
+                    try { this._submitAIQuery(this._overlay ? this._overlay.getText() : ""); } catch (e) {}
+                }
                 return Clutter.EVENT_STOP;
             }
             if (sym === Clutter.KEY_Down || sym === Clutter.KEY_KP_Down || sym === Clutter.KEY_Up || sym === Clutter.KEY_KP_Up) {
@@ -1942,6 +2291,10 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { if (this._contextMenu) { this._contextMenu.destroy(); this._contextMenu = null; } } catch (e) {}
         Main.keybindingManager.removeHotKey(this._hotkeyName);
         this._cancelPopupHide();
+        // Phase 9 lifecycle: no pending scroll timer, edit target, or message actor map
+        this._cancelAIScroll();
+        this._aiEditId = null;
+        this._aiMsgActors = {};
         if (this._overlay) {
             try { this._overlay._stopCaretBlink(); } catch (e) {}
             // disconnect hover/key-focus/outside signals

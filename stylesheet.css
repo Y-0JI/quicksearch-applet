@@ -155,8 +155,76 @@
     color: rgba(255, 255, 255, 0.75);
 }
 
+/* Phase 9: bottom follow-up composer + per-message actions */
+.quicksearch-ai-user-block {
+    padding: 2px 0 0 0;
+}
+
+.quicksearch-ai-user-editing {
+    background-color: rgba(255, 196, 0, 0.10);
+    border-radius: 12px;
+}
+
+.quicksearch-ai-msg-actions {
+    spacing: 6px;
+    padding: 2px 8px 6px 8px;
+}
+
+.quicksearch-ai-msg-action {
+    padding: 2px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.10);
+    background-color: rgba(255,255,255,0.04);
+}
+
+.quicksearch-ai-msg-action-label {
+    font-size: 8.5pt;
+    color: rgba(255, 255, 255, 0.62);
+}
+
+.quicksearch-ai-msg-action:hover {
+    background-color: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.22);
+}
+
+.quicksearch-ai-composer {
+    padding: 6px 12px 12px 12px;
+    spacing: 4px;
+    margin-top: 6px;
+    background-color: rgba(36, 39, 46, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 22px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.quicksearch-ai-composer-editrow {
+    spacing: 10px;
+    padding: 2px 4px;
+}
+
+.quicksearch-ai-composer-editlabel {
+    font-size: 9pt;
+    color: rgba(255, 196, 0, 0.95);
+}
+
+.quicksearch-ai-composer-editcancel {
+    padding: 2px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 196, 0, 0.35);
+    background-color: rgba(255, 196, 0, 0.10);
+}
+
+.quicksearch-ai-composer-editcancel-label {
+    font-size: 8.5pt;
+    color: rgba(255, 214, 90, 0.95);
+}
+
+.quicksearch-ai-composer-editcancel:hover {
+    background-color: rgba(255, 196, 0, 0.24);
+}
+
 .quicksearch-ai-footer {
-    padding: 8px 8px 10px 8px;
+    padding: 4px 4px 2px 4px;
     spacing: 8px;
 }
 
@@ -172,79 +240,42 @@
 .quicksearch-ai-reset-label { font-size: 9pt; color: rgba(200,200,200,0.95); }
 .quicksearch-ai-reset:hover { background-color: rgba(255,255,255,0.12); }
 
-
-/* AI chat controls: per-message edit/resend and bottom follow-up composer */
-.quicksearch-ai-user-message,
-.quicksearch-ai-assistant-message {
-    padding: 8px 8px 10px 8px;
-    margin: 4px 0;
-    border-radius: 10px;
-    background-color: rgba(255,255,255,0.025);
-}
-
-.quicksearch-ai-message-header {
+.quicksearch-ai-composer-row {
     spacing: 8px;
-    padding-bottom: 3px;
 }
 
-.quicksearch-ai-user {
-    padding: 0;
-    font-size: 9.5pt;
-    font-weight: bold;
-    color: rgba(255,255,255,0.75);
-}
-
-.quicksearch-ai-user-text {
-    padding: 2px 0 0 0;
-    font-size: 10pt;
-    color: rgba(255,255,255,0.96);
-}
-
-.quicksearch-ai-message-actions {
-    spacing: 5px;
-}
-
-.quicksearch-ai-action {
-    padding: 3px 7px;
-    border-radius: 999px;
-    background-color: rgba(255,255,255,0.06);
-}
-
-.quicksearch-ai-action:hover {
-    background-color: rgba(255,255,255,0.14);
-}
-
-.quicksearch-ai-action-label {
-    font-size: 8.5pt;
-    color: rgba(220,220,220,0.95);
-}
-
-.quicksearch-ai-composer {
-    spacing: 7px;
-    padding: 7px 0 7px 0;
-}
-
-.quicksearch-ai-followup-entry {
-    padding: 8px 11px;
+.quicksearch-ai-composer-entry {
+    padding: 6px 12px;
     font-size: 11pt;
-    color: rgba(255,255,255,0.96);
-    background-color: rgba(36,39,46,0.97);
-    border: 1px solid rgba(255,255,255,0.11);
-    border-radius: 20px;
-}
-
-.quicksearch-ai-followup-send {
-    padding: 7px 13px;
+    color: rgba(255, 255, 255, 0.95);
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 999px;
-    border: 1px solid rgba(255,255,255,0.12);
-    background-color: rgba(255,255,255,0.08);
+    caret-color: rgba(255, 255, 255, 0.90);
+    caret-size: 1px;
+    selected-color: rgba(0, 0, 0, 0.85);
+    selection-background-color: rgba(255, 255, 255, 0.85);
 }
 
-.quicksearch-ai-followup-send:hover {
-    background-color: rgba(255,255,255,0.15);
+.quicksearch-ai-send {
+    padding: 6px 18px;
+    border-radius: 999px;
+    border: 1px solid rgba(120, 180, 255, 0.35);
+    background-color: rgba(120, 180, 255, 0.18);
 }
 
-.quicksearch-ai-followup-send-label {
-    font-size: 9pt;
-    color: rgba(255,255,255,0.95);
+.quicksearch-ai-send-label {
+    font-size: 10pt;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.95);
+}
+
+.quicksearch-ai-send:hover {
+    background-color: rgba(120, 180, 255, 0.32);
+    border-color: rgba(120, 180, 255, 0.5);
+}
+
+.quicksearch-ai-send-disabled {
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.06);
 }
