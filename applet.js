@@ -1276,33 +1276,29 @@ class QuickSearchApplet extends Applet.IconApplet {
             if (!msg) continue;
             if (msg.role === 'user') {
                 try {
-                    // Phase 9 §3/§4/§5/§7: user messages are lightweight rows — subtle
-                    // background, small icon-only Edit/Resend actions on the right. Only
-                    // the message currently being edited gets a light highlight.
-                    const row = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-user-block" });
+                    // ChatGPT-style message: content first, then a small utility action
+                    // row BELOW it ([copy] [edit] [resend]) — never a big right-side
+                    // cluster inside the card. The message itself stays minimal/light.
+                    const block = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-user-block" });
                     const editing = this._aiEditId === msg.id;
-                    if (editing) try { row.add_style_class_name("quicksearch-ai-user-editing"); } catch (e) {}
-                    const textWrap = new St.BoxLayout({ vertical: true });
+                    if (editing) try { block.add_style_class_name("quicksearch-ai-user-editing"); } catch (e) {}
                     const lbl = new St.Label({ text: _("You") + ": " + String(msg.content || ''), style_class: "quicksearch-ai-user" });
                     try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
-                    textWrap.add(lbl);
-                    row.add(textWrap, { expand: true });
-                    const actions = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-msg-actions" });
+                    block.add(lbl);
                     const uid = msg.id;
                     // tooltips only on stable (non-streaming) renders — buttons are
                     // recreated on every delta and tooltips would otherwise leak
                     const tipBucket = (!this._aiLoading && !this._aiStreaming) ? this._aiMsgTooltips : null;
-                    const tipEdit = tipBucket ? _("Edit message") : '';
-                    const tipResend = tipBucket ? _("Resend message") : '';
-                    actions.add(this._buildIconActionButton(["document-edit-symbolic", "edit-symbolic"], tipEdit, "quicksearch-ai-action-icon-btn", () => {
+                    const actionsRow = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-msg-actions" });
+                    actionsRow.add(this._buildIconActionButton(["document-edit-symbolic", "edit-symbolic"], tipBucket ? _("Edit message") : '', "quicksearch-ai-action-icon-btn", () => {
                         this._beginEditUserMessage(uid);
                     }, tipBucket));
-                    actions.add(this._buildIconActionButton(["view-refresh-symbolic", "reload-symbolic"], tipResend, "quicksearch-ai-action-icon-btn", () => {
+                    actionsRow.add(this._buildIconActionButton(["view-refresh-symbolic", "reload-symbolic"], tipBucket ? _("Resend message") : '', "quicksearch-ai-action-icon-btn", () => {
                         this._resendUserMessage(uid);
                     }, tipBucket));
-                    row.add(actions);
-                    ov.resultsBox.add_child(row);
-                    if (this._aiMsgActors) this._aiMsgActors[uid] = row;
+                    block.add(actionsRow);
+                    ov.resultsBox.add_child(block);
+                    if (this._aiMsgActors) this._aiMsgActors[uid] = block;
                 } catch (e) {}
             } else if (msg.role === 'assistant') {
                 if (msg.status === 'streaming') {
