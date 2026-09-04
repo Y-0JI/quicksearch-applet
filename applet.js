@@ -31,6 +31,8 @@ let aiFactoryMod = null;
 try { aiFactoryMod = require('./ai/aiFactory.js'); } catch (e) {}
 let convMod = null;
 try { convMod = require('./ai/conversationState.js'); } catch (e) {}
+let mdMod = null;
+try { mdMod = require('./ai/markdownRenderer.js'); } catch (e) {}
 
 const UUID = "quicksearch@yoji";
 
@@ -1525,6 +1527,70 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) {}
     }
 
+    // Render an assistant message's raw markdown into a SAFE vertical stack of St.Labels
+    // (one label per block: paragraph / list / code). AI output is UNTRUSTED — only our own
+    // <b>/<i> Pango tags are emitted by ai/markdownRenderer (all other text escaped), and the
+    // markup goes through clutter_text.set_markup(), never innerHTML. Returns null for empty
+    // content; on any failure it degrades to a single plain label (pre-markdown behaviour).
+    _setLabelMarkupSafe(lbl, markup) {
+        try {
+            const ct = lbl.get_clutter_text();
+            if (!ct) return false;
+            if (typeof ct.set_markup === 'function') { ct.set_markup(markup); return true; }
+            // older St/Clutter variants: enable the markup property then assign text
+            try { ct.use_markup = true; ct.text = markup; return ct.use_markup === true; } catch (e2) {}
+            return false;
+        } catch (e) { return false; }
+    }
+
+    _buildAiAnswerActor(content) {
+        try {
+            const text = String(content || '');
+            if (!text) return null;
+            let blocks = null;
+            if (mdMod && typeof mdMod.parseMarkdownBlocks === 'function') {
+                try { blocks = mdMod.parseMarkdownBlocks(text); } catch (e) { blocks = null; }
+            }
+            const box = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-answer-md" });
+            const arr = (blocks && blocks.length) ? blocks :
+                [{ kind: 'paragraph', lines: text.split('\n').map(l => ({ spans: [{ style: 'plain', text: l }] })) }];
+            for (const block of arr) {
+                const cls = block.kind === 'list' ? "quicksearch-ai-md-list" :
+                    (block.kind === 'code' ? "quicksearch-ai-md-code" : "quicksearch-ai-md-text");
+                const lbl = new St.Label({ text: '', style_class: cls });
+                try {
+                    const ct = lbl.get_clutter_text();
+                    if (ct) {
+                        ct.set_line_wrap(true);
+                        if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
+                    }
+                } catch (e) {}
+                let ok = false;
+                try {
+                    const markup = (mdMod && typeof mdMod.blockToMarkup === 'function') ? mdMod.blockToMarkup(block) : null;
+                    if (markup != null) ok = this._setLabelMarkupSafe(lbl, markup);
+                } catch (e) { ok = false; }
+                if (!ok) {
+                    // plain fallback — no markup, markers stripped, zero injection surface
+                    let plain = String(content || '');
+                    try {
+                        if (mdMod && typeof mdMod.blockToPlainText === 'function') plain = mdMod.blockToPlainText(block);
+                    } catch (e) {}
+                    try { lbl.set_text(plain); } catch (e2) { try { lbl.text = plain; } catch (e3) {} }
+                }
+                box.add_child(lbl);
+            }
+            return box;
+        } catch (e) {
+            // last resort: single plain label exactly like the pre-markdown renderer
+            try {
+                const lbl = new St.Label({ text: String(content || ''), style_class: "quicksearch-ai-answer" });
+                try { lbl.get_clutter_text().set_line_wrap(true); } catch (e2) {}
+                return lbl;
+            } catch (e3) { return null; }
+        }
+    }
+
     _renderAIState() {
         const ov = this._overlay;
         if (!ov || !ov.resultsBox) return;
@@ -1590,13 +1656,8 @@ class QuickSearchApplet extends Applet.IconApplet {
                 if (msg.status === 'streaming') {
                     if (msg.content) {
                         try {
-                            const lbl = new St.Label({ text: String(msg.content), style_class: "quicksearch-ai-answer" });
-                            try {
-                                const ct = lbl.get_clutter_text();
-                                ct.set_line_wrap(true);
-                                if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
-                            } catch (e) {}
-                            ov.resultsBox.add_child(lbl);
+                            const actor = this._buildAiAnswerActor(String(msg.content));
+                            if (actor) ov.resultsBox.add_child(actor);
                         } catch (e) {}
                     } else {
                         try {
@@ -1607,13 +1668,8 @@ class QuickSearchApplet extends Applet.IconApplet {
                     }
                 } else if (msg.status === 'complete') {
                     try {
-                        const lbl = new St.Label({ text: String(msg.content || ''), style_class: "quicksearch-ai-answer" });
-                        try {
-                            const ct = lbl.get_clutter_text();
-                            ct.set_line_wrap(true);
-                            if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
-                        } catch (e) {}
-                        ov.resultsBox.add_child(lbl);
+                        const actor = this._buildAiAnswerActor(String(msg.content || ''));
+                        if (actor) ov.resultsBox.add_child(actor);
                     } catch (e) {}
                     if (msg.truncated) {
                         try {
@@ -1629,13 +1685,8 @@ class QuickSearchApplet extends Applet.IconApplet {
                     // §8: partial content remains visible, status shown, request inactive
                     if (msg.content) {
                         try {
-                            const lbl = new St.Label({ text: String(msg.content), style_class: "quicksearch-ai-answer" });
-                            try {
-                                const ct = lbl.get_clutter_text();
-                                ct.set_line_wrap(true);
-                                if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
-                            } catch (e) {}
-                            ov.resultsBox.add_child(lbl);
+                            const actor = this._buildAiAnswerActor(String(msg.content));
+                            if (actor) ov.resultsBox.add_child(actor);
                         } catch (e) {}
                     }
                     try {
@@ -1648,13 +1699,8 @@ class QuickSearchApplet extends Applet.IconApplet {
                     const errText = diagOn ? this._buildAiDiagnosticText(msg.error) : _("Unable to get an AI response.");
                     if (msg.content) {
                         try {
-                            const lbl = new St.Label({ text: String(msg.content), style_class: "quicksearch-ai-answer" });
-                            try {
-                                const ct = lbl.get_clutter_text();
-                                ct.set_line_wrap(true);
-                                if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
-                            } catch (e) {}
-                            ov.resultsBox.add_child(lbl);
+                            const actor = this._buildAiAnswerActor(String(msg.content));
+                            if (actor) ov.resultsBox.add_child(actor);
                         } catch (e) {}
                     }
                     try {

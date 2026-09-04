@@ -373,3 +373,20 @@
     font-style: italic;
     color: rgba(255, 220, 120, 0.90);
 }
+
+/* AI answer markdown rendering — safe St.Label stack (presentation only) */
+.quicksearch-ai-answer-md {
+    padding: 10px 8px;
+    spacing: 6px;
+}
+.quicksearch-ai-md-text,
+.quicksearch-ai-md-list,
+.quicksearch-ai-md-code {
+    font-size: 10pt;
+}
+.quicksearch-ai-md-list {
+    padding-left: 10px;
+}
+.quicksearch-ai-md-code {
+    font-family: monospace;
+}
