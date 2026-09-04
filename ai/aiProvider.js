@@ -5,7 +5,11 @@ function normalizeResult(raw) {
     if (!raw || typeof raw !== 'object') return { type: 'error', code: 'invalid_response', message: 'Invalid AI response' };
     if (raw.type === 'answer') {
         if (typeof raw.text !== 'string') return { type: 'error', code: 'invalid_response', message: 'Invalid AI response' };
-        return { type: 'answer', text: raw.text };
+        const out = { type: 'answer', text: raw.text };
+        // preserve completion metadata (finishReason/truncated) so mock parity matches real providers
+        if (typeof raw.finishReason === 'string') out.finishReason = raw.finishReason;
+        if (raw.truncated) out.truncated = !!raw.truncated;
+        return out;
     }
     if (raw.type === 'tool_call') {
         if (raw.tool !== ALLOWED_TOOL) return { type: 'error', code: 'unsupported_tool', message: 'Unsupported AI tool request' };
@@ -155,9 +159,12 @@ function createMockStreamingAiProvider(opts) {
                 // Fall through to streaming handler but use the answer text as chunks
                 // This ensures direct answer via streaming path still works with legacy handler
                 const text = requestResult.text || '';
+                const res = { text, sources: [], grounded: false };
+                if (typeof requestResult.finishReason === 'string') res.finishReason = requestResult.finishReason;
+                if (requestResult.truncated) res.truncated = !!requestResult.truncated;
                 onEvent({ type: 'start' });
                 if (text) onEvent({ type: 'delta', text: text });
-                onEvent({ type: 'complete', result: { text, sources: [], grounded: false } });
+                onEvent({ type: 'complete', result: res });
                 return;
             }
             // If requestHandler returned nothing conclusive, fall through to normal handler
@@ -191,6 +198,8 @@ function createMockStreamingAiProvider(opts) {
             handler(req, (evt) => {
                 if (evt.type === 'complete' && evt.result) {
                     result = { type: 'answer', text: evt.result.text };
+                    if (typeof evt.result.finishReason === 'string') result.finishReason = evt.result.finishReason;
+                    if (evt.result.truncated) result.truncated = !!evt.result.truncated;
                 } else if (evt.type === 'tool_call') {
                     result = { type: 'tool_call', tool: evt.tool, arguments: evt.arguments };
                 } else if (evt.type === 'error' && evt.error) {

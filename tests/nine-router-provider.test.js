@@ -491,6 +491,48 @@ test('gate: one-shot completion — cancel wins over late timeout', async () => 
     assert.equal(codes.length, 1, 'late ignored after cancel+timeout race');
 });
 
+// ── P8 output token propagation ──
+test('max_tokens: default 4096 reaches request body', async () => {
+    const cap = {};
+    const provider = createNineRouterProvider({
+        baseUrl: 'http://localhost:3000', apiKey: FAKE_KEY, model: FAKE_MODEL,
+        httpFetch: makeFetchMock({ bodyText: okBody('x'), capture: cap })
+    });
+    await requestAsync(provider, { query: 'q' });
+    const body = JSON.parse(cap.body);
+    assert.strictEqual(body.max_tokens, 4096, 'default output tokens');
+});
+
+test('max_tokens: configured value reaches request body', async () => {
+    const cap = {};
+    const provider = createNineRouterProvider({
+        baseUrl: 'http://localhost:3000', apiKey: FAKE_KEY, model: FAKE_MODEL, maxOutputTokens: 1024,
+        httpFetch: makeFetchMock({ bodyText: okBody('x'), capture: cap })
+    });
+    await requestAsync(provider, { query: 'q' });
+    const body = JSON.parse(cap.body);
+    assert.strictEqual(body.max_tokens, 1024);
+});
+
+test('max_tokens: clamped into [512, 16384]', async () => {
+    const cap = {};
+    const provider = createNineRouterProvider({
+        baseUrl: 'http://localhost:3000', apiKey: FAKE_KEY, model: FAKE_MODEL, maxOutputTokens: 99,
+        httpFetch: makeFetchMock({ bodyText: okBody('x'), capture: cap })
+    });
+    await requestAsync(provider, { query: 'q' });
+    let body = JSON.parse(cap.body);
+    assert.strictEqual(body.max_tokens, 512, 'low clamped up');
+    const cap2 = {};
+    const provider2 = createNineRouterProvider({
+        baseUrl: 'http://localhost:3000', apiKey: FAKE_KEY, model: FAKE_MODEL, maxOutputTokens: 90000,
+        httpFetch: makeFetchMock({ bodyText: okBody('x'), capture: cap2 })
+    });
+    await requestAsync(provider2, { query: 'q' });
+    body = JSON.parse(cap2.body);
+    assert.strictEqual(body.max_tokens, 16384, 'high clamped down');
+});
+
 // ── buildRequestBody shape ──
 test('buildRequestBody: contains model, messages, stream false', () => {
     const json = buildRequestBody('m', 'sys', 'user q');

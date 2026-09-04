@@ -67,6 +67,28 @@ function makeStreamFetchHttpError({ status, bodyText, capture }) {
     };
 }
 
+// ── P8 output token propagation (streaming body) ──
+test('streaming: max_tokens default + configured value reach the request body', async () => {
+    const capture = {};
+    const provider = createNineRouterProvider({
+        baseUrl: 'http://localhost:3000', apiKey: FAKE_KEY, model: FAKE_MODEL,
+        httpStreamFetch: makeStreamFetchSuccess([sseDelta('hi'), sseDone()], capture)
+    });
+    await collectStream(provider, { query: 'q' });
+    const body = JSON.parse(capture.opts.body);
+    assert.strictEqual(body.stream, true);
+    assert.strictEqual(body.max_tokens, 4096, 'default output tokens on streaming body');
+
+    const capture2 = {};
+    const provider2 = createNineRouterProvider({
+        baseUrl: 'http://localhost:3000', apiKey: FAKE_KEY, model: FAKE_MODEL, maxOutputTokens: 768,
+        httpStreamFetch: makeStreamFetchSuccess([sseDelta('hi'), sseDone()], capture2)
+    });
+    await collectStream(provider2, { query: 'q' });
+    const body2 = JSON.parse(capture2.opts.body);
+    assert.strictEqual(body2.max_tokens, 768, 'configured max_tokens on streaming body');
+});
+
 // ── success: must enter parser, deliver deltas before complete ──
 test('streaming transport: success 2xx enters SSE parser and delivers delta+complete', async () => {
     const provider = createNineRouterProvider({

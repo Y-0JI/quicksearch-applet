@@ -233,6 +233,16 @@ function createAISearchEngine(deps) {
         if (callbacks && typeof callbacks.onDone === 'function') return callbacks.onDone(null, payload);
     }
 
+    // Normalize a provider answer's completion metadata (finishReason + truncated) into the
+    // engine meta shape, or null when absent. Guarantees finish_reason='length' surfaces as
+    // truncated end-to-end even on non-streaming answers and fallback paths.
+    function _metaOf(r) {
+        if (!r || typeof r !== 'object') return null;
+        const fr = typeof r.finishReason === 'string' ? r.finishReason : null;
+        const trunc = !!(r.truncated) || fr === 'length';
+        return (fr || trunc) ? { finishReason: fr || null, truncated: !!trunc } : null;
+    }
+
     function _deliverError(myGen, cancellable, callbacks, code, message, extra) {
         if (_stale(myGen) || _isCancelled(cancellable) || destroyed) return;
         if (code === 'cancelled') return;
@@ -326,12 +336,12 @@ function createAISearchEngine(deps) {
                                     return _deliverError(myGen, myCancellable, callbacks, n2.code, n2.message, { stage: n2.stage || wErr.stage || wErr._stage || 'web_search_request', status: n2.status || wErr.status });
                                 }
                                 if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources)) {
-                                    return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
+                                    return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
                                 }
                                 const sources = wResults.sources;
                                 _logWebSearchSources((wResults && wResults.query) || q, sources);
                                 if (sources.length === 0) {
-                                    return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
+                                    return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
                                 }
                                 let _groundingContextObj = null;
                                 if (Gt && typeof Gt.createGroundingContext === 'function') {
@@ -345,23 +355,23 @@ function createAISearchEngine(deps) {
                                     if (err2) {
                                         const n3 = _normalizeProviderError(err2);
                                         if (n3.code === 'cancelled') return;
-                                        return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], res2 && res2.truncated ? { finishReason: res2.finishReason, truncated: true } : null);
+                                        return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
                                     }
                                     if (!res2 || res2.type !== 'answer' || typeof res2.text !== 'string' || !String(res2.text).trim()) {
-                                        return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], res2 && res2.truncated ? { finishReason: res2.finishReason, truncated: true } : null);
+                                        return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
                                     }
-                                    return _deliverAnswer(myGen, myCancellable, callbacks, res2.text, sources, res2.truncated || res2.finishReason ? { finishReason: res2.finishReason || null, truncated: !!res2.truncated } : null);
+                                    return _deliverAnswer(myGen, myCancellable, callbacks, res2.text, sources, _metaOf(res2));
                                 });
                                 } catch (e) {
-                                    return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
+                                    return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
                                 }
                             });
                         } catch (e) {
-                            return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
+                            return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
                         }
                         return;
                     }
-                    return _deliverAnswer(myGen, myCancellable, callbacks, res.text, []);
+                    return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
                 }
                     if (res.type === 'tool_call') {
                     try { if (typeof global !== 'undefined' && global.log) global.log("[QuickSearch AI] Received tool call: " + String(res.tool||'web_search') + " query=" + String(res.arguments&&res.arguments.query||'').slice(0,80)); } catch(e){}
@@ -432,7 +442,7 @@ function createAISearchEngine(deps) {
                                     if (!res2 || res2.type !== 'answer' || typeof res2.text !== 'string' || !String(res2.text).trim()) {
                                         return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
                                     }
-                                    return _deliverAnswer(myGen, myCancellable, callbacks, res2.text, sources);
+                                    return _deliverAnswer(myGen, myCancellable, callbacks, res2.text, sources, _metaOf(res2));
                                 });
                             } catch (e) {
                                 const n = _normalizeProviderError(e);
