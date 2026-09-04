@@ -1504,4 +1504,4 @@ function createNineRouterProvider(opts) {
     return { request, streamRequest, destroy, _buildUrl: buildChatCompletionsUrl, maxOutputTokens };
 }
 
-module.exports = { createNineRouterProvider, NineRouterProvider: createNineRouterProvider, buildChatCompletionsUrl, buildRequestBody, parseResponseText, DEFAULT_TIMEOUT_MS, DEFAULT_MAX_OUTPUT_TOKENS, normalizeMaxOutputTokens };
+module.exports = { createNineRouterProvider, NineRouterProvider: createNineRouterProvider, buildChatCompletionsUrl, buildRequestBody, buildChatMessages, parseResponseText, DEFAULT_TIMEOUT_MS, DEFAULT_MAX_OUTPUT_TOKENS, normalizeMaxOutputTokens };

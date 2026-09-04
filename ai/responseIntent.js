@@ -10,7 +10,15 @@
 //          Both EN and ID keyword sets are supported.
 
 const _COMPLETENESS_RE = /(semua|seluruh|lengkap|lengkapnya|daftar\s*lengkap|skuad\s*lengkap|semua\s*pemain|seluruh\s*daftar|siapa\s*saja|full\s*(?:list|squad)|list\s*all|complete\s*list|all\s*players|\ball\b|\bevery\b)/i;
-const _LIVE_RE = /(harga|jadwal|berita|terbaru|hari\s*ini|minggu\s*ini|besok|kemarin|sekarang|live|skor|hasil|klasemen|cuaca|kurs|saham|bitcoin|crypto|update|latest|today|tomorrow|schedule|price|news|score|weather|prediksi|perkiraan)/i;
+// Live intent precision (AI Pipeline V3 P1): split into STRONG live signals (time/recency
+// markers and explicit live words, enough on their own) and LIVE SUBJECTS (things that
+// inherently ask for an actual/current value: price, score, schedule, news, weather, ...).
+// Ambiguous words like "prediksi/perkiraan/update" are NOT live keywords at all: they never
+// trigger live on their own and only ever matter when a live subject is already present.
+// This kills false positives like "Prediksi masa depan AI" or "Perkiraan ukuran file" while
+// keeping real current queries ("harga bmri", "jadwal chelsea?") live.
+const _STRONG_LIVE_RE = /(hari\s*ini|minggu\s*ini|sekarang|saat\s*ini|terbaru|terkini|\blive\b|\blatest\b|\btoday\b|\bcurrent\b|right\s*now|real-?time|besok|kemarin)/i;
+const _LIVE_SUBJECT_RE = /(harga|saham|kurs|cuaca|skor|klasemen|jadwal|berita|hasil\s*pertandingan|schedule|price|score|weather|news|stock|forex)/i;
 const _DATA_RE = /(berapa|statistik|spesifikasi|angka|jumlah|total|ukuran|data|persentase|rate|specs|specification|statistics)/i;
 const _LIST_RE = /(daftar|list|pemain|skuad|anggota|items|checklist|semua\s*pemain|nama\s*[-–]|menu)/i;
 
@@ -49,6 +57,23 @@ function _isExplanation(s) {
     return false;
 }
 
+// Narrow definition-style check used ONLY to suppress live for vocabulary questions such as
+// "Apa itu harga pokok penjualan?" (asks what a term means, not for a current value). This is
+// deliberately much narrower than _isExplanation so real current queries like "Kapan jadwal
+// chelsea?" (kapan + jadwal) still count as live.
+function _isDefinitionQuery(s) {
+    return /(apa\s*itu|apa\s*yang\s*dimaksud|definisi\s|pengertian\s|what\s+is|define\s+|explain\s+what|jelaskan\s+apa)/i.test(s);
+}
+
+// STRONG signal alone (or a live subject) -> live; prediction/estimate/update words NEVER
+// trigger live on their own. Definition queries mentioning a subject ("apa itu harga …") are
+// vocabulary, not live.
+function _isIntentLive(s) {
+    if (_isDefinitionQuery(s)) return false;
+    if (_STRONG_LIVE_RE.test(s)) return true;
+    return _LIVE_SUBJECT_RE.test(s);
+}
+
 // detectResponseIntent(query) -> { primary, flags:{completeness,live}, secondary:[] }
 function detectResponseIntent(query) {
     const s = String(query || '').trim();
@@ -61,7 +86,7 @@ function detectResponseIntent(query) {
     if (!normalized) return out;
 
     if (_COMPLETENESS_RE.test(normalized)) out.flags.completeness = true;
-    if (_LIVE_RE.test(normalized)) out.flags.live = true;
+    out.flags.live = _isIntentLive(normalized);
 
     if (_isComparison(normalized)) {
         out.primary = 'comparison';
