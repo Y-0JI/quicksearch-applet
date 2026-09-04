@@ -191,6 +191,89 @@ test('engine streaming: provider error after deltas -> onError, no onComplete', 
 });
 
 // ── P2: nineRouter non-streaming parseResponseText keeps finish_reason ──
+// ── P5 grounded second-leg edge cases: fallback keeps FIRST-response metadata ──
+function fallbackProvider(firstAnswer) {
+    // non-streaming provider: call1 returns a plain answer (live query), call2 (grounded
+    // second leg) always fails -> engine falls back to the first answer + its metadata.
+    return createMockAiProvider({
+        handler: (payload, cb) => {
+            if (payload && payload.groundingContext) {
+                const e = new Error('second leg failed');
+                e.code = 'provider_error';
+                return cb(e);
+            }
+            return cb(null, firstAnswer);
+        }
+    });
+}
+
+function liveAnswer(text, meta) {
+    const r = { type: 'answer', text };
+    if (meta) { r.finishReason = meta.finishReason; r.truncated = !!meta.truncated; }
+    return r;
+}
+
+test('P5-CASE-C: first truncated + grounded second leg fails -> fallback stays truncated', async () => {
+    const engine = createAISearchEngine({
+        provider: fallbackProvider(liveAnswer('first potong', { finishReason: 'length', truncated: true })),
+        webSearchTool: makeWebTool(),
+        enableGrounding: true
+    });
+    const got = await new Promise((resolve) => {
+        engine.search('harga bitcoin terbaru', { onAnswer: d => resolve(d), onError: () => resolve(null) });
+    });
+    assert.ok(got, 'fallback delivered');
+    assert.strictEqual(got.text, 'first potong');
+    assert.strictEqual(got.truncated, true, 'fallback content came from the truncated first response');
+    assert.strictEqual(got.finishReason, 'length');
+});
+
+test('P5-CASE-D: first normal + grounded second leg fails -> fallback stays untruncated', async () => {
+    const engine = createAISearchEngine({
+        provider: fallbackProvider(liveAnswer('first normal')),
+        webSearchTool: makeWebTool(),
+        enableGrounding: true
+    });
+    const got = await new Promise((resolve) => {
+        engine.search('harga bitcoin terbaru', { onAnswer: d => resolve(d), onError: () => resolve(null) });
+    });
+    assert.ok(got, 'fallback delivered');
+    assert.strictEqual(got.text, 'first normal');
+    assert.strictEqual(got.truncated, false, 'normal first response must not be flagged truncated');
+    assert.ok(!got.finishReason, 'no finishReason on normal fallback');
+});
+
+test('P5-CASE-A/B: grounded second-leg answer owns its own metadata (success path)', async () => {
+    // CASE A: second synthesis normal -> truncated false, no leak from anywhere
+    const calls = [];
+    const provA = createMockAiProvider({
+        responses: [
+            { type: 'tool_call', tool: 'web_search', arguments: { query: 'chelsea' } },
+            { type: 'answer', text: 'synthesis normal' }
+        ]
+    });
+    const engA = createAISearchEngine({ provider: provA, webSearchTool: makeWebTool(), enableGrounding: true });
+    const gotA = await new Promise((resolve) => {
+        engA.search('q', { onAnswer: d => resolve(d), onError: () => resolve(null) });
+    });
+    assert.strictEqual(gotA.truncated, false, 'normal synthesis not truncated');
+    // CASE B: second synthesis truncated -> truncated true, finishReason from second response
+    const provB = createMockAiProvider({
+        responses: [
+            { type: 'tool_call', tool: 'web_search', arguments: { query: 'chelsea' } },
+            { type: 'answer', text: 'synthesis potong', finishReason: 'length', truncated: true }
+        ]
+    });
+    const engB = createAISearchEngine({ provider: provB, webSearchTool: makeWebTool(), enableGrounding: true });
+    const gotB = await new Promise((resolve) => {
+        engB.search('q', { onAnswer: d => resolve(d), onError: () => resolve(null) });
+    });
+    assert.strictEqual(gotB.text, 'synthesis potong');
+    assert.strictEqual(gotB.truncated, true);
+    assert.strictEqual(gotB.finishReason, 'length');
+    void calls;
+});
+
 test('nineRouter non-streaming: length finish_reason parsed to answer meta', async () => {
     const httpFetch = (url, opts) => Promise.resolve({
         status: 200,
