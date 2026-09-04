@@ -68,9 +68,10 @@ test('engine grounded answer: markers removed from text, sources + count intact'
             { title: 'Source B', url: 'https://example.com/b', snippet: 'snippet b' }
         ])
     });
+    // P3 web-first: live query ('harga bmri') searches FIRST engine-side; the provider only
+    // receives the single grounded payload and answers directly (no tool_call first leg).
     const provider = createMockAiProvider({
         responses: [
-            { type: 'tool_call', tool: 'web_search', arguments: { query: 'harga bmri' } },
             { type: 'answer', text: 'Harga saham BMRI hari ini berada di sekitar Rp4.450 [1]. Pergerakan tipis dibanding penutupan sebelumnya [2].' }
         ]
     });
@@ -140,27 +141,25 @@ test('engine streaming grounded: cleaned deltas and final text, sources kept', a
     assert.ok(Array.isArray(got.sources) && got.sources.length === 2, 'grounded sources kept');
 });
 
-// ── P5 grounded fallback (first answer re-used): fallback text never cleaned without evidence ──
-test('engine grounded fallback with first answer: ungrounded fallback text kept as-is', async () => {
+// ── P3 (AI Pipeline V3): no ungrounded first-answer fallback for live queries anymore ──
+test('engine live query: grounded AI failure surfaces as error (no hidden draft fallback)', async () => {
     const webTool = createMockWebSearchTool({
         handler: (query, cancellable, cb) => cb(null, [{ title: 'T', url: 'https://example.com/t', snippet: 's' }])
     });
     const provider = createMockAiProvider({
         handler: (payload, cb) => {
-            if (payload && payload.groundingContext) {
-                const e = new Error('second leg failed');
-                e.code = 'provider_error';
-                return cb(e);
-            }
-            return cb(null, { type: 'answer', text: 'perkiraan awal [1] belum final' });
+            const e = new Error('grounded leg failed');
+            e.code = 'provider_error';
+            return cb(e);
         }
     });
     const engine = createAISearchEngine({ provider, webSearchTool: webTool, enableGrounding: true });
+    let errCode = null;
     const got = await new Promise((resolve) => {
-        engine.search('harga bitcoin terbaru', { onAnswer: d => resolve(d), onError: () => resolve(null) });
+        engine.search('harga bitcoin terbaru', { onAnswer: d => resolve(d), onError: (e) => { errCode = e && e.code; resolve(null); } });
     });
-    assert.ok(got, 'fallback delivered');
-    assert.strictEqual(got.text, 'perkiraan awal [1] belum final');
+    assert.strictEqual(got, null, 'no ungrounded draft answer delivered on grounded failure');
+    assert.strictEqual(errCode, 'provider_error', 'existing error policy surfaces');
 });
 
 // ── P14: sources stay isolated per assistant message (A=5, B=3, A unchanged) ──

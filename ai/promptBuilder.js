@@ -237,12 +237,12 @@ const MAX_HISTORY_MSG_LEN = 2000;
 // the current request always stays the highest priority.
 const HISTORY_CHAR_BUDGET = 12000;
 
-function _totalChars(arr) {
-    let n = 0;
-    for (const m of arr) n += m.content.length + 1;
-    return n;
-}
-
+// P1 (AI Pipeline V3): BOTH limits always apply. A small message count must NEVER bypass the
+// char budget (the old `if (out.length <= n) return out;` early return did exactly that). We
+// walk the newest turns backward, adding WHOLE user/assistant pairs while both the message
+// count AND the total char budget allow, then restore chronological order. A pair is added
+// atomically so it is never split in half, and the current user question is not part of the
+// history budget (it is sent separately by the caller).
 function buildHistoryMessages(history, limit) {
     const n = (typeof limit === 'number' && limit > 0) ? limit : DEFAULT_HISTORY_LIMIT;
     if (!Array.isArray(history) || history.length === 0) return [];
@@ -255,22 +255,31 @@ function buildHistoryMessages(history, limit) {
         if (!content) continue;
         out.push({ role, content: content.slice(0, MAX_HISTORY_MSG_LEN) });
     }
-    if (out.length <= n) return out;
-    let start = out.length - n;
-    // never leave an orphan leading assistant turn (its user message was trimmed away)
-    while (start < out.length && out[start] && out[start].role === 'assistant') start++;
-    if (start >= out.length) start = out.length - 1;
-    let window = out.slice(start);
-    // P6 char budget: drop whole leading PAIRS (user+assistant) until under budget — never a
-    // half pair. If only one message remains it is kept even when oversized (caller caps).
-    while (window.length > 1 && _totalChars(window) > HISTORY_CHAR_BUDGET) {
-        if (window[0] && window[0].role === 'user' && window[1]) {
-            window = window.slice(2);
-        } else {
-            window = window.slice(1);
+    const kept = [];
+    let chars = 0;
+    for (let i = out.length - 1; i >= 0; ) {
+        const m = out[i];
+        if (m.role === 'assistant') {
+            // assistant response pairs with the user message directly before it (if present)
+            const partner = (i - 1 >= 0 && out[i - 1].role === 'user') ? out[i - 1] : null;
+            const msgCount = partner ? 2 : 1;
+            const pairChars = (partner ? partner.content.length + 1 : 0) + m.content.length + 1;
+            if (kept.length + msgCount > n || chars + pairChars > HISTORY_CHAR_BUDGET) break;
+            // unshift newer (assistant) BEFORE older (user) so the final order is user -> assistant
+            kept.unshift(m);
+            chars += m.content.length + 1;
+            if (partner) { kept.unshift(partner); chars += partner.content.length + 1; }
+            i -= msgCount;
+            continue;
         }
+        // lone user turn (pending question, no assistant yet)
+        const c = m.content.length + 1;
+        if (kept.length + 1 > n || chars + c > HISTORY_CHAR_BUDGET) break;
+        kept.unshift(m);
+        chars += c;
+        i -= 1;
     }
-    return window;
+    return kept;
 }
 
 module.exports = { buildSystemPrompt, buildGroundingContext, buildUserPrompt, buildHistoryMessages, buildRuntimeContext, buildExpandedGroundingContext, SYSTEM_PROMPT, CORE_SYSTEM_PROMPT, INTENT_GUIDANCE, COMPLETENESS_GUIDANCE, GROUNDED_GUIDANCE, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_MSG_LEN, HISTORY_CHAR_BUDGET };

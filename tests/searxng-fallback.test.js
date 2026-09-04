@@ -105,8 +105,9 @@ test('6. E2E canonical path: SearXNG HTML -> parser -> SearchResult[] -> tool re
 
     const { createAISearchEngine } = require('../ai/aiSearchEngine.js');
     const { createMockAiProvider } = require('../ai/aiProvider.js');
+    // P3 web-first: live query searches FIRST (engine-side) then ONE grounded AI request — the
+    // provider only ever receives the grounded payload, so it answers directly (no tool_call).
     const prov = createMockAiProvider({ responses: [
-        { type: 'tool_call', tool: 'web_search', arguments: { query: 'cek jadwal chelsea minggu ini' } },
         { type: 'answer', text: 'grounded answer about chelsea' }
     ] });
     const engine = createAISearchEngine({ provider: prov, webSearchTool: tool, enableGrounding: true });
@@ -281,8 +282,9 @@ test('P8 E2E: full canonical path survives without global URL API (bug: parsed>0
         // AI boundary
         const { createAISearchEngine } = require('../ai/aiSearchEngine.js');
         const { createMockAiProvider } = require('../ai/aiProvider.js');
+        // P3 web-first: live query searches engine-side first, so the provider receives the
+        // single grounded payload and answers directly (no tool_call first leg).
         const prov = createMockAiProvider({ responses: [
-            { type: 'tool_call', tool: 'web_search', arguments: { query: 'cek jadwal chelsea minggu ini' } },
             { type: 'answer', text: 'chelsea grounded answer' }
         ] });
         const engine = createAISearchEngine({ provider: prov, webSearchTool: tool, enableGrounding: true });

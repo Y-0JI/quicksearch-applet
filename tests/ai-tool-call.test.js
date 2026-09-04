@@ -68,7 +68,8 @@ test('TEST3 fragmented tool_call arguments via SSE are merged and search called 
     };
     const engine = createAISearchEngine({ provider, webSearchTool: tool, enableGrounding:true });
     let got=null;
-    engine.searchStream('Cek jadwal Chelsea minggu ini', { onComplete: d=> got=d });
+    // non-live query so the (fragmented) tool_call path is exercised — live queries are web-first
+    engine.searchStream('siapa striker chelsea', { onComplete: d=> got=d });
     assert.equal(searchCalls, 1);
     assert.equal(receivedQuery, 'jadwal Chelsea');
     assert.ok(got);

@@ -25,22 +25,18 @@ const ERROR_MESSAGES = {
     cancelled: null
 };
 
-function _isLiveQuery(q) {
-    const s = String(q || '').toLowerCase();
-    const liveKeywords = [
-        'jadwal', 'berita', 'harga', 'terbaru', 'hari ini', 'minggu ini', 'besok', 'kemarin',
-        'sekarang', 'live', 'skor', 'hasil', 'klasemen', 'cuaca', 'kurs', 'saham', 'bitcoin', 'crypto',
-        'update', 'latest', 'today', 'tomorrow', 'schedule', 'price', 'news', 'score', 'weather'
-    ];
-    for (const kw of liveKeywords) if (s.includes(kw)) return true;
-    return false;
+// P2 (AI Pipeline V3): ai/responseIntent.js is the SINGLE source of truth for live/current
+// intent. The engine keeps NO duplicate keyword/regex list — the only signal is the intent
+// classifier's flags.live (same signal used to pick the current-response guidance).
+function _detectIntent(q) {
+    if (responseIntentMod && typeof responseIntentMod.detectResponseIntent === 'function') {
+        try { return responseIntentMod.detectResponseIntent(String(q || '')); } catch (e) { return null; }
+    }
+    return null;
 }
-
-function _shouldFallbackToSearch(q, answerText) {
-    if (!q || !answerText) return false;
-    const t = String(answerText || '').toLowerCase();
-    if (t.includes('web_search') && t.length < 500) return false;
-    return _isLiveQuery(q);
+function _isLiveIntent(q) {
+    const intent = _detectIntent(q);
+    return !!(intent && intent.flags && intent.flags.live === true);
 }
 
 function _isCancelled(c) {
@@ -72,10 +68,7 @@ function _cleanAnswerText(text) {
 // intent of `query` (+ completeness when requested) + concise grounded-evidence rules on the
 // evidence leg. Only the relevant intent guidance is appended — no full rulebook per request.
 function _buildRequestSystemPrompt(promptBuilder, grounded, query) {
-    let intent = null;
-    if (responseIntentMod && typeof responseIntentMod.detectResponseIntent === 'function') {
-        try { intent = responseIntentMod.detectResponseIntent(String(query || '')); } catch (e) { intent = null; }
-    }
+    let intent = _detectIntent(query);
     let base = '';
     try {
         base = promptBuilder.buildSystemPrompt({ intent: intent || undefined, grounded: !!grounded });
@@ -403,6 +396,57 @@ function createAISearchEngine(deps) {
             return p;
         }
 
+        // P3 (AI Pipeline V3): for live/current queries, web search FIRST then ONE grounded AI
+        // generation — no hidden AI draft is ever generated on the successful path. Web/grounded
+        // failures follow the existing error policy (same as the tool_call grounded leg), they
+        // never re-run an ungrounded draft + search + second-generation cycle.
+        if (enableGrounding && _isLiveIntent(q)) {
+            try {
+                const wsRequest = (Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number')
+                    ? { query: q, maxResults: Gt.DEFAULT_MAX_RESULTS }
+                    : { query: q, maxResults: 5 };
+                webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
+                    if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                    if (wErr) {
+                        const n2 = _normalizeWebError(wErr);
+                        if (n2.code === 'cancelled') return;
+                        return _deliverError(myGen, myCancellable, callbacks, n2.code, n2.message, { stage: n2.stage || wErr.stage || wErr._stage || 'web_search_request', status: n2.status || wErr.status });
+                    }
+                    if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources)) {
+                        return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
+                    }
+                    const sources = wResults.sources;
+                    _logWebSearchSources((wResults && wResults.query) || q, sources);
+                    if (sources.length === 0) {
+                        return _deliverError(myGen, myCancellable, callbacks, 'no_results', ERROR_MESSAGES.no_results, { stage: 'web_search_normalize' });
+                    }
+                    _prepareGroundingContext(myGen, myCancellable, q, sources, q, (ctxInfo) => {
+                        if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                        try {
+                            provider.request(_withHistory(_groundedPayload(q, ctxInfo.groundingContext, ctxInfo.groundingContextObj, sources)), myCancellable, (err2, res2) => {
+                                if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                                if (err2) {
+                                    const n3 = _normalizeProviderError(err2);
+                                    if (n3.code === 'cancelled') return;
+                                    return _deliverError(myGen, myCancellable, callbacks, n3.code, n3.message, { stage: n3.stage, status: n3.status, name: n3.name });
+                                }
+                                if (!res2 || res2.type !== 'answer' || typeof res2.text !== 'string' || !String(res2.text).trim()) {
+                                    return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
+                                }
+                                return _deliverAnswer(myGen, myCancellable, callbacks, res2.text, sources, _metaOf(res2));
+                            });
+                        } catch (e) {
+                            const n = _normalizeProviderError(e);
+                            return _deliverError(myGen, myCancellable, callbacks, n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
+                        }
+                    });
+                });
+            } catch (e) {
+                return _deliverError(myGen, myCancellable, callbacks, 'grounding_error', ERROR_MESSAGES.grounding_error);
+            }
+            return;
+        }
+
         try {
             const firstPayload = enableGrounding ? { query: q, systemPrompt, tools: ['web_search'] } : { query: q, systemPrompt };
             provider.request(_withHistory(firstPayload), myCancellable, (err, res) => {
@@ -420,51 +464,6 @@ function createAISearchEngine(deps) {
                         return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
                     }
                     try { if (typeof global !== 'undefined' && global.log) global.log("[QuickSearch AI] Received tool call: none, received content: " + String(res.text||'').slice(0,120)); } catch(e){}
-                    if (enableGrounding && _isLiveQuery(q)) {
-                        try { if (typeof global !== 'undefined' && global.log) global.log("[quicksearch] search_intent live query fallback q=" + q.slice(0,80)); } catch(e){}
-                        try {
-                            const toolQuery = q;
-                            const wsRequest = Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number' ? { query: toolQuery, maxResults: Gt.DEFAULT_MAX_RESULTS } : { query: toolQuery, maxResults: 5 };
-                            webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
-                                if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
-                                if (wErr) {
-                                    const n2 = _normalizeWebError(wErr);
-                                    if (n2.code === 'cancelled') return;
-                                    return _deliverError(myGen, myCancellable, callbacks, n2.code, n2.message, { stage: n2.stage || wErr.stage || wErr._stage || 'web_search_request', status: n2.status || wErr.status });
-                                }
-                                if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources)) {
-                                    return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
-                                }
-                                const sources = wResults.sources;
-                                _logWebSearchSources((wResults && wResults.query) || q, sources);
-                                if (sources.length === 0) {
-                                    return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
-                                }
-                                _prepareGroundingContext(myGen, myCancellable, q, sources, toolQuery, (ctxInfo) => {
-                                    if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
-                                    try {
-                                        provider.request(_withHistory(_groundedPayload(q, ctxInfo.groundingContext, ctxInfo.groundingContextObj, sources)), myCancellable, (err2, res2) => {
-                                    if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
-                                    if (err2) {
-                                        const n3 = _normalizeProviderError(err2);
-                                        if (n3.code === 'cancelled') return;
-                                        return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
-                                    }
-                                    if (!res2 || res2.type !== 'answer' || typeof res2.text !== 'string' || !String(res2.text).trim()) {
-                                        return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
-                                    }
-                                    return _deliverAnswer(myGen, myCancellable, callbacks, res2.text, sources, _metaOf(res2));
-                                });
-                                    } catch (e) {
-                                        return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
-                                    }
-                                });
-                            });
-                        } catch (e) {
-                            return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
-                        }
-                        return;
-                    }
                     return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
                 }
                     if (res.type === 'tool_call') {
@@ -602,11 +601,56 @@ function createAISearchEngine(deps) {
         let groundedSources = null;
         let toolCallPending = false;
         let settled = false;
-        // P9: for clearly live/current queries with grounding enabled, the first (ungrounded)
-        // draft is BUFFERED instead of streamed, so the user never sees a provisional answer
-        // that gets replaced by the grounded synthesis (no flicker / contradictory draft).
-        // If grounding fails, the buffered draft is delivered via the normal fallback path.
-        const liveBuffered = !!enableGrounding && _isLiveQuery(q);
+
+        // P3 (AI Pipeline V3): for live/current queries, WEB SEARCH FIRST then stream ONLY the
+        // grounded synthesis — a first AI draft is never generated on the successful path, so
+        // there is no provisional (possibly contradictory) answer to buffer or replace. Web / no
+        // results / grounded-AI failures follow the existing error policy (same as the tool_call
+        // grounded leg) and never re-run draft + search + second generation.
+        if (enableGrounding && _isLiveIntent(q)) {
+            try {
+                const wsRequest = (Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number')
+                    ? { query: q, maxResults: Gt.DEFAULT_MAX_RESULTS }
+                    : { query: q, maxResults: 5 };
+                webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
+                    if (settled || _staleS() || _isCancelled(myCancellable) || destroyed) return;
+                    if (wErr) {
+                        const n2 = _normalizeWebError(wErr);
+                        if (n2.code === 'cancelled') return;
+                        emitError(n2.code, n2.message, { stage: n2.stage || wErr.stage || wErr._stage || 'web_search_request', status: n2.status || wErr.status });
+                        return;
+                    }
+                    if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources)) {
+                        emitError('invalid_response', ERROR_MESSAGES.invalid_response);
+                        return;
+                    }
+                    const sources = wResults.sources;
+                    _logWebSearchSources((wResults && wResults.query) || q, sources);
+                    if (sources.length === 0) {
+                        emitError('no_results', ERROR_MESSAGES.no_results, { stage: 'web_search_normalize' });
+                        return;
+                    }
+                    groundedSources = sources;
+                    _prepareGroundingContext(myGen, myCancellable, q, sources, q, (ctxInfo) => {
+                        if (settled || _staleS() || _isCancelled(myCancellable) || destroyed) return;
+                        accumulatedText = '';
+                        try {
+                            provider.streamRequest(
+                                _withHistory(_groundedPayload(q, ctxInfo.groundingContext, ctxInfo.groundingContextObj, sources)),
+                                myCancellable,
+                                handleSecondStreamEvent
+                            );
+                        } catch (e) {
+                            const n = _normalizeProviderError(e);
+                            emitError(n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
+                        }
+                    });
+                });
+            } catch (e) {
+                emitError('grounding_error', ERROR_MESSAGES.grounding_error);
+            }
+            return;
+        }
 
         function _staleS() { return myGen !== gen; }
 
@@ -719,8 +763,6 @@ function createAISearchEngine(deps) {
                 if (toolCallPending) return;
                 const chunk = typeof evt.text === 'string' ? evt.text : '';
                 accumulatedText += chunk;
-                // P9: keep live-query first-leg drafts invisible until/unless grounding fails
-                if (liveBuffered) return;
                 if (callbacks && typeof callbacks.onDelta === 'function') callbacks.onDelta(chunk, accumulatedText);
                 return;
             }
@@ -813,42 +855,6 @@ function createAISearchEngine(deps) {
                 const trunc0 = !!(evt.result && evt.result.truncated) || fr0 === 'length';
                 const meta0 = fr0 || trunc0 ? { finishReason: fr0, truncated: trunc0 } : null;
                 try { if (typeof global !== 'undefined' && global.log) global.log("[QuickSearch AI] Received tool call: none, received content: " + String(finalText||'').slice(0,120)); } catch(e){}
-                if (enableGrounding && _isLiveQuery(q)) {
-                    try { if (typeof global !== 'undefined' && global.log) global.log("[quicksearch] search_intent live fallback q=" + q.slice(0,80)); } catch(e){}
-                    toolCallPending = true;
-                    try {
-                        const toolQuery = q;
-                        const wsRequest = Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number' ? { query: toolQuery, maxResults: Gt.DEFAULT_MAX_RESULTS } : { query: toolQuery, maxResults: 5 };
-                        webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
-                            if (_staleS() || _isCancelled(myCancellable) || destroyed || settled) return;
-                            if (wErr) {
-                                emitComplete(finalText, sources, meta0);
-                                return;
-                            }
-                            if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources) || wResults.sources.length === 0) {
-                                emitComplete(finalText, sources, meta0);
-                                return;
-                            }
-                            groundedSources = wResults.sources;
-                            _prepareGroundingContext(myGen, myCancellable, q, wResults.sources, toolQuery, (ctxInfo) => {
-                                if (_staleS() || _isCancelled(myCancellable) || destroyed || settled) return;
-                                accumulatedText = '';
-                                try {
-                                    provider.streamRequest(
-                                        _withHistory(_groundedPayload(q, ctxInfo.groundingContext, ctxInfo.groundingContextObj, wResults.sources)),
-                                        myCancellable,
-                                        handleSecondStreamEvent
-                                    );
-                                } catch (e) {
-                                    emitComplete(finalText, sources, meta0);
-                                }
-                            });
-                        });
-                    } catch (e) {
-                        emitComplete(finalText, sources, meta0);
-                    }
-                    return;
-                }
                 emitComplete(finalText, sources, meta0);
                 return;
             }

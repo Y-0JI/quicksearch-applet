@@ -213,34 +213,35 @@ function liveAnswer(text, meta) {
     return r;
 }
 
-test('P5-CASE-C: first truncated + grounded second leg fails -> fallback stays truncated', async () => {
+// P3 (AI Pipeline V3): live/current queries are web-first — there is NO first ungrounded
+// response to fall back to. On grounded-leg failure the existing error policy surfaces; the
+// old "first answer + its metadata" fallback path no longer exists for live queries.
+test('P5-CASE-C: live query + grounded failure -> error (no truncated-first fallback)', async () => {
     const engine = createAISearchEngine({
         provider: fallbackProvider(liveAnswer('first potong', { finishReason: 'length', truncated: true })),
         webSearchTool: makeWebTool(),
         enableGrounding: true
     });
+    let errCode = null;
     const got = await new Promise((resolve) => {
-        engine.search('harga bitcoin terbaru', { onAnswer: d => resolve(d), onError: () => resolve(null) });
+        engine.search('harga bitcoin terbaru', { onAnswer: d => resolve(d), onError: (e) => { errCode = e && e.code; resolve(null); } });
     });
-    assert.ok(got, 'fallback delivered');
-    assert.strictEqual(got.text, 'first potong');
-    assert.strictEqual(got.truncated, true, 'fallback content came from the truncated first response');
-    assert.strictEqual(got.finishReason, 'length');
+    assert.strictEqual(got, null, 'no ungrounded first-answer fallback for live queries');
+    assert.strictEqual(errCode, 'provider_error', 'grounded failure surfaces via error policy');
 });
 
-test('P5-CASE-D: first normal + grounded second leg fails -> fallback stays untruncated', async () => {
+test('P5-CASE-D: live query + grounded failure -> error (consistent, no hidden draft)', async () => {
     const engine = createAISearchEngine({
         provider: fallbackProvider(liveAnswer('first normal')),
         webSearchTool: makeWebTool(),
         enableGrounding: true
     });
+    let errCode = null;
     const got = await new Promise((resolve) => {
-        engine.search('harga bitcoin terbaru', { onAnswer: d => resolve(d), onError: () => resolve(null) });
+        engine.search('harga bitcoin terbaru', { onAnswer: d => resolve(d), onError: (e) => { errCode = e && e.code; resolve(null); } });
     });
-    assert.ok(got, 'fallback delivered');
-    assert.strictEqual(got.text, 'first normal');
-    assert.strictEqual(got.truncated, false, 'normal first response must not be flagged truncated');
-    assert.ok(!got.finishReason, 'no finishReason on normal fallback');
+    assert.strictEqual(got, null, 'no answer delivered');
+    assert.strictEqual(errCode, 'provider_error', 'grounded failure surfaces via error policy');
 });
 
 test('P5-CASE-A/B: grounded second-leg answer owns its own metadata (success path)', async () => {

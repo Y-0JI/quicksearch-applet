@@ -42,15 +42,11 @@ test('buildRuntimeContext: web mode + evidence-used flag, and safe defaults', ()
 });
 
 // ── P4/P11: runtime context injected into engine system prompts per request ──
-test('engine: system prompt carries runtime context; grounded leg marks web mode + evidence', async () => {
+test('engine: system prompt carries runtime context; grounded (live) payload marks web mode + evidence', async () => {
     const payloads = [];
     const provider = createMockStreamingAiProvider({
         handler: (payload, onEvent) => {
             payloads.push(payload);
-            if (payloads.length === 1) {
-                onEvent({ type: 'tool_call', tool: 'web_search', arguments: { query: 'chelsea' } });
-                return;
-            }
             onEvent({ type: 'start' });
             onEvent({ type: 'delta', text: 'grounded answer' });
             onEvent({ type: 'complete', result: { text: 'grounded answer', sources: [] } });
@@ -63,17 +59,16 @@ test('engine: system prompt carries runtime context; grounded leg marks web mode
             onError: () => resolve()
         });
     });
-    assert.strictEqual(payloads.length, 2);
+    // P3 web-first: a live query is grounded from the start — one payload, no ungrounded first leg
+    assert.strictEqual(payloads.length, 1);
     const sys1 = payloads[0].systemPrompt || '';
-    const sys2 = payloads[1].systemPrompt || '';
-    assert.ok(sys1.includes('Current date:'), 'runtime ctx on first (ai) leg');
+    assert.ok(sys1.includes('Current date:'), 'runtime ctx present');
     assert.ok(sys1.includes('Current time:'), sys1);
-    assert.ok(sys2.includes('Current date:'), 'runtime ctx on grounded leg too');
-    assert.ok(sys2.includes('Current mode: Web Search'), sys2);
-    assert.ok(sys2.includes('Web search evidence was used for this request.'), sys2);
+    assert.ok(sys1.includes('Current mode: Web Search'), sys1);
+    assert.ok(sys1.includes('Web search evidence was used for this request.'), sys1);
     // runtime metadata never stored into conversation history messages
-    const history2 = payloads[1].history || [];
-    for (const h of history2) {
+    const history1 = payloads[0].history || [];
+    for (const h of history1) {
         assert.ok(!String(h.content || '').includes('Current date:'), 'history clean of runtime ctx');
     }
 });
@@ -145,15 +140,11 @@ test('grounding context dedupes by url+snippet, drops low-signal, caps 5', () =>
 });
 
 // ── P9: mode-specific generation strategy ──
-test('engine: grounded (web) leg forwards lower temperature; conversational leg leaves provider default', async () => {
+test('engine: live query (web-first) forwards the grounded temperature directly', async () => {
     const payloads = [];
     const provider = createMockStreamingAiProvider({
         handler: (payload, onEvent) => {
             payloads.push(payload);
-            if (payloads.length === 1) {
-                onEvent({ type: 'tool_call', tool: 'web_search', arguments: { query: 'chelsea' } });
-                return;
-            }
             onEvent({ type: 'start' });
             onEvent({ type: 'complete', result: { text: 'grounded answer', sources: [] } });
         }
@@ -162,9 +153,9 @@ test('engine: grounded (web) leg forwards lower temperature; conversational leg 
     await new Promise((resolve) => {
         engine.searchStream('Jadwal chelsea?', null, { onComplete: () => resolve(), onError: () => resolve() });
     });
-    assert.strictEqual(payloads.length, 2);
-    assert.ok(!('temperature' in payloads[0]) || payloads[0].temperature === undefined, 'ai leg: no forced temperature');
-    assert.strictEqual(payloads[1].temperature, 0.3, 'web leg: default factual temperature');
+    // P3 web-first: the single payload IS the grounded leg
+    assert.strictEqual(payloads.length, 1);
+    assert.strictEqual(payloads[0].temperature, 0.3, 'web/grounded leg: default factual temperature');
 });
 
 test('engine: generationStrategy override is honored per mode', async () => {

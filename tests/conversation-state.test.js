@@ -86,15 +86,11 @@ test('15.2b promptBuilder.buildHistoryMessages validates roles, drops empty, bou
     assert.deepStrictEqual(promptBuilder.buildHistoryMessages([], 10), []);
 });
 
-test('15.2c engine attaches history to first AND second (grounded) provider payloads', async () => {
+test('15.2c engine attaches history to the (single) grounded payload for live queries', async () => {
     const payloads = [];
     const provider = createMockStreamingAiProvider({
         handler: (payload, onEvent) => {
             payloads.push(payload);
-            if (payloads.length === 1) {
-                onEvent({ type: 'tool_call', tool: 'web_search', arguments: { query: 'chelsea' } });
-                return;
-            }
             onEvent({ type: 'start' });
             onEvent({ type: 'delta', text: 'grounded answer' });
             onEvent({ type: 'complete', result: { text: 'grounded answer', sources: [] } });
@@ -112,9 +108,9 @@ test('15.2c engine attaches history to first AND second (grounded) provider payl
             onError: (e) => { events.push(['error', e]); resolve(); }
         }, { history });
     });
-    assert.strictEqual(payloads.length, 2, 'first leg + grounded second leg');
-    assert.deepStrictEqual(payloads[0].history, history, 'history on first leg');
-    assert.deepStrictEqual(payloads[1].history, history, 'history on grounded second leg');
+    // P3 web-first: live query gets ONE grounded provider payload (no ungrounded first leg)
+    assert.strictEqual(payloads.length, 1, 'single grounded payload for live query');
+    assert.deepStrictEqual(payloads[0].history, history, 'history attached to the grounded payload');
     assert.strictEqual(events[0][0], 'complete');
     assert.strictEqual(events[0][1].text, 'grounded answer');
 });

@@ -99,23 +99,27 @@ function liveStreamingProvider(eventsForFirst, eventsForSecond) {
     };
 }
 
-test('engine streaming: live query buffers first draft, streams only the grounded second leg', async () => {
-    const provider = liveStreamingProvider(
-        [
-            { type: 'start' },
-            { type: 'delta', text: 'Harga sementara ' },   // ungrounded draft — must NOT appear
-            { type: 'delta', text: 'menurut model ' },
-            { type: 'complete', result: { text: 'Harga sementara menurut model', sources: [], grounded: false } }
-        ],
-        [
-            { type: 'start' },
-            { type: 'delta', text: 'Harga BBRI hari ini ' },
-            { type: 'complete', result: { text: 'Harga BBRI hari ini berada di Rp4.450.', sources: [], grounded: true, finishReason: 'stop' } }
-        ]
-    );
-    const webTool = createMockWebSearchTool({ sources: [
-        { title: 'B', url: 'https://example.com/b', snippet: 'bbri' }
-    ] });
+// ── P3 (AI Pipeline V3): live/current queries are WEB-FIRST — one grounded generation, no draft ──
+test('engine streaming: live query is web-first — ONE grounded stream, no AI draft', async () => {
+    const order = [];
+    let streamCalls = 0;
+    const webTool = createMockWebSearchTool({
+        handler: (query, cancellable, cb) => {
+            order.push('web');
+            cb(null, [{ title: 'B', url: 'https://example.com/b', snippet: 'bbri' }]);
+        }
+    });
+    const provider = {
+        streamRequest(payload, cancellable, onEvent) {
+            order.push('ai:' + (payload && payload.groundingContext ? 'grounded' : 'draft'));
+            streamCalls++;
+            onEvent({ type: 'start' });
+            onEvent({ type: 'delta', text: 'Harga BBRI hari ini ' });
+            onEvent({ type: 'complete', result: { text: 'Harga BBRI hari ini berada di Rp4.450.', sources: [], grounded: true, finishReason: 'stop' } });
+        },
+        request() { const e = new Error('not used'); e.code = 'provider_error'; return null; },
+        _calls() { return streamCalls; }
+    };
     const engine = createAISearchEngine({ provider, webSearchTool: webTool, enableGrounding: true });
     const deltas = [];
     const got = await new Promise((resolve) => {
@@ -126,38 +130,35 @@ test('engine streaming: live query buffers first draft, streams only the grounde
             onError: () => resolve(null)
         });
     });
-    assert.strictEqual(provider._calls(), 2, 'grounded second leg issued');
+    assert.deepStrictEqual(order, ['web', 'ai:grounded'], 'web search runs BEFORE the single grounded generation');
+    assert.strictEqual(streamCalls, 1, 'exactly ONE AI generation for a successful live query (no draft, no second leg)');
     assert.ok(got && got.text === 'Harga BBRI hari ini berada di Rp4.450.', 'grounded answer delivered');
     assert.ok(got.sources.length >= 1, 'sources attached');
-    // no premature ungrounded draft ever streamed
-    assert.ok(deltas.every(d => d.indexOf('Harga sementara') === -1), 'buffered first draft never shown');
-    assert.ok(deltas.length > 0, 'grounded synthesis was streamed');
-    assert.ok(deltas.every(d => d.indexOf('Harga BBRI hari ini') !== -1 || d === ''), 'only grounded deltas visible');
+    assert.ok(deltas.length > 0 && deltas.every(d => d.indexOf('Harga BBRI hari ini') !== -1), 'only grounded deltas streamed');
 });
 
-test('engine streaming: live query + web search failure falls back to the buffered draft (no crash, no hang)', async () => {
-    const provider = liveStreamingProvider(
-        [
-            { type: 'start' },
-            { type: 'delta', text: 'Draft sementara ' },
-            { type: 'complete', result: { text: 'Draft sementara', sources: [], grounded: false } }
-        ],
-        []
-    );
+test('engine streaming: live query + web search failure -> error, no hidden draft', async () => {
+    let streamCalls = 0;
     const webTool = createMockWebSearchTool({
         handler: (query, cancellable, cb) => { const e = new Error('boom'); e.code = 'request_failed'; cb(e, null); }
     });
+    const provider = {
+        streamRequest(payload, cancellable, onEvent) { streamCalls++; onEvent({ type: 'complete', result: { text: 'should never happen', sources: [] } }); },
+        request() { const e = new Error('not used'); e.code = 'provider_error'; return null; },
+        _calls() { return streamCalls; }
+    };
     const engine = createAISearchEngine({ provider, webSearchTool: webTool, enableGrounding: true });
+    let errCode = null;
     const got = await new Promise((resolve) => {
         engine.searchStream('Harga hari ini', null, {
             onDelta: () => {},
             onComplete: d => resolve(d),
-            onError: () => resolve(null)
+            onError: (e) => { errCode = e && e.code; resolve(null); }
         });
     });
-    // the buffered ungrounded draft becomes the delivered answer via the normal fallback
-    assert.ok(got, 'completed after grounding failure');
-    assert.strictEqual(got.text, 'Draft sementara', 'buffered draft used as fallback');
+    assert.strictEqual(streamCalls, 0, 'no AI generation at all when web search fails');
+    assert.strictEqual(got, null, 'no draft fallback answer delivered');
+    assert.ok(errCode === 'web_search_unavailable' || errCode === 'request_failed', 'existing web error policy surfaces, got ' + errCode);
 });
 
 test('engine streaming: conversational query streams immediately (no buffering)', async () => {
