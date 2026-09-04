@@ -176,15 +176,18 @@ test('applet wires the bottom follow-up composer', () => {
     assert.ok(APPLET_SRC.includes('Ask a follow-up'), 'composer hint present');
     // composer is the only input once a conversation exists
     assert.ok(APPLET_SRC.includes('_activateComposerInput') && APPLET_SRC.includes('_deactivateComposerInput'), 'input-mode switchers present');
-    assert.ok(APPLET_SRC.includes('_entry.reactive = !composerActive'), 'top entry inert while composer active');
+    assert.ok(APPLET_SRC.includes('_entryRow.visible = !composerActive'), 'top search row fully hidden while composer active');
+    assert.ok(APPLET_SRC.includes('ov._aiHeader.visible = composerActive'), 'chat header tied to conversation state');
 });
 
-test('applet wires per-message Edit and Resend with click isolation', () => {
+test('applet wires per-message Edit and Resend as small icon actions', () => {
     assert.ok(APPLET_SRC.includes('_beginEditUserMessage'), 'edit handler present');
     assert.ok(APPLET_SRC.includes('_resendUserMessage'), 'resend handler present');
-    assert.ok(APPLET_SRC.includes('_buildMessageActionButton'), 'action button builder present');
-    assert.ok(APPLET_SRC.includes('_("Edit")') || APPLET_SRC.includes("_('Edit')"), 'Edit label');
-    assert.ok(APPLET_SRC.includes('_("Resend")') || APPLET_SRC.includes("_('Resend')"), 'Resend label');
+    assert.ok(APPLET_SRC.includes('_buildIconActionButton'), 'icon action button builder present');
+    assert.ok(APPLET_SRC.includes('document-edit-symbolic'), 'edit uses a symbolic icon');
+    assert.ok(APPLET_SRC.includes('view-refresh-symbolic'), 'resend uses a symbolic icon');
+    assert.ok(APPLET_SRC.includes('_("Edit message")') || APPLET_SRC.includes("_('Edit message')"), 'edit tooltip text');
+    assert.ok(APPLET_SRC.includes('_("Resend message")') || APPLET_SRC.includes("_('Resend message')"), 'resend tooltip text');
     // actions live only on user messages and never join keyboard row navigation
     assert.ok(APPLET_SRC.includes("msg.role === 'user'"), 'user branch exists');
     const userSection = APPLET_SRC.slice(APPLET_SRC.indexOf('_renderAIState'), APPLET_SRC.indexOf('_renderSourcesForMessage'));
@@ -192,13 +195,21 @@ test('applet wires per-message Edit and Resend with click isolation', () => {
     assert.ok(!(userSection.match(/_rows\.push\(/g) || []).length, 'conversation rows never enter keyboard _rows');
 });
 
-test('footer state: Cancel only while active, Clear chat only when conversation exists', () => {
-    assert.ok(APPLET_SRC.includes('_("\\u23f9 Cancel")') || APPLET_SRC.includes('Cancel'), 'Cancel label');
-    assert.ok(APPLET_SRC.includes('_("\\u21ba Clear chat")') || APPLET_SRC.includes('Clear chat'), 'Clear chat label');
+test('chat controls: Cancel inline while active, New Chat in header while conversation exists', () => {
+    assert.ok(APPLET_SRC.includes('Cancel'), 'Cancel label present');
+    assert.ok(APPLET_SRC.includes('New Chat'), 'New Chat label present');
     assert.ok(APPLET_SRC.includes('ov._stopButton.visible = isAi && hasConv && active'), 'Cancel gated on active request');
-    assert.ok(APPLET_SRC.includes('ov._resetButton.visible = isAi && hasConv'), 'Clear chat gated on conversation');
-    assert.ok(APPLET_SRC.includes('ov._aiComposer.visible = isAi && hasConv'), 'composer gated on conversation');
-    assert.ok(APPLET_SRC.includes('convMod.reset(this._conversation)'), 'clear resets the message model');
+    assert.ok(APPLET_SRC.includes('ov._resetButton.visible = isAi && hasConv'), 'New Chat gated on conversation');
+    assert.ok(APPLET_SRC.includes('ov._aiComposer.visible = composerActive'), 'composer gated on conversation');
+    assert.ok(APPLET_SRC.includes('convMod.reset(this._conversation)'), 'New Chat resets the message model');
+    assert.ok(APPLET_SRC.includes('_aiHeader'), 'chat header container exists');
+});
+
+test('layout: no expanded region, composer packs under the results panel', () => {
+    assert.ok(APPLET_SRC.includes('no `expand: true`'), 'results region must not expand');
+    assert.ok(APPLET_SRC.includes('ov._scroll.set_position(0, hdrH)'), 'scroll is offset below the chat header');
+    assert.ok(APPLET_SRC.includes('resultsRegion.set_size(w, h)'), 'region sized to content');
+    assert.ok(APPLET_SRC.includes('quicksearch-scroll-attached'), 'attached scroll styling toggled');
 });
 
 test('edit/resend staging goes through conversationState (single source of truth)', () => {
@@ -236,17 +247,25 @@ test('sticky auto-scroll: follow only while near the bottom', () => {
     assert.ok(APPLET_SRC.includes('_cancelAIScroll'), 'scroll timer cleanup present');
 });
 
-test('composer + message-action styling exists', () => {
+test('chat layout + message-action styling exists', () => {
     assert.ok(CSS_SRC.includes('.quicksearch-ai-composer'), 'composer surface style');
     assert.ok(CSS_SRC.includes('.quicksearch-ai-composer-entry'), 'follow-up entry style');
     assert.ok(CSS_SRC.includes('.quicksearch-ai-send'), 'send button style');
     assert.ok(CSS_SRC.includes('.quicksearch-ai-send-disabled'), 'send disabled style');
-    assert.ok(CSS_SRC.includes('.quicksearch-ai-msg-action'), 'message action style');
+    assert.ok(CSS_SRC.includes('.quicksearch-ai-action-icon-btn'), 'small circular icon action style');
+    assert.ok(CSS_SRC.includes('.quicksearch-ai-chat-header'), 'chat header style');
+    assert.ok(CSS_SRC.includes('.quicksearch-scroll-attached'), 'scroll-attached style');
     assert.ok(CSS_SRC.includes('.quicksearch-ai-user-editing'), 'editing highlight style');
     assert.ok(CSS_SRC.includes('.quicksearch-ai-composer-editrow'), 'edit hint row style');
+    // normal user card must stay light (no strong block background)
+    const userBlock = CSS_SRC.slice(CSS_SRC.indexOf('.quicksearch-ai-user-block'), CSS_SRC.indexOf('.quicksearch-ai-user-block') + 300);
+    assert.ok(userBlock.includes('rgba(255, 255, 255, 0.0)'), 'normal user message near-transparent');
 });
 
-test('lifecycle cleanup guards', () => {
+test('tooltips and lifecycle cleanup guards', () => {
+    assert.ok(APPLET_SRC.includes('_attachTooltip'), 'tooltip helper present');
+    assert.ok(APPLET_SRC.includes('TooltipsMod') && (APPLET_SRC.includes('imports.ui.tooltips')), 'tooltips module imported');
+    assert.ok(APPLET_SRC.includes('_destroyTooltips'), 'tooltip cleanup present');
     assert.ok(APPLET_SRC.includes('_cancelAIScroll()'), 'applet cancels scroll timer on teardown paths');
     const closeSection = APPLET_SRC.slice(APPLET_SRC.indexOf('close() {'), APPLET_SRC.indexOf('close() {') + 1200);
     assert.ok(closeSection.includes('this._aiEditId = null'), 'close clears edit state');

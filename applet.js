@@ -14,6 +14,9 @@ try { Util = imports.misc.util; } catch (e) {}
 try { AppFavorites = imports.ui.appFavorites; } catch (e) {}
 try { XApp = imports.gi.XApp; } catch (e) {}
 try { Mainloop = imports.mainloop; } catch (e) { try { Mainloop = require('mainloop'); } catch (e2) {} }
+let TooltipsMod = null;
+try { TooltipsMod = imports.ui.tooltips; } catch (e) {}
+try { if (!TooltipsMod && typeof require === 'function') { try { TooltipsMod = require('ui.tooltips'); } catch (e2) {} } } catch (e) {}
 
 const resultMod = require('./result.js');
 const utilsMod = require('./utils.js');
@@ -114,8 +117,11 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._scroll.add_actor(this.resultsBox);
         this._scroll.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
         this.resultsRegion = new St.Widget({ x_expand: true });
+        // NOTE: no `expand: true` — the region must size itself to the results/chat
+        // content so the follow-up composer packs directly below the panel instead of
+        // being pushed to the bottom of the screen by an expanded layout allotment.
         this.contentLayout.add(this.resultsRegion, {
-            expand: true, x_fill: true, y_fill: false,
+            x_fill: true, y_fill: false,
             x_align: St.Align.MIDDLE, y_align: St.Align.START
         });
         this.resultsRegion.add_actor(this._scroll);
@@ -130,9 +136,10 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._autoScroll.add_actor(this.autoCompleteBox);
         this.resultsRegion.add_actor(this._autoScroll);
 
-        // Phase 8 §6/§13 + Phase 9: AI bottom area — Cancel (visible while a request is
-        // active) + Clear chat (visible once a conversation exists) + bottom follow-up
-        // composer. The whole block is hidden until a conversation actually exists.
+        // Phase 9 chat layout: once a conversation exists the top search row is hidden
+        // and replaced by a chat panel = [header(+New Chat) / conversation / composer].
+        // The composer sits directly under the results panel — the region above is NOT
+        // expanded so nothing gets pushed to the bottom of the screen (issue #1/#7).
         // Note: build explicit St.Label children (set_child) — the St.Button `label:`
         // constructor property is not used anywhere in this codebase and renders empty
         // in this GJS runtime.
@@ -141,25 +148,12 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._aiEditRow = new St.BoxLayout({ style_class: "quicksearch-ai-composer-editrow", vertical: false, visible: false });
         this._aiEditLabel = new St.Label({ text: _("Editing message..."), style_class: "quicksearch-ai-composer-editlabel" });
         this._aiEditCancel = new St.Button({ style_class: "quicksearch-ai-composer-editcancel", can_focus: false, reactive: true, track_hover: true });
-        const _editCancelLabel = new St.Label({ text: _("\u2715 Cancel edit"), style_class: "quicksearch-ai-composer-editcancel-label" });
+        const _editCancelLabel = new St.Label({ text: _("\u2715"), style_class: "quicksearch-ai-composer-editcancel-label" });
         try { this._aiEditCancel.set_child(_editCancelLabel); } catch (e) {}
-        this._aiEditRow.add(this._aiEditLabel);
+        this._aiEditRow.add(this._aiEditLabel, { expand: true });
         this._aiEditRow.add(this._aiEditCancel);
         this._aiComposer.add(this._aiEditRow);
-        // footer row: Cancel (active request) + Clear chat (conversation exists)
-        this._aiFooter = new St.BoxLayout({ style_class: "quicksearch-ai-footer", vertical: false, visible: true });
-        this._stopButton = new St.Button({ style_class: "quicksearch-ai-stop", can_focus: false, reactive: true, track_hover: true });
-        const _stopLabel = new St.Label({ text: _("\u23f9 Cancel"), style_class: "quicksearch-ai-stop-label" });
-        try { this._stopButton.set_child(_stopLabel); } catch (e) {}
-        this._resetButton = new St.Button({ style_class: "quicksearch-ai-reset", can_focus: false, reactive: true, track_hover: true });
-        const _resetLabel = new St.Label({ text: _("\u21ba Clear chat"), style_class: "quicksearch-ai-reset-label" });
-        try { this._resetButton.set_child(_resetLabel); } catch (e) {}
-        this._aiFooter.add(this._stopButton);
-        const _footerGap = new St.Widget({ x_expand: true, y_expand: false });
-        this._aiFooter.add(_footerGap, { expand: true });
-        this._aiFooter.add(this._resetButton);
-        this._aiComposer.add(this._aiFooter);
-        // follow-up composer row: entry + Send
+        // follow-up composer row: entry + [Cancel while streaming] + Send
         this._composerRow = new St.BoxLayout({ style_class: "quicksearch-ai-composer-row", vertical: false });
         this._composerEntry = new St.Entry({
             hint_text: _("Ask a follow-up..."),
@@ -168,14 +162,29 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             style_class: "quicksearch-ai-composer-entry"
         });
         try { this._composerEntry.clutter_text.set_cursor_visible(true); } catch (e) {}
+        this._stopButton = new St.Button({ style_class: "quicksearch-ai-stop", can_focus: false, reactive: true, track_hover: true, visible: false });
+        const _stopLabel = new St.Label({ text: _("\u23f9 Cancel"), style_class: "quicksearch-ai-stop-label" });
+        try { this._stopButton.set_child(_stopLabel); } catch (e) {}
         this._composerSend = new St.Button({ style_class: "quicksearch-ai-send", can_focus: false, reactive: false, track_hover: true });
         const _sendLabel = new St.Label({ text: _("Send"), style_class: "quicksearch-ai-send-label" });
         try { this._composerSend.set_child(_sendLabel); } catch (e) {}
         this._composerRow.add(this._composerEntry, { expand: true });
+        this._composerRow.add(this._stopButton);
         this._composerRow.add(this._composerSend);
         this._aiComposer.add(this._composerRow);
         this.contentLayout.add(this._aiComposer);
-        try { global.log("[quicksearch@yoji] Phase 9 composer init ok (cancel/clear/follow-up)"); } catch (e) {}
+        // conversation header pinned above the results panel (chat mode only): [+ New Chat]
+        this._aiHeader = new St.BoxLayout({ style_class: "quicksearch-ai-chat-header", vertical: false, visible: false });
+        this._resetButton = new St.Button({ style_class: "quicksearch-ai-reset", can_focus: false, reactive: true, track_hover: true });
+        const _newLabel = new St.Label({ text: _("\u271a New Chat"), style_class: "quicksearch-ai-reset-label" });
+        try { this._resetButton.set_child(_newLabel); } catch (e) {}
+        const _headerGap = new St.Widget({ x_expand: true, y_expand: false });
+        this._aiHeader.add(_headerGap, { expand: true });
+        this._aiHeader.add(this._resetButton);
+        this.resultsRegion.add_actor(this._aiHeader);
+        try { if (this._applet && this._applet._attachTooltip) this._applet._attachTooltip(this._resetButton, _("New Chat")); } catch (e) {}
+        try { if (this._applet && this._applet._attachTooltip) this._applet._attachTooltip(this._stopButton, _("Cancel current response")); } catch (e) {}
+        try { global.log("[quicksearch@yoji] Phase 9 chat layout init ok (header/new-chat/composer/cancel)"); } catch (e) {}
         try {
             this._stopButton.connect("clicked", () => {
                 try { this._applet._stopAI(); } catch (e) {}
@@ -533,6 +542,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiScrollId = 0;
         this._aiScrollAdjIds = [];
         this._aiScrollBound = false;
+        this._aiTooltips = [];
+        this._aiMsgTooltips = [];
         // Phase 8: canonical conversation state (message model, history, per-message sources)
         this._conversation = null;
         if (convMod && typeof convMod.createConversation === 'function') {
@@ -888,9 +899,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) { return 'AI request failed'; }
     }
 
-    // §8 footer + composer states: the bottom block exists only in AI mode once a
-    // conversation has started. Idle+empty conversation → everything hidden and the
-    // top input is the active input.
+    // Chat-mode control states: Cancel is a small inline button next to Send (visible
+    // only while a request is active), + New Chat lives in the chat header (visible as
+    // long as a conversation exists). No big footer row is created anymore (§7).
     _syncAIFooter() {
         const ov = this._overlay;
         if (!ov || !ov._stopButton) return;
@@ -898,12 +909,11 @@ class QuickSearchApplet extends Applet.IconApplet {
         const hasConv = this._hasConversation();
         const active = !!this._aiLoading || !!this._aiStreaming ||
             (convMod && this._conversation ? !!convMod.hasActive(this._conversation) : false);
-        try { ov._aiComposer.visible = isAi && hasConv; } catch (e) {}
-        // Cancel only while a request is loading/streaming (§2/§8)
+        // Cancel: inline in the composer row, only while loading/streaming (§2/§7)
         try { ov._stopButton.visible = isAi && hasConv && active; } catch (e) {}
-        // Clear chat whenever a conversation exists (§1/§8); hidden when empty
+        // + New Chat: pinned top-right of the chat panel while a conversation exists (§3)
         try { if (ov._resetButton) ov._resetButton.visible = isAi && hasConv; } catch (e) {}
-        // edit-in-progress hint row (§3)
+        // edit-in-progress hint row inside the composer (§6)
         try { if (ov._aiEditRow) ov._aiEditRow.visible = isAi && hasConv && this._aiEditId != null; } catch (e) {}
         try { this._syncComposerSendState(); } catch (e) {}
     }
@@ -914,15 +924,17 @@ class QuickSearchApplet extends Applet.IconApplet {
         return !!(convMod && this._conversation && convMod.count(this._conversation) > 0);
     }
 
-    // Visibility/reactivity of the bottom composer block vs. the top search entry.
-    // Conversation started → composer is the only AI input (top entry inert);
-    // no conversation → top entry is the input and the composer stays hidden (§5).
+    // §5/§2: exactly ONE input is ever visible. Conversation running → the top search
+    // row (entryRow: entry + mode button) is fully hidden and the bottom composer is the
+    // only input. No conversation → top input visible, composer + chat header hidden.
     _syncAIComposerState() {
         const ov = this._overlay;
         if (!ov || !ov._composerEntry) return;
         const composerActive = this._mode === 'ai' && this._hasConversation();
         try { ov._aiComposer.visible = composerActive; } catch (e) {}
+        try { if (ov._aiHeader) ov._aiHeader.visible = composerActive; } catch (e) {}
         try {
+            ov._entryRow.visible = !composerActive;
             ov._entry.reactive = !composerActive;
             ov._entry.can_focus = !composerActive;
         } catch (e) {}
@@ -939,14 +951,16 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { this._syncAIFooter(); } catch (e) {}
     }
 
-    // Switch the UI to "conversation running" mode: hide+disable the top entry and show
-    // the bottom composer with keyboard focus on it. Stale top-entry text is cleared so
-    // it can never be mistaken for a new AI query (§5).
+    // Switch the UI to "conversation running" mode: hide the top search row completely
+    // (entryRow.visible=false, not just inert) and show the bottom composer right below
+    // the results panel with keyboard focus on it (§2/§5).
     _activateComposerInput() {
         const ov = this._overlay;
         if (!ov || !ov._composerEntry) return;
         try { ov._aiComposer.visible = true; } catch (e) {}
+        try { if (ov._aiHeader) ov._aiHeader.visible = true; } catch (e) {}
         try {
+            ov._entryRow.visible = false;
             ov._entry.reactive = false;
             ov._entry.can_focus = false;
             try { if (String(ov._entry.get_text ? ov._entry.get_text() : '') !== '') ov._entry.set_text(''); } catch (e2) {}
@@ -963,16 +977,18 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) {}
     }
 
-    // Switch back to "no conversation / initial chat" mode: re-enable the top entry,
-    // hide the composer and clear its text + any edit state (§1 Clear chat / §5).
+    // Switch back to "no conversation / initial chat" mode: bring the top input back,
+    // hide the composer + chat header and clear composer text + edit state (§1/§2/§5).
     _deactivateComposerInput() {
         const ov = this._overlay;
         if (!ov) return;
         this._aiEditId = null;
         this._aiMsgActors = {};
         try { if (ov._aiComposer) ov._aiComposer.visible = false; } catch (e) {}
+        try { if (ov._aiHeader) ov._aiHeader.visible = false; } catch (e) {}
         try { if (ov._composerEntry) ov._composerEntry.set_text(''); } catch (e) {}
         try {
+            ov._entryRow.visible = true;
             ov._entry.reactive = true;
             ov._entry.can_focus = true;
         } catch (e) {}
@@ -1184,17 +1200,57 @@ class QuickSearchApplet extends Applet.IconApplet {
         });
     }
 
-    _buildMessageActionButton(text, styleClass, onActivate) {
+    // §4: small circular icon buttons (St.Icon, no visible text) with an optional
+    // tooltip. A fallback icon chain is tried in case a theme lacks the primary name.
+    _buildIconActionButton(iconNames, tooltipText, styleClass, onActivate, tooltipBucket) {
         const btn = new St.Button({ style_class: styleClass, reactive: true, can_focus: false, track_hover: true });
-        const lbl = new St.Label({ text: text, style_class: styleClass + "-label" });
-        try { btn.set_child(lbl); } catch (e) {}
+        const icon = new St.Icon({ icon_size: 13, icon_type: St.IconType.SYMBOLIC, style_class: styleClass + "-icon" });
+        const names = Array.isArray(iconNames) ? iconNames : [iconNames];
+        try { icon.icon_name = names[0]; } catch (e) {}
+        try { btn.set_child(icon); } catch (e) {}
         try {
             btn.connect("clicked", () => {
                 try { onActivate(); } catch (e) {}
                 return Clutter.EVENT_STOP;
             });
         } catch (e) {}
+        if (tooltipText) {
+            try { this._attachTooltip(btn, tooltipText, tooltipBucket); } catch (e) {}
+        }
         return btn;
+    }
+
+    _attachTooltip(actor, text, bucket) {
+        try {
+            if (typeof TooltipsMod !== 'undefined' && TooltipsMod && TooltipsMod.Tooltip) {
+                const t = new TooltipsMod.Tooltip(actor, String(text));
+                const arr = bucket || this._aiTooltips;
+                if (arr) arr.push(t);
+                return t;
+            }
+        } catch (e) {}
+        return null;
+    }
+
+    // Per-render tooltips (message actions) are destroyed on every re-render so a long
+    // streaming conversation cannot accumulate Tooltip objects for dead buttons.
+    _clearMsgTooltips() {
+        try {
+            if (this._aiMsgTooltips) {
+                for (const t of this._aiMsgTooltips) { try { t.destroy(); } catch (e) {} }
+                this._aiMsgTooltips = [];
+            }
+        } catch (e) {}
+    }
+
+    _destroyTooltips() {
+        this._clearMsgTooltips();
+        try {
+            if (this._aiTooltips) {
+                for (const t of this._aiTooltips) { try { t.destroy(); } catch (e) {} }
+                this._aiTooltips = [];
+            }
+        } catch (e) {}
     }
 
     _renderAIState() {
@@ -1203,6 +1259,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { if (ov._autoScroll) ov._autoScroll.visible = false; } catch (e) {}
         this._autoRows = [];
         try { while (ov.resultsBox.get_n_children() > 0) ov.resultsBox.remove_child(ov.resultsBox.get_child_at_index(0)); } catch (e) {}
+        this._clearMsgTooltips();
         this._mainRows = [];
         this._rows = [];
         this._selIdx = -1;
@@ -1219,26 +1276,33 @@ class QuickSearchApplet extends Applet.IconApplet {
             if (!msg) continue;
             if (msg.role === 'user') {
                 try {
-                    // Phase 9 §3/§4/§7: each user message is a block with Edit + Resend
-                    // actions. Actions are plain St.Buttons — they never join the
-                    // keyboard-searchable _rows list and never trigger row activation.
-                    const block = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-user-block" });
+                    // Phase 9 §3/§4/§5/§7: user messages are lightweight rows — subtle
+                    // background, small icon-only Edit/Resend actions on the right. Only
+                    // the message currently being edited gets a light highlight.
+                    const row = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-user-block" });
                     const editing = this._aiEditId === msg.id;
-                    if (editing) try { block.add_style_class_name("quicksearch-ai-user-editing"); } catch (e) {}
+                    if (editing) try { row.add_style_class_name("quicksearch-ai-user-editing"); } catch (e) {}
+                    const textWrap = new St.BoxLayout({ vertical: true });
                     const lbl = new St.Label({ text: _("You") + ": " + String(msg.content || ''), style_class: "quicksearch-ai-user" });
                     try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
-                    block.add(lbl);
-                    const actions = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-msg-actions" });
+                    textWrap.add(lbl);
+                    row.add(textWrap, { expand: true });
+                    const actions = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-msg-actions" });
                     const uid = msg.id;
-                    actions.add(this._buildMessageActionButton(_("Edit"), "quicksearch-ai-msg-action", () => {
+                    // tooltips only on stable (non-streaming) renders — buttons are
+                    // recreated on every delta and tooltips would otherwise leak
+                    const tipBucket = (!this._aiLoading && !this._aiStreaming) ? this._aiMsgTooltips : null;
+                    const tipEdit = tipBucket ? _("Edit message") : '';
+                    const tipResend = tipBucket ? _("Resend message") : '';
+                    actions.add(this._buildIconActionButton(["document-edit-symbolic", "edit-symbolic"], tipEdit, "quicksearch-ai-action-icon-btn", () => {
                         this._beginEditUserMessage(uid);
-                    }));
-                    actions.add(this._buildMessageActionButton(_("Resend"), "quicksearch-ai-msg-action", () => {
+                    }, tipBucket));
+                    actions.add(this._buildIconActionButton(["view-refresh-symbolic", "reload-symbolic"], tipResend, "quicksearch-ai-action-icon-btn", () => {
                         this._resendUserMessage(uid);
-                    }));
-                    block.add(actions);
-                    ov.resultsBox.add_child(block);
-                    if (this._aiMsgActors) this._aiMsgActors[uid] = block;
+                    }, tipBucket));
+                    row.add(actions);
+                    ov.resultsBox.add_child(row);
+                    if (this._aiMsgActors) this._aiMsgActors[uid] = row;
                 } catch (e) {}
             } else if (msg.role === 'assistant') {
                 if (msg.status === 'streaming') {
@@ -1901,10 +1965,15 @@ class QuickSearchApplet extends Applet.IconApplet {
         const pw = Math.round(ov._entryRow.get_transformed_size()[0]) || 0;
         if (pw > 0) this._lastPanelWidth = pw;
         const w = pw || this._lastPanelWidth || 690;
-        const pillTf = ov._entryRow.get_transformed_position();
-        const pillBottom = (pillTf[1] || 146) + (ov._entryRow.get_transformed_size()[1] || 54);
-        // Phase 9: keep the results area clear of the bottom composer + footer so a long
-        // conversation never renders underneath the follow-up bar (§5).
+        let entryVisible = false;
+        try { entryVisible = !!ov._entryRow && ov._entryRow.visible; } catch (e) {}
+        let pillBottom = 146 + 54;
+        if (entryVisible) {
+            const pillTf = ov._entryRow.get_transformed_position();
+            pillBottom = (pillTf[1] || 146) + (ov._entryRow.get_transformed_size()[1] || 54);
+        }
+        // Phase 9: keep the results area clear of the bottom follow-up composer so a long
+        // conversation never renders underneath it (§1/§5).
         let bottomReserve = 0;
         if (this._mode === 'ai' && ov._aiComposer && ov._aiComposer.visible) {
             try {
@@ -1913,6 +1982,22 @@ class QuickSearchApplet extends Applet.IconApplet {
             } catch (e) { bottomReserve = 110; }
         }
         const roomCap = Math.max(320, global.screen_height - pillBottom - 6 - bottomReserve - 12);
+        // chat-mode header [+ New Chat] pinned above the results panel
+        let hdrH = 0;
+        const hdrVisible = !!(ov._aiHeader && ov._aiHeader.visible);
+        if (hdrVisible) {
+            try {
+                const [, hh] = ov._aiHeader.get_preferred_height(w);
+                hdrH = Math.round(Number(hh) || 0);
+            } catch (e) { hdrH = 0; }
+            if (hdrH <= 0) hdrH = 34;
+            try { ov._aiHeader.set_position(0, 0); } catch (e) {}
+            try { ov._aiHeader.set_size(w, hdrH); } catch (e) {}
+        }
+        try {
+            if (hdrVisible) ov._scroll.add_style_class_name('quicksearch-scroll-attached');
+            else ov._scroll.remove_style_class_name('quicksearch-scroll-attached');
+        } catch (e) {}
         let h = 0;
         if (ov._scroll.visible) {
             let natH = 0;
@@ -1926,9 +2011,12 @@ class QuickSearchApplet extends Applet.IconApplet {
             }
             natH += 16;
             const mainH = Math.min(natH, 664, roomCap);
-            ov._scroll.set_position(0, 0);
+            ov._scroll.set_position(0, hdrH);
             ov._scroll.set_size(w, mainH);
-            h = mainH;
+            h = mainH + hdrH;
+        } else if (hdrVisible) {
+            ov._scroll.set_position(0, hdrH);
+            h = hdrH;
         }
         if (ov._autoScroll.visible) {
             let natH = 0;
@@ -1942,9 +2030,9 @@ class QuickSearchApplet extends Applet.IconApplet {
             }
             natH += 16;
             const autoH = Math.min(natH, roomCap);
-            ov._autoScroll.set_position(0, 0);
+            ov._autoScroll.set_position(0, hdrH);
             ov._autoScroll.set_size(w, autoH);
-            h = Math.max(h, autoH);
+            h = Math.max(h, autoH + hdrH);
             ov._autoScroll.raise_top();
         }
         ov.resultsRegion.set_size(w, h);
@@ -2289,6 +2377,7 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     on_applet_removed_from_panel(reload) {
         try { if (this._contextMenu) { this._contextMenu.destroy(); this._contextMenu = null; } } catch (e) {}
+        try { this._destroyTooltips(); } catch (e) {}
         Main.keybindingManager.removeHotKey(this._hotkeyName);
         this._cancelPopupHide();
         // Phase 9 lifecycle: no pending scroll timer, edit target, or message actor map

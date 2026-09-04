@@ -155,51 +155,87 @@
     color: rgba(255, 255, 255, 0.75);
 }
 
-/* Phase 9: bottom follow-up composer + per-message actions */
+/* Phase 9: chat layout — composer directly under results, icon actions, chat header */
+
+/* user message row: light by default, subtle hover, light highlight only while editing */
 .quicksearch-ai-user-block {
-    padding: 2px 0 0 0;
+    padding: 3px 4px;
+    border-radius: 10px;
+    background-color: rgba(255, 255, 255, 0.0);
+}
+
+.quicksearch-ai-user-block:hover {
+    background-color: rgba(255, 255, 255, 0.05);
 }
 
 .quicksearch-ai-user-editing {
-    background-color: rgba(255, 196, 0, 0.10);
-    border-radius: 12px;
+    background-color: rgba(255, 196, 0, 0.08);
+    border-radius: 10px;
 }
 
+.quicksearch-ai-user-editing:hover {
+    background-color: rgba(255, 196, 0, 0.12);
+}
+
+/* small icon actions (Edit / Resend), 26px round, no visible text */
 .quicksearch-ai-msg-actions {
-    spacing: 6px;
-    padding: 2px 8px 6px 8px;
+    spacing: 3px;
+    padding: 2px 0 2px 6px;
 }
 
-.quicksearch-ai-msg-action {
-    padding: 2px 10px;
+.quicksearch-ai-action-icon-btn {
+    width: 26px;
+    height: 26px;
+    padding: 0;
     border-radius: 999px;
-    border: 1px solid rgba(255,255,255,0.10);
-    background-color: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    background-color: rgba(255, 255, 255, 0.04);
 }
 
-.quicksearch-ai-msg-action-label {
-    font-size: 8.5pt;
+.quicksearch-ai-action-icon-btn-icon {
     color: rgba(255, 255, 255, 0.62);
 }
 
-.quicksearch-ai-msg-action:hover {
+.quicksearch-ai-action-icon-btn:hover {
     background-color: rgba(255, 255, 255, 0.14);
     border-color: rgba(255, 255, 255, 0.22);
 }
 
+.quicksearch-ai-action-icon-btn:hover .quicksearch-ai-action-icon-btn-icon {
+    color: rgba(255, 255, 255, 0.95);
+}
+
+/* chat header pinned above the results panel: [+ New Chat] */
+.quicksearch-ai-chat-header {
+    spacing: 6px;
+    padding: 4px 10px;
+    background-color: rgba(36, 39, 46, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-bottom: 0;
+    border-radius: 16px 16px 0 0;
+}
+
+/* results scroll attached under the chat header (chat mode only) */
+.quicksearch-scroll-attached {
+    border-top: 0;
+    border-radius: 0 0 16px 16px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* follow-up composer: small, directly under the results panel */
 .quicksearch-ai-composer {
-    padding: 6px 12px 12px 12px;
+    padding: 8px 10px 10px 10px;
     spacing: 4px;
     margin-top: 6px;
     background-color: rgba(36, 39, 46, 0.97);
     border: 1px solid rgba(255, 255, 255, 0.09);
-    border-radius: 22px;
+    border-radius: 18px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
 .quicksearch-ai-composer-editrow {
-    spacing: 10px;
-    padding: 2px 4px;
+    spacing: 8px;
+    padding: 0 2px 2px 2px;
 }
 
 .quicksearch-ai-composer-editlabel {
@@ -208,14 +244,14 @@
 }
 
 .quicksearch-ai-composer-editcancel {
-    padding: 2px 10px;
+    padding: 2px 8px;
     border-radius: 999px;
     border: 1px solid rgba(255, 196, 0, 0.35);
     background-color: rgba(255, 196, 0, 0.10);
 }
 
 .quicksearch-ai-composer-editcancel-label {
-    font-size: 8.5pt;
+    font-size: 9pt;
     color: rgba(255, 214, 90, 0.95);
 }
 
@@ -223,11 +259,7 @@
     background-color: rgba(255, 196, 0, 0.24);
 }
 
-.quicksearch-ai-footer {
-    padding: 4px 4px 2px 4px;
-    spacing: 8px;
-}
-
+/* small pill buttons reused for Cancel (inline) and New Chat (header) */
 .quicksearch-ai-stop, .quicksearch-ai-reset {
     padding: 5px 12px;
     border-radius: 999px;
@@ -245,7 +277,7 @@
 }
 
 .quicksearch-ai-composer-entry {
-    padding: 6px 12px;
+    padding: 7px 12px;
     font-size: 11pt;
     color: rgba(255, 255, 255, 0.95);
     background-color: rgba(255, 255, 255, 0.05);
@@ -258,7 +290,7 @@
 }
 
 .quicksearch-ai-send {
-    padding: 6px 18px;
+    padding: 7px 18px;
     border-radius: 999px;
     border: 1px solid rgba(120, 180, 255, 0.35);
     background-color: rgba(120, 180, 255, 0.18);
