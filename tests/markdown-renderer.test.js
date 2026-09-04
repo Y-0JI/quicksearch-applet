@@ -2,8 +2,12 @@
 // Covers: plain text, **bold**, inline bold, *italic*, unordered/ordered lists,
 // multi-line structure, citation [1] passthrough, HTML-injection safety, malformed
 // input without crash, fenced code verbatim.
+// Plus applet-source guards (repo pattern) for the renderer LOADER: a load failure must
+// be diagnosable (never an empty catch), while graceful plain-text fallback stays.
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
     parseInline,
     parseMarkdownBlocks,
@@ -11,6 +15,42 @@ const {
     markdownToMarkup,
     blockToPlainText
 } = require('../ai/markdownRenderer.js');
+
+const ROOT = path.join(__dirname, '..');
+const APPLET_SRC = fs.readFileSync(path.join(ROOT, 'applet.js'), 'utf8');
+
+// ── renderer loader diagnostics (applet source guard — UI cannot run under node) ──
+test('applet loader: module load failure is logged, not swallowed by an empty catch', () => {
+    const loaderStart = APPLET_SRC.indexOf("require('./ai/markdownRenderer.js')");
+    assert.ok(loaderStart !== -1, 'renderer require present');
+    const loaderBlock = APPLET_SRC.slice(loaderStart, loaderStart + 500);
+    assert.ok(!/catch\s*\(\s*e\s*\)\s*\{\s*\}/.test(loaderBlock),
+        'no empty catch around the renderer require');
+    assert.ok(loaderBlock.indexOf('markdown renderer load FAILED') !== -1,
+        'catch contains an explicit load-failure diagnostic');
+    assert.ok(loaderBlock.indexOf('fall back to plain text') !== -1,
+        'diagnostic explains the graceful fallback');
+    assert.ok(loaderBlock.indexOf('global.log') !== -1,
+        'uses the project logging mechanism (global.log)');
+});
+
+test('applet loader: renderer failure still degrades safely (no crash path kept)', () => {
+    // the loader keeps mdMod null on failure, and every use site checks mdMod first
+    assert.ok(/let mdMod = null;/.test(APPLET_SRC), 'mdMod starts null');
+    assert.ok(APPLET_SRC.indexOf('mdMod && typeof mdMod.parseMarkdownBlocks === \'function\'') !== -1,
+        'parse uses a null/function guard');
+    assert.ok(APPLET_SRC.indexOf('blockToPlainText') !== -1,
+        'plain-text emergency fallback wired');
+});
+
+test('renderer module actually loads and handles the normal path (A)', () => {
+    // requires the real module from disk; failure here = broken module/path
+    const mk = markdownToMarkup('**Kiper (4):**\n- Player A\n\nTeks *miring* [1]');
+    assert.ok(mk.indexOf('<b>Kiper (4):</b>') !== -1, 'bold rendered, no raw **');
+    assert.ok(mk.indexOf('**') === -1, 'no raw ** anywhere');
+    assert.ok(mk.indexOf('\u2022') !== -1, 'list bullet rendered');
+    assert.ok(mk.indexOf('[1]') !== -1, 'citation intact');
+});
 
 // ── inline ────────────────────────────────────────────────────────────────────
 test('plain text stays a single plain span', () => {

@@ -32,7 +32,18 @@ try { aiFactoryMod = require('./ai/aiFactory.js'); } catch (e) {}
 let convMod = null;
 try { convMod = require('./ai/conversationState.js'); } catch (e) {}
 let mdMod = null;
-try { mdMod = require('./ai/markdownRenderer.js'); } catch (e) {}
+try {
+    mdMod = require('./ai/markdownRenderer.js');
+} catch (mdErr) {
+    // Never silent: if the renderer is missing/broken the applet falls back to plain
+    // text (no crash), but the failure must be diagnosable — raw ** markdown returning
+    // to the UI is otherwise indistinguishable from a rendering bug.
+    try {
+        global.log("[quicksearch@yoji] markdown renderer load FAILED (AI answers will fall back to plain text): " +
+            String(mdErr && mdErr.message || mdErr) +
+            " stack=" + String(mdErr && mdErr.stack || '').slice(0, 600));
+    } catch (logErr) {}
+}
 
 const UUID = "quicksearch@yoji";
 
