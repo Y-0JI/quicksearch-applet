@@ -57,20 +57,42 @@ function _isExplanation(s) {
     return false;
 }
 
-// Narrow definition-style check used ONLY to suppress live for vocabulary questions such as
-// "Apa itu harga pokok penjualan?" (asks what a term means, not for a current value). This is
-// deliberately much narrower than _isExplanation so real current queries like "Kapan jadwal
-// chelsea?" (kapan + jadwal) still count as live.
+// LIVE SUBJECT CONTEXT PRECISION (AI Pipeline V3 P1 follow-up): a live subject alone is NOT
+// enough. Live detection follows this priority:
+//   1. STRONG temporal/live signal      -> LIVE        ("Jelaskan harga saham hari ini" still LIVE)
+//   2. Definition/vocabulary question   -> NOT LIVE    ("Apa itu harga pokok penjualan?")
+//   3. Conceptual/explanation request   -> NOT LIVE    ("Bagaimana harga saham bekerja?",
+//                                                      "Kenapa harga saham naik turun?",
+//                                                      "Jelaskan sistem klasemen",
+//                                                      "Fungsi prakiraan cuaca")
+//   4. Live subject + implicit current-value ask -> LIVE ("Harga BBRI", "Cuaca Jakarta",
+//                                                      "Jadwal Chelsea", "Skor Barcelona")
+//   5. Otherwise                        -> NOT LIVE
+// Conceptual check is deliberately NARROW (regex/helper based, no NLP): it only suppresses
+// queries that clearly ask for an explanation of HOW/WHY a live subject works, never a bare
+// subject that naturally reads as a current-value request.
+
+// Narrow definition-style check: "Apa itu …, definisi …, pengertian …, what is …, define …,
+// jelaskan apa …". Kept first so "Apa itu live streaming?" stays NOT live even though it
+// contains the word "live".
 function _isDefinitionQuery(s) {
     return /(apa\s*itu|apa\s*yang\s*dimaksud|definisi\s|pengertian\s|what\s+is|define\s+|explain\s+what|jelaskan\s+apa)/i.test(s);
 }
 
-// STRONG signal alone (or a live subject) -> live; prediction/estimate/update words NEVER
-// trigger live on their own. Definition queries mentioning a subject ("apa itu harga …") are
-// vocabulary, not live.
+// Conceptual / explanatory request markers: why/kenapa, jelaskan, fungsi, cara kerja, sistem,
+// konsep, mekanisme, proses, and "bagaimana … bekerja/dibuat/berjalan/…" (process questions).
+// DOES NOT include kapan (time question) so "Kapan jadwal chelsea?" stays live.
+const _CONCEPTUAL_RE = /(kenapa\b|mengapa\b|jelaskan\b|definisi\b|pengertian\b|fungsi\b|konsep\b|mekanisme\b|\bsistem\b|cara\s+kerja\b|proses\b|bagaimana\s+\S+.*\b(?:bekerja|dibuat|berjalan|berfungsi|terbentuk|terjadi|berlangsung)\b)/i;
+function _hasConceptualIntent(s) {
+    return _CONCEPTUAL_RE.test(s);
+}
+
+// PRIORITY RULE (spec): strong temporal wins; then vocabulary; then conceptual; then a live
+// subject with an implicit current-value request. prediction/perkiraan/update never matter.
 function _isIntentLive(s) {
     if (_isDefinitionQuery(s)) return false;
     if (_STRONG_LIVE_RE.test(s)) return true;
+    if (_hasConceptualIntent(s)) return false;
     return _LIVE_SUBJECT_RE.test(s);
 }
 

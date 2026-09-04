@@ -43,6 +43,31 @@ test('P1 live: definition questions about a subject are NOT live', () => {
     assert.strictEqual(detectResponseIntent('Apa itu Docker?').flags.live, false);
 });
 
+// ── P1 follow-up: LIVE SUBJECT ≠ ALWAYS LIVE QUERY ───────────────────────────
+test('P1 live: bare subject with implicit current-value request stays LIVE', () => {
+    assert.strictEqual(detectResponseIntent('Harga BBRI').flags.live, true);
+    assert.strictEqual(detectResponseIntent('Cuaca Jakarta').flags.live, true);
+    assert.strictEqual(detectResponseIntent('Jadwal Chelsea').flags.live, true);
+    assert.strictEqual(detectResponseIntent('Skor Barcelona').flags.live, true);
+    assert.strictEqual(detectResponseIntent('Klasemen Liga Inggris').flags.live, true);
+});
+
+test('P1 live: conceptual/explanatory questions about a live subject are NOT live', () => {
+    assert.strictEqual(detectResponseIntent('Bagaimana harga saham bekerja?').flags.live, false);
+    assert.strictEqual(detectResponseIntent('Kenapa harga saham naik turun?').flags.live, false);
+    assert.strictEqual(detectResponseIntent('Jelaskan sistem klasemen sepak bola').flags.live, false);
+    assert.strictEqual(detectResponseIntent('Bagaimana jadwal pertandingan dibuat?').flags.live, false);
+    assert.strictEqual(detectResponseIntent('Fungsi prakiraan cuaca').flags.live, false);
+    assert.strictEqual(detectResponseIntent('Mengapa harga saham berubah?').flags.live, false);
+    assert.strictEqual(detectResponseIntent('Cara kerja harga saham').flags.live, false);
+});
+
+test('P1 live: strong temporal signal overrides conceptual intent', () => {
+    assert.strictEqual(detectResponseIntent('Jelaskan harga saham hari ini').flags.live, true, 'temporal wins over conceptual');
+    assert.strictEqual(detectResponseIntent('Kenapa harga bitcoin turun hari ini?').flags.live, true);
+    assert.strictEqual(detectResponseIntent('Kapan jadwal chelsea?').flags.live, true, 'kapan + subject stays live');
+});
+
 // ── P2: final provider messages array ────────────────────────────────────────
 function groundedMessages(query, groundingContext, history) {
     return buildChatMessages('sys', query, groundingContext, null, history);
@@ -177,4 +202,22 @@ test('P3 engine: "Prediksi harga BBRI minggu depan" IS web-first (subject + pred
     assert.strictEqual(aiCalls, 1, 'one grounded generation');
     assert.ok(got && got.text === 'Prediksi harga BBRI.');
     assert.ok(Array.isArray(got.sources) && got.sources.length === 1, 'grounded sources');
+});
+
+test('P3 engine: conceptual question about a live subject is NOT web-first (normal AI flow)', async () => {
+    let webCalled = 0;
+    const webTool = createMockWebSearchTool({
+        handler: (query, cancellable, cb) => { webCalled++; cb(null, [{ title: 'T', url: 'https://example.com/t', snippet: 's' }]); }
+    });
+    const order = [];
+    const provider = createMockAiProvider({
+        handler: (payload, cb) => { order.push(payload.groundingContext ? 'grounded' : 'plain'); cb(null, { type: 'answer', text: 'Harga saham bekerja berdasarkan permintaan dan penawaran.' }); }
+    });
+    const engine = createAISearchEngine({ provider, webSearchTool: webTool, enableGrounding: true });
+    const got = await new Promise((resolve) => {
+        engine.search('Bagaimana harga saham bekerja?', { onAnswer: d => resolve(d), onError: () => resolve(null) });
+    });
+    assert.strictEqual(webCalled, 0, 'no early web search for conceptual subject query');
+    assert.deepStrictEqual(order, ['plain'], 'plain conversational AI flow');
+    assert.ok(got && got.text === 'Harga saham bekerja berdasarkan permintaan dan penawaran.');
 });
