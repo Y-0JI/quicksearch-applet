@@ -1096,8 +1096,25 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) {}
     }
 
+    // Copy: puts ONLY the user message content on the clipboard. Uses the Cinnamon/GJS
+    // St.Clipboard API (the same one searchEngine.js already uses) — never a browser
+    // navigator.clipboard. Pure side-effect: no conversation/state/focus changes.
+    _copyUserMessageToClipboard(text) {
+        try {
+            const content = String(text || '');
+            if (!content) return;
+            const clip = St.Clipboard.get_default();
+            if (clip && typeof clip.set_text === 'function') {
+                clip.set_text(St.ClipboardType.CLIPBOARD, content);
+            }
+        } catch (e) {}
+    }
+
     // §4 Resend: restart the conversation at the selected user message — everything from
     // that message down is dropped and the same text is re-sent once (no duplicate).
+    // Only reachable from the conditional [resend] action, which appears solely when
+    // this message's own paired answer failed — so retry drops the failed turn and
+    // streams a fresh answer, leaving earlier turns untouched.
     _resendUserMessage(id) {
         if (!convMod || !this._conversation) return;
         const m = convMod.findMessage(this._conversation, id);
@@ -1277,8 +1294,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             if (msg.role === 'user') {
                 try {
                     // ChatGPT-style message: content first, then a small utility action
-                    // row BELOW it ([copy] [edit] [resend]) — never a big right-side
-                    // cluster inside the card. The message itself stays minimal/light.
+                    // row BELOW it — never a big right-side cluster inside the card.
                     const block = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-user-block" });
                     const editing = this._aiEditId === msg.id;
                     if (editing) try { block.add_style_class_name("quicksearch-ai-user-editing"); } catch (e) {}
@@ -1286,16 +1302,31 @@ class QuickSearchApplet extends Applet.IconApplet {
                     try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
                     block.add(lbl);
                     const uid = msg.id;
+                    // Resend is CONDITIONAL: only when THIS message's own paired assistant
+                    // answer actually failed (status 'error'). Success, cancellation,
+                    // streaming and missing pairs never offer Resend — and one failed
+                    // follow-up never lights Resend on earlier turns (pairing per user
+                    // message via conversationState, never global loading/error state).
+                    const pairedMsg = convMod ? convMod.getAssistantForUserMessage(this._conversation, uid) : null;
+                    const paired = pairedMsg ? (pairedMsg.status || null) : null;
                     // tooltips only on stable (non-streaming) renders — buttons are
                     // recreated on every delta and tooltips would otherwise leak
                     const tipBucket = (!this._aiLoading && !this._aiStreaming) ? this._aiMsgTooltips : null;
                     const actionsRow = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-msg-actions" });
+                    // [copy] — always available; copies only the user content via St.Clipboard
+                    actionsRow.add(this._buildIconActionButton(["edit-copy-symbolic", "edit-copy"], tipBucket ? _("Copy message") : '', "quicksearch-ai-action-icon-btn", () => {
+                        this._copyUserMessageToClipboard(String(msg.content || ''));
+                    }, tipBucket));
+                    // [edit] — always available
                     actionsRow.add(this._buildIconActionButton(["document-edit-symbolic", "edit-symbolic"], tipBucket ? _("Edit message") : '', "quicksearch-ai-action-icon-btn", () => {
                         this._beginEditUserMessage(uid);
                     }, tipBucket));
-                    actionsRow.add(this._buildIconActionButton(["view-refresh-symbolic", "reload-symbolic"], tipBucket ? _("Resend message") : '', "quicksearch-ai-action-icon-btn", () => {
-                        this._resendUserMessage(uid);
-                    }, tipBucket));
+                    // [resend] — only when this message's own answer failed
+                    if (paired === 'error') {
+                        actionsRow.add(this._buildIconActionButton(["view-refresh-symbolic", "reload-symbolic"], tipBucket ? _("Resend message") : '', "quicksearch-ai-action-icon-btn", () => {
+                            this._resendUserMessage(uid);
+                        }, tipBucket));
+                    }
                     block.add(actionsRow);
                     ov.resultsBox.add_child(block);
                     if (this._aiMsgActors) this._aiMsgActors[uid] = block;

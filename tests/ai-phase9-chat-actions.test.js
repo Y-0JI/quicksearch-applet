@@ -180,18 +180,90 @@ test('applet wires the bottom follow-up composer', () => {
     assert.ok(APPLET_SRC.includes('ov._aiHeader.visible = composerActive'), 'chat header tied to conversation state');
 });
 
-test('applet wires per-message Edit and Resend as small icon actions', () => {
+// ---- Phase 9 §conditional-resend: per-message user→assistant pairing ----
+test('getAssistantForUserMessage pairs each user message with its own answer', () => {
+    const conv = completedConversation();
+    const msgs = convMod.getMessages(conv);
+    for (let i = 0; i < 3; i++) {
+        const u = msgs[i * 2];
+        const a = convMod.getAssistantForUserMessage(conv, u.id);
+        assert.strictEqual(a.id, msgs[i * 2 + 1].id, 'U' + (i + 1) + ' pairs with A' + (i + 1));
+        assert.strictEqual(a.status, 'complete');
+    }
+    // assistant ids are not valid user targets; unknown ids are null
+    assert.strictEqual(convMod.getAssistantForUserMessage(conv, msgs[1].id), null);
+    assert.strictEqual(convMod.getAssistantForUserMessage(conv, 'nope'), null);
+    // a dangling user message (answer never started) has no pair
+    const conv2 = completedConversation();
+    const danglingId = convMod.appendUser(conv2, 'U4');
+    assert.strictEqual(convMod.getAssistantForUserMessage(conv2, danglingId), null);
+});
+
+test('pairing is per-turn: a failed follow-up never flags earlier turns', () => {
+    const convB = convMod.createConversation();
+    const s1 = convMod.rapidSend(convB, 'U1');
+    convMod.completeAssistant(convB, s1.assistantId, 'A1', []);
+    const s2 = convMod.rapidSend(convB, 'U2');
+    convMod.failAssistant(convB, s2.assistantId, { code: 'provider_error' });
+    const msgs = convMod.getMessages(convB);
+    // user A pairs with its own COMPLETE answer (no resend); user B with its ERROR
+    assert.strictEqual(convMod.getAssistantForUserMessage(convB, msgs[0].id).status, 'complete');
+    assert.strictEqual(convMod.getAssistantForUserMessage(convB, msgs[2].id).status, 'error');
+});
+
+test('cancelled answers pair but are not resend-eligible failures', () => {
+    const conv = convMod.createConversation();
+    const s1 = convMod.rapidSend(conv, 'U1');
+    convMod.cancelAssistant(conv, s1.assistantId); // user pressed Cancel
+    const u = convMod.getMessages(conv)[0];
+    const pair = convMod.getAssistantForUserMessage(conv, u.id);
+    assert.ok(pair, 'cancelled partial still pairs with its user message');
+    assert.strictEqual(pair.status, 'cancelled');
+    assert.notStrictEqual(pair.status, 'error', 'cancel is a user action, not a provider failure');
+});
+
+test('resend after an errored answer keeps prefix and drops only the failed turn', () => {
+    const conv = convMod.createConversation();
+    const s1 = convMod.rapidSend(conv, 'U1');
+    convMod.completeAssistant(conv, s1.assistantId, 'A1', []);
+    const s2 = convMod.rapidSend(conv, 'U2');
+    convMod.updateAssistant(conv, s2.assistantId, 'partial');
+    convMod.failAssistant(conv, s2.assistantId, { code: 'provider_error' });
+    const msgs = convMod.getMessages(conv);
+    const u2 = msgs[2];
+    assert.strictEqual(convMod.getAssistantForUserMessage(conv, u2.id).status, 'error');
+    const res = convMod.resendFrom(conv, u2.id);
+    assert.ok(res);
+    assert.deepStrictEqual(contents(conv), ['U1', 'A1', 'U2', '']);
+    assert.strictEqual(convMod.getMessages(conv)[3].status, 'streaming', 'fresh retry streams');
+    assert.strictEqual(userMsgs(conv).length, 2);
+    assert.strictEqual(userMsgs(conv).filter(m => m.content === 'U2').length, 1, 'no duplicate user message');
+    assert.strictEqual(convMod.getAssistantForUserMessage(conv, res.userMsgId).status, 'streaming');
+});
+
+test('applet wires per-message Copy/Edit and conditional Resend as small icon actions', () => {
     assert.ok(APPLET_SRC.includes('_beginEditUserMessage'), 'edit handler present');
     assert.ok(APPLET_SRC.includes('_resendUserMessage'), 'resend handler present');
+    assert.ok(APPLET_SRC.includes('_copyUserMessageToClipboard'), 'copy handler present');
     assert.ok(APPLET_SRC.includes('_buildIconActionButton'), 'icon action button builder present');
+    assert.ok(APPLET_SRC.includes('edit-copy-symbolic'), 'copy uses a symbolic icon');
     assert.ok(APPLET_SRC.includes('document-edit-symbolic'), 'edit uses a symbolic icon');
     assert.ok(APPLET_SRC.includes('view-refresh-symbolic'), 'resend uses a symbolic icon');
-    assert.ok(APPLET_SRC.includes('_("Edit message")') || APPLET_SRC.includes("_('Edit message')"), 'edit tooltip text');
-    assert.ok(APPLET_SRC.includes('_("Resend message")') || APPLET_SRC.includes("_('Resend message')"), 'resend tooltip text');
+    assert.ok(APPLET_SRC.includes('_("Copy message")'), 'copy tooltip text');
+    assert.ok(APPLET_SRC.includes('_("Edit message")'), 'edit tooltip text');
+    assert.ok(APPLET_SRC.includes('_("Resend message")'), 'resend tooltip text');
+    // copy must use the Cinnamon/GJS St.Clipboard API, never navigator.clipboard
+    assert.ok(APPLET_SRC.includes('St.Clipboard.get_default()'), 'copy uses the Cinnamon St.Clipboard API');
+    assert.ok(APPLET_SRC.includes('St.ClipboardType.CLIPBOARD'), 'copy targets the CLIPBOARD selection');
     // actions live only on user messages and never join keyboard row navigation
     assert.ok(APPLET_SRC.includes("msg.role === 'user'"), 'user branch exists');
     const userSection = APPLET_SRC.slice(APPLET_SRC.indexOf('_renderAIState'), APPLET_SRC.indexOf('_renderSourcesForMessage'));
+    assert.ok(userSection.includes('_copyUserMessageToClipboard'), 'copy bound inside user row');
     assert.ok(userSection.includes('_beginEditUserMessage(uid)') || userSection.includes('_beginEditUserMessage'), 'edit bound inside user row');
+    // resend is CONDITIONAL on this message's own paired answer failing — pairing is
+    // resolved through conversationState, never global loading/error state
+    assert.ok(userSection.includes('convMod.getAssistantForUserMessage'), 'pairing via conversationState');
+    assert.ok(userSection.includes("paired === 'error'"), 'resend gated on the paired answer status');
     assert.ok(!(userSection.match(/_rows\.push\(/g) || []).length, 'conversation rows never enter keyboard _rows');
 });
 
@@ -245,6 +317,12 @@ test('sticky auto-scroll: follow only while near the bottom', () => {
     assert.ok(APPLET_SRC.includes('_scheduleAIScroll'), 'deferred scroll scheduler present');
     assert.ok(APPLET_SRC.includes('_scrollAIMessageIntoView'), 'scroll-to-message present (Edit/Resend)');
     assert.ok(APPLET_SRC.includes('_cancelAIScroll'), 'scroll timer cleanup present');
+});
+
+test('action row keeps a clear consistent gap below every user text', () => {
+    const actionsCss = CSS_SRC.slice(CSS_SRC.indexOf('.quicksearch-ai-msg-actions'), CSS_SRC.indexOf('.quicksearch-ai-msg-actions') + 400);
+    assert.ok(actionsCss.includes('padding: 5px 0 3px 10px;'), 'explicit 5px top gap between text and action row');
+    assert.ok(actionsCss.includes('spacing: 4px;'), '4px horizontal gap between action icons');
 });
 
 test('chat layout + message-action styling exists', () => {

@@ -177,10 +177,13 @@
     background-color: rgba(255, 196, 0, 0.10);
 }
 
-/* utility action row: under the message, small, subtle, secondary */
+/* utility action row: under the message, small, subtle, secondary.
+   Every user turn renders this same class, so the top padding below the
+   message text is identical for the first question and every follow-up:
+   a small but clear 5px gap between the text and the action icons. */
 .quicksearch-ai-msg-actions {
     spacing: 4px;
-    padding: 2px 0 3px 10px;
+    padding: 5px 0 3px 10px;
 }
 
 .quicksearch-ai-action-icon-btn {

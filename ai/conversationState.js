@@ -216,6 +216,29 @@ function truncateAfter(conv, id) {
     return true;
 }
 
+// Phase 9 §conditional-resend: pair a user message with the assistant message that
+// answers it — the first assistant turn after it and before the next user turn. Each
+// user message is judged by its OWN paired answer, never by a global "last request"
+// state, so a failure on one turn never lights up Resend on another turn. Returns the
+// assistant message object, or null when no paired answer exists yet (e.g. an edited
+// message whose rewrite was never sent, or a dangling user message).
+function getAssistantForUserMessage(conv, userMsgId) {
+    if (!conv || !Array.isArray(conv.messages) || userMsgId == null) return null;
+    const msgs = conv.messages;
+    let idx = -1;
+    for (let i = 0; i < msgs.length; i++) {
+        if (msgs[i] && msgs[i].id === userMsgId) { idx = i; break; }
+    }
+    if (idx < 0 || !msgs[idx] || msgs[idx].role !== 'user') return null;
+    for (let i = idx + 1; i < msgs.length; i++) {
+        const m = msgs[i];
+        if (!m) continue;
+        if (m.role === 'user') return null;
+        if (m.role === 'assistant') return m;
+    }
+    return null;
+}
+
 // Phase 9 §Resend: remove `id` and everything after it (the target message itself is
 // dropped too — the same text is re-appended as a fresh user message on resend).
 function removeFrom(conv, id) {
@@ -282,6 +305,7 @@ module.exports = {
     reset,
     count,
     findMessage,
+    getAssistantForUserMessage,
     truncateAfter,
     removeFrom,
     editAndRestart,
