@@ -721,6 +721,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiEditId = null;
         this._aiMsgActors = {};
         this._aiStickBottom = true;
+        this._aiLayoutId = 0;
         this._aiScrollId = 0;
         this._aiScrollAdjIds = [];
         this._aiScrollBound = false;
@@ -964,6 +965,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiEditId = null;
         this._syncModeUI();
         this._renderAIState();
+        try { this._scheduleAILayoutSync(); } catch (e) {}
         if (this._hasConversation()) {
             // preserved conversation → bottom composer owns the input
             try { this._activateComposerInput(); } catch (e) {}
@@ -985,6 +987,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     _goToSearchMode() {
         if (this._mode !== 'ai') return;
         try { this._hideSourcesPopover(); } catch (e) {}
+        this._cancelAILayoutSync();
         this._aiGen++;
         if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiLoading = false;
@@ -1041,6 +1044,7 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     _clearAIState() {
         try { this._hideSourcesPopover(); } catch (e) {}
+        this._cancelAILayoutSync();
         this._aiLoading = false;
         this._aiStreaming = false;
         this._aiEditId = null;
@@ -1332,6 +1336,38 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     // ---- Phase 9 §6: sticky auto-scroll ----
 
+    _cancelAILayoutSync() {
+        if (this._aiLayoutId) {
+            try { GLib.source_remove(this._aiLayoutId); } catch (e) {}
+            this._aiLayoutId = 0;
+        }
+    }
+    _scheduleAILayoutSync() {
+        this._cancelAILayoutSync();
+        const self = this;
+        function _do() {
+            try {
+                const ov = self._overlay;
+                if (!ov || !ov._entryRow) return GLib.SOURCE_REMOVE;
+                let pw = 0;
+                try { pw = Math.round(ov._entryRow.get_transformed_size()[0]) || 0; } catch (e) {}
+                if (!pw) {
+                    try { pw = Math.round(ov._entryRow.get_allocation_box ? ov._entryRow.get_allocation_box().x2 - ov._entryRow.get_allocation_box().x1 : 0) || 0; } catch (e) {}
+                }
+                if (pw <= 0) {
+                    try { if (ov._entryRow.queue_relayout) ov._entryRow.queue_relayout(); } catch (e) {}
+                    try { if (ov.resultsRegion.queue_relayout) ov.resultsRegion.queue_relayout(); } catch (e) {}
+                    self._aiLayoutId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => { self._aiLayoutId = 0; _do(); return GLib.SOURCE_REMOVE; });
+                    return GLib.SOURCE_REMOVE;
+                }
+                try { self._syncRegionGeometry(); } catch (e) {}
+                try { self._ensureScrollTracking(); } catch (e) {}
+                if (self._aiStickBottom) try { self._scheduleAIScroll(false); } catch (e) {}
+            } catch (e) {}
+            return GLib.SOURCE_REMOVE;
+        }
+        this._aiLayoutId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => { this._aiLayoutId = 0; _do(); return GLib.SOURCE_REMOVE; });
+    }
     _cancelAIScroll() {
         if (this._aiScrollId) {
             try { GLib.source_remove(this._aiScrollId); } catch (e) {}
@@ -1619,10 +1655,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { this._syncSelection(); } catch (e) {}
         try { this._syncAIComposerState(); } catch (e) {}
         if (messages.length > 0) {
-            // §6: follow the stream only while the user is near the bottom; never force
-            // the viewport down while they are reading older messages.
             try { this._ensureScrollTracking(); } catch (e) {}
             try { this._scheduleAIScroll(false); } catch (e) {}
+            try { this._scheduleAILayoutSync(); } catch (e) {}
         }
     }
 
@@ -1861,6 +1896,7 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     _stopAI() {
         try { this._hideSourcesPopover(); } catch (e) {}
+        this._cancelAILayoutSync();
         this._aiGen++;
         if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiLoading = false;
@@ -1878,6 +1914,7 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     _resetConversation() {
         try { this._hideSourcesPopover(); } catch (e) {}
+        this._cancelAILayoutSync();
         this._aiGen++;
         if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiLoading = false;
@@ -1949,6 +1986,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
         this._overlay.open(global.get_current_time());
         this._overlay.dialogLayout.set_height(global.screen_height - 2);
+        this._cancelAILayoutSync();
+        try { this._scheduleAILayoutSync(); } catch (e) {}
         global.stage.set_key_focus(this._overlay._entry);
         this._overlay._startCaretBlink();
         this._overlay.setText("");
@@ -1965,6 +2004,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     close() {
+        this._cancelAILayoutSync();
         try { this._hideSourcesPopover(); } catch (e) {}
         try { if (this._contextMenu) this._contextMenu.hide(); } catch (e) {}
         if (this._engine) this._engine.cancel();
@@ -2660,6 +2700,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             this._overlay._keyFocusIds = [];
             this._overlay._outsideClickId = 0;
         }
+        this._cancelAILayoutSync();
         try { this._hideSourcesPopover(); } catch (e) {}
         try { if (this._sourcesPopover) { this._sourcesPopover.destroy(); this._sourcesPopover = null; } } catch (e) {}
         this._sourcesPopoverAnchorId = null;
