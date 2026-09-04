@@ -4,6 +4,7 @@
 function _tryReq(p) { try { return require(p); } catch (e) { return null; } }
 let promptBuilderMod = _tryReq('./ai/promptBuilder.js') || _tryReq('./promptBuilder.js') || _tryReq('ai/promptBuilder.js');
 let sourceFormatterMod = _tryReq('./ai/sourceFormatter.js') || _tryReq('./sourceFormatter.js') || _tryReq('ai/sourceFormatter.js');
+let citationCleanerMod = _tryReq('./ai/citationCleaner.js') || _tryReq('./citationCleaner.js') || _tryReq('ai/citationCleaner.js');
 let Gt = _tryReq('./ai/groundingTypes.js') || _tryReq('./groundingTypes.js') || _tryReq('ai/groundingTypes.js');
 if (!promptBuilderMod) try { global.log("[quicksearch@yoji] aiSearchEngine missing promptBuilder"); } catch (e) {}
 if (!sourceFormatterMod) try { global.log("[quicksearch@yoji] aiSearchEngine missing sourceFormatter"); } catch (e) {}
@@ -58,6 +59,14 @@ function _logWebSearchSources(query, sources) {
 
 // P4 dynamic runtime context: built per request (never persisted into conversation history),
 // appended to the system prompt. `grounded` marks the evidence (web search) leg of the request.
+// P1 citation cleanup: strip bracketed citation markers ("[1]", "[1][2]") from the visible
+// text of GROUNDED answers only. Source metadata is separate and untouched. Ungrounded
+// answers (no numbered evidence) are never altered.
+function _cleanAnswerText(text) {
+    if (!citationCleanerMod || typeof citationCleanerMod.cleanAnswerCitations !== 'function') return text;
+    try { return citationCleanerMod.cleanAnswerCitations(text); } catch (e) { return text; }
+}
+
 function _buildRequestSystemPrompt(promptBuilder, grounded) {
     let base = '';
     try { base = promptBuilder.buildSystemPrompt(); } catch (e) { base = ''; }
@@ -218,13 +227,15 @@ function createAISearchEngine(deps) {
 
     function _deliverAnswer(myGen, cancellable, callbacks, text, sources, meta) {
         if (_stale(myGen) || _isCancelled(cancellable) || destroyed) return;
+        // sources is the numbered evidence of the grounded leg -> its text may carry [n] markers
+        const finalText = (Array.isArray(sources) && sources.length > 0) ? _cleanAnswerText(text) : text;
         let payload;
         if (Gt && typeof Gt.createGroundedAnswer === 'function') {
-            payload = Gt.createGroundedAnswer(text, sources || [], meta || null);
+            payload = Gt.createGroundedAnswer(finalText, sources || [], meta || null);
         } else {
             const normalizedSources = sourceFormatter.formatSources(sources || []);
             const grounded = normalizedSources.length > 0;
-            payload = { type: 'answer', text, grounded, sources: normalizedSources };
+            payload = { type: 'answer', text: finalText, grounded, sources: normalizedSources };
             if (meta && meta.finishReason) payload.finishReason = meta.finishReason;
             payload.truncated = !!(meta && meta.truncated);
         }
@@ -518,6 +529,8 @@ function createAISearchEngine(deps) {
             if (settled || _staleS() || _isCancelled(myCancellable) || destroyed) return;
             settled = true;
             const effectiveText = typeof finalText === 'string' ? finalText : accumulatedText;
+            // groundedSources non-null <=> this text came from a grounded (numbered-evidence) leg
+            const displayText = (groundedSources !== null) ? _cleanAnswerText(effectiveText) : effectiveText;
             // Source retention: prefer provider sources if they yield >=1 valid after AI-5 canonicalization,
             // else fallback to grounded canonical sources. Never overwrite valid grounded with invalid/empty.
             let effectiveSources = [];
@@ -547,10 +560,10 @@ function createAISearchEngine(deps) {
             if (callbacks && typeof callbacks.onComplete === 'function') {
                 let payload;
                 if (Gt && typeof Gt.createGroundedAnswer === 'function') {
-                    payload = Gt.createGroundedAnswer(effectiveText, effectiveSources, metaExtra || null);
+                    payload = Gt.createGroundedAnswer(displayText, effectiveSources, metaExtra || null);
                 } else {
                     const normalizedSources = sourceFormatter.formatSources(effectiveSources);
-                    payload = { type: 'answer', text: effectiveText, grounded: normalizedSources.length > 0, sources: normalizedSources };
+                    payload = { type: 'answer', text: displayText, grounded: normalizedSources.length > 0, sources: normalizedSources };
                     if (metaExtra && metaExtra.finishReason) payload.finishReason = metaExtra.finishReason;
                     payload.truncated = !!(metaExtra && metaExtra.truncated);
                 }
@@ -583,7 +596,8 @@ function createAISearchEngine(deps) {
             if (evt.type === 'delta') {
                 const chunk = typeof evt.text === 'string' ? evt.text : '';
                 accumulatedText += chunk;
-                if (callbacks && typeof callbacks.onDelta === 'function') callbacks.onDelta(chunk, accumulatedText);
+                // second leg is always grounded -> deltas are cleaned so markers never show mid-stream
+                if (callbacks && typeof callbacks.onDelta === 'function') callbacks.onDelta(chunk, _cleanAnswerText(accumulatedText));
                 return;
             }
             if (evt.type === 'tool_call') {
