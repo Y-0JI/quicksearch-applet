@@ -6,6 +6,7 @@ let promptBuilderMod = _tryReq('./ai/promptBuilder.js') || _tryReq('./promptBuil
 let sourceFormatterMod = _tryReq('./ai/sourceFormatter.js') || _tryReq('./sourceFormatter.js') || _tryReq('ai/sourceFormatter.js');
 let citationCleanerMod = _tryReq('./ai/citationCleaner.js') || _tryReq('./citationCleaner.js') || _tryReq('ai/citationCleaner.js');
 let Gt = _tryReq('./ai/groundingTypes.js') || _tryReq('./groundingTypes.js') || _tryReq('ai/groundingTypes.js');
+let responseIntentMod = _tryReq('./ai/responseIntent.js') || _tryReq('./responseIntent.js') || _tryReq('ai/responseIntent.js');
 if (!promptBuilderMod) try { global.log("[quicksearch@yoji] aiSearchEngine missing promptBuilder"); } catch (e) {}
 if (!sourceFormatterMod) try { global.log("[quicksearch@yoji] aiSearchEngine missing sourceFormatter"); } catch (e) {}
 
@@ -67,9 +68,21 @@ function _cleanAnswerText(text) {
     try { return citationCleanerMod.cleanAnswerCitations(text); } catch (e) { return text; }
 }
 
-function _buildRequestSystemPrompt(promptBuilder, grounded) {
+// P1/P2/P3: build the request system prompt = CORE + the guidance matching the detected
+// intent of `query` (+ completeness when requested) + concise grounded-evidence rules on the
+// evidence leg. Only the relevant intent guidance is appended — no full rulebook per request.
+function _buildRequestSystemPrompt(promptBuilder, grounded, query) {
+    let intent = null;
+    if (responseIntentMod && typeof responseIntentMod.detectResponseIntent === 'function') {
+        try { intent = responseIntentMod.detectResponseIntent(String(query || '')); } catch (e) { intent = null; }
+    }
     let base = '';
-    try { base = promptBuilder.buildSystemPrompt(); } catch (e) { base = ''; }
+    try {
+        base = promptBuilder.buildSystemPrompt({ intent: intent || undefined, grounded: !!grounded });
+    } catch (e) { base = ''; }
+    if (!base) {
+        try { base = promptBuilder.buildSystemPrompt(); } catch (e2) { base = ''; }
+    }
     let runtime = '';
     try {
         runtime = (promptBuilder.buildRuntimeContext && typeof promptBuilder.buildRuntimeContext === 'function')
@@ -287,7 +300,7 @@ function createAISearchEngine(deps) {
     function _groundedPayload(q, groundingContext, groundingContextObj, sources) {
         const p = {
             query: q,
-            systemPrompt: _buildRequestSystemPrompt(promptBuilder, true),
+            systemPrompt: _buildRequestSystemPrompt(promptBuilder, true, q),
             groundingContext,
             groundingContextObj,
             searchResults: sources,
@@ -378,7 +391,7 @@ function createAISearchEngine(deps) {
             return;
         }
 
-        let systemPrompt = _buildRequestSystemPrompt(promptBuilder, false);
+        let systemPrompt = _buildRequestSystemPrompt(promptBuilder, false, q);
 
         // Phase 8 §3: bounded conversation history (validated) attached to every provider payload.
         let historyMessages = [];
@@ -573,7 +586,7 @@ function createAISearchEngine(deps) {
             return;
         }
 
-        let systemPrompt = _buildRequestSystemPrompt(promptBuilder, false);
+        let systemPrompt = _buildRequestSystemPrompt(promptBuilder, false, q);
 
         // Phase 8 §3: bounded conversation history (validated) attached to every provider payload.
         let historyMessages = [];
@@ -589,6 +602,11 @@ function createAISearchEngine(deps) {
         let groundedSources = null;
         let toolCallPending = false;
         let settled = false;
+        // P9: for clearly live/current queries with grounding enabled, the first (ungrounded)
+        // draft is BUFFERED instead of streamed, so the user never sees a provisional answer
+        // that gets replaced by the grounded synthesis (no flicker / contradictory draft).
+        // If grounding fails, the buffered draft is delivered via the normal fallback path.
+        const liveBuffered = !!enableGrounding && _isLiveQuery(q);
 
         function _staleS() { return myGen !== gen; }
 
@@ -701,6 +719,8 @@ function createAISearchEngine(deps) {
                 if (toolCallPending) return;
                 const chunk = typeof evt.text === 'string' ? evt.text : '';
                 accumulatedText += chunk;
+                // P9: keep live-query first-leg drafts invisible until/unless grounding fails
+                if (liveBuffered) return;
                 if (callbacks && typeof callbacks.onDelta === 'function') callbacks.onDelta(chunk, accumulatedText);
                 return;
             }

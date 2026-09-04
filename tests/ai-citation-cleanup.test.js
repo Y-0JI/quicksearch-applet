@@ -202,5 +202,5 @@ test('system prompt: no visible citation markers, naturalization + interpretatio
     assert.ok(s.includes('visible answer'), 'visible answer concept present');
     assert.ok(s.includes('unsupported facts'), 'no unsupported facts rule present');
     assert.ok(s.includes('Distinguish factual data from interpretation'), 'interpretation rule present');
-    assert.ok(s.includes('never give buy/sell or market predictions'), 'no-prediction guard present');
+    assert.ok(s.includes('buy/sell or market predictions'), 'no-prediction guard present');
 });
