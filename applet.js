@@ -92,14 +92,20 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._entry.clutter_text.set_cursor_visible(true);
         const entryRow = new St.BoxLayout({ style_class: "quicksearch-entry-row" });
         this._entryRow = entryRow;
-        // UI-1: leading search icon inside the pill (launcher identity)
-        this._searchIcon = new St.Icon({
-            icon_name: "system-search",
-            icon_size: 14,
-            icon_type: St.IconType.SYMBOLIC,
-            style_class: "quicksearch-search-icon"
-        });
-        entryRow.add(this._searchIcon);
+        // UI-1: leading search icon inside the pill (launcher identity). P1-3: each
+        // new optional widget is isolated — a runtime failure logs instead of silently
+        // killing the whole overlay (which would make the searchbox never appear).
+        try {
+            this._searchIcon = new St.Icon({
+                icon_name: "system-search",
+                icon_size: 14,
+                icon_type: St.IconType.SYMBOLIC,
+                style_class: "quicksearch-search-icon"
+            });
+            entryRow.add(this._searchIcon);
+        } catch (e) {
+            try { global.log("[quicksearch@yoji] search icon init failed: " + e); } catch (e2) {}
+        }
         entryRow.add(this._entry, { expand: true });
         // AI mode control lives inside the existing searchbox pill (Phase AI-4).
         // Single overlay, single searchbox — toggle does not create a second searchbox.
@@ -127,21 +133,23 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._modeLabel = _modeLabel;
         entryRow.add(this._modeButton);
         // UI-1: compact close button at the right of the search pill (✕)
-        this._closeButton = new St.Button({
-            style_class: "quicksearch-close-button",
-            can_focus: false,
-            reactive: true,
-            track_hover: true
-        });
-        const _closeLabel = new St.Label({ text: _("\u2715"), style_class: "quicksearch-close-button-label" });
-        try { this._closeButton.set_child(_closeLabel); } catch (e) {}
-        entryRow.add(this._closeButton);
         try {
+            this._closeButton = new St.Button({
+                style_class: "quicksearch-close-button",
+                can_focus: false,
+                reactive: true,
+                track_hover: true
+            });
+            const _closeLabel = new St.Label({ text: _("\u2715"), style_class: "quicksearch-close-button-label" });
+            try { this._closeButton.set_child(_closeLabel); } catch (e) {}
+            entryRow.add(this._closeButton);
             this._closeButton.connect("clicked", () => {
                 try { this._applet.close(); } catch (e) {}
                 return Clutter.EVENT_STOP;
             });
-        } catch (e) {}
+        } catch (e) {
+            try { global.log("[quicksearch@yoji] close button init failed: " + e); } catch (e2) {}
+        }
         try {
             this._modeButton.connect("clicked", () => {
                 try { this._applet._toggleMode(); } catch (e) {}
@@ -157,37 +165,45 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         // P2-1: the chips live inside a horizontal ScrollView so a narrow panel / high
         // DPI / font scaling can never push them out of the container — all categories
         // stay reachable via horizontal overflow instead of a second nav layer.
-        this._filterRow = new St.BoxLayout({ style_class: "quicksearch-filter-row", vertical: false, visible: false, x_expand: false, x_fill: false });
-        this._filterScroll = new St.ScrollView({
-            style_class: "quicksearch-filter-scroll",
-            x_fill: true, y_fill: false,
-            clip_to_allocation: true,
-            visible: false
-        });
-        try { this._filterScroll.set_policy(St.PolicyType.AUTOMATIC, St.PolicyType.NEVER); } catch (e) {}
+        // P1-3: the filter row is optional UI — if ANY step fails on this Cinnamon/GJS
+        // runtime (unsupported property, layout manager quirk, actor parenting), log it
+        // and continue: the searchbox must still open. All consumers guard on
+        // _filterRow/_filterScroll/_filterButtons existing, so a partial init is safe.
         this._filterButtons = [];
-        const _categories = [
-            ["all", _("All")],
-            ["app", _("Apps")],
-            ["file", _("Files")],
-            ["folder", _("Folders")],
-            ["web", _("Web")]
-        ];
-        for (let ci = 0; ci < _categories.length; ci++) {
-            const catId = _categories[ci][0];
-            const catLabel = _categories[ci][1];
-            const btn = new St.Button({ style_class: "quicksearch-filter-chip", can_focus: false, reactive: true, track_hover: true });
-            const lbl = new St.Label({ text: catLabel, style_class: "quicksearch-filter-chip-label" });
-            try { btn.set_child(lbl); } catch (e) {}
-            btn.connect("clicked", () => {
-                try { this._applet._setCategory(catId); } catch (e) {}
-                return Clutter.EVENT_STOP;
+        try {
+            this._filterRow = new St.BoxLayout({ style_class: "quicksearch-filter-row", vertical: false, visible: false, x_expand: false, x_fill: false });
+            this._filterScroll = new St.ScrollView({
+                style_class: "quicksearch-filter-scroll",
+                x_fill: true, y_fill: false,
+                clip_to_allocation: true,
+                visible: false
             });
-            this._filterButtons.push({ id: catId, button: btn, label: lbl });
-            this._filterRow.add(btn);
+            try { this._filterScroll.set_policy(St.PolicyType.AUTOMATIC, St.PolicyType.NEVER); } catch (e) {}
+            const _categories = [
+                ["all", _("All")],
+                ["app", _("Apps")],
+                ["file", _("Files")],
+                ["folder", _("Folders")],
+                ["web", _("Web")]
+            ];
+            for (let ci = 0; ci < _categories.length; ci++) {
+                const catId = _categories[ci][0];
+                const catLabel = _categories[ci][1];
+                const btn = new St.Button({ style_class: "quicksearch-filter-chip", can_focus: false, reactive: true, track_hover: true });
+                const lbl = new St.Label({ text: catLabel, style_class: "quicksearch-filter-chip-label" });
+                try { btn.set_child(lbl); } catch (e) {}
+                btn.connect("clicked", () => {
+                    try { this._applet._setCategory(catId); } catch (e) {}
+                    return Clutter.EVENT_STOP;
+                });
+                this._filterButtons.push({ id: catId, button: btn, label: lbl });
+                this._filterRow.add(btn);
+            }
+            try { this._filterScroll.add_actor(this._filterRow); } catch (e) { try { this._filterScroll.add_child(this._filterRow); } catch (e2) {} }
+            this.contentLayout.add(this._filterScroll);
+        } catch (e) {
+            try { global.log("[quicksearch@yoji] category filter row init failed: " + e); } catch (e2) {}
         }
-        try { this._filterScroll.add_actor(this._filterRow); } catch (e) { try { this._filterScroll.add_child(this._filterRow); } catch (e2) {} }
-        this.contentLayout.add(this._filterScroll);
         this._caretBlinkId = 0;
         this._caretVisible = true;
         this._blinkEntry = this._entry;
@@ -253,15 +269,23 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         const _sendLabel = new St.Label({ text: _("Send"), style_class: "quicksearch-ai-send-label" });
         try { this._composerSend.set_child(_sendLabel); } catch (e) {}
         // UI-3: compact “+” prefix before the follow-up entry (AI-tool feel, not a chat app)
-        this._composerPlus = new St.Icon({ icon_name: "list-add-symbolic", icon_size: 12, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-composer-plus" });
-        this._composerRow.add(this._composerPlus);
+        try {
+            this._composerPlus = new St.Icon({ icon_name: "list-add-symbolic", icon_size: 12, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-composer-plus" });
+            this._composerRow.add(this._composerPlus);
+        } catch (e) {
+            try { global.log("[quicksearch@yoji] composer plus icon init failed: " + e); } catch (e2) {}
+        }
         this._composerRow.add(this._composerEntry, { expand: true });
         this._composerRow.add(this._stopButton);
         this._composerRow.add(this._composerSend);
         this._aiComposer.add(this._composerRow);
         // UI-4: context-aware keyboard hints bar (subtle, under the panel area)
-        this._hintsLabel = new St.Label({ text: "", style_class: "quicksearch-hints", visible: false });
-        this.contentLayout.add(this._hintsLabel);
+        try {
+            this._hintsLabel = new St.Label({ text: "", style_class: "quicksearch-hints", visible: false });
+            this.contentLayout.add(this._hintsLabel);
+        } catch (e) {
+            try { global.log("[quicksearch@yoji] hints bar init failed: " + e); } catch (e2) {}
+        }
         this.contentLayout.add(this._aiComposer);
         // conversation header pinned above the results panel (chat mode only): [+ New Chat]
         this._aiHeader = new St.BoxLayout({ style_class: "quicksearch-ai-chat-header", vertical: false, visible: false });
@@ -2255,12 +2279,22 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiMsgActors = {};
         // UI-2: every open starts on the All filter (predictable launcher state)
         this._category = 'all';
-        try { this._syncFilterUI(); } catch (e) {}
+        try { this._syncFilterUI(); } catch (e) {
+            try { global.log("[quicksearch@yoji] syncFilterUI failed on open: " + e); } catch (e2) {}
+        }
         this._cancelAIScroll();
         if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiGen++;
         if (convMod && this._conversation) { try { convMod.cancelActive(this._conversation); } catch (e) {} }
         this._overlay.open(global.get_current_time());
+        // P1-4: if the ModalDialog did not leave the CLOSED state after open(), the
+        // searchbox can never appear — log it instead of failing silently. (OPENING/OPEN
+        // are both fine; only CLOSED means open() itself failed.)
+        try {
+            if (this._overlay && typeof ModalDialog !== 'undefined' && this._overlay.state === ModalDialog.State.CLOSED) {
+                try { global.log("[quicksearch@yoji] WARN overlay.state still CLOSED right after open() — dialog may not be visible"); } catch (e2) {}
+            }
+        } catch (e) {}
         this._overlay.dialogLayout.set_height(global.screen_height - 2);
         this._cancelAILayoutSync();
         try { this._scheduleAILayoutSync(); } catch (e) {}

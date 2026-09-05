@@ -286,6 +286,30 @@ test('P2-2: sources stay inline-compact — wrapping pills, label + View more on
     assert.ok(!srcSection.includes('sidebar'), 'no sidebar');
 });
 
+test('P1-3: overlay constructor cannot fail silently — new widgets are isolated + logged', () => {
+    // every new constructor widget block logs on failure instead of killing the
+    // whole overlay (which would produce exactly “click does nothing”)
+    for (const tag of ['search icon init failed', 'close button init failed', 'category filter row init failed', 'composer plus icon init failed', 'hints bar init failed']) {
+        assert.ok(APPLET_SRC.includes(tag), `failure log tag present: ${tag}`);
+    }
+    // the filter row block wraps ALL of its construction in one try/catch so a single
+    // unsupported property on a given Cinnamon/GJS runtime cannot abort the constructor
+    const filterIdx = APPLET_SRC.indexOf('this._filterButtons = [];');
+    const filterSection = APPLET_SRC.slice(filterIdx, filterIdx + 2800);
+    assert.ok(filterSection.includes('try {'), 'filter row construction wrapped in try');
+    assert.ok(filterSection.includes('global.log("[quicksearch@yoji] category filter row init failed'), 'filter row failure is logged, not swallowed');
+    // the failure log must not be an empty catch
+    assert.ok(!filterSection.includes('} catch (e) {}\n        this._caretBlinkId'), 'constructor continues after logged failure');
+});
+
+test('P1-4: open() verifies the modal actually left the CLOSED state', () => {
+    const openIdx = APPLET_SRC.indexOf('this._overlay.open(global.get_current_time());');
+    assert.ok(openIdx !== -1, 'overlay.open call exists');
+    const section = APPLET_SRC.slice(openIdx, openIdx + 800);
+    assert.ok(section.includes('this._overlay.state === ModalDialog.State.CLOSED'), 'post-open state check present');
+    assert.ok(section.includes('WARN overlay.state still CLOSED'), 'failure is logged, not swallowed');
+});
+
 test('P2-3: long code lines scroll horizontally inside the code surface', () => {
     assert.ok(APPLET_SRC.includes('quicksearch-ai-md-code-scroll'), 'code scroll container');
     const codeIdx = APPLET_SRC.indexOf('block.kind === \'code\'');
