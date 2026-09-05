@@ -286,7 +286,11 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         } catch (e) {
             try { global.log("[quicksearch@yoji] hints bar init failed: " + e); } catch (e2) {}
         }
-        this.contentLayout.add(this._aiComposer);
+        // Composer fills the conversation panel width (x_fill) so it flushes with
+        // the attached scroll above — presentation only, geometry stays in _syncRegionGeometry.
+        try { this.contentLayout.add(this._aiComposer, { x_fill: true }); } catch (e) {
+            try { this.contentLayout.add(this._aiComposer); } catch (e2) {}
+        }
         // conversation header pinned above the results panel (chat mode only): [+ New Chat]
         this._aiHeader = new St.BoxLayout({ style_class: "quicksearch-ai-chat-header", vertical: false, visible: false });
         // Phase 15: the header lives above the conversation in AI chat mode, so it is
@@ -2711,8 +2715,15 @@ class QuickSearchApplet extends Applet.IconApplet {
             try { ov._aiHeader.set_size(w, hdrH); } catch (e) {}
         }
         try {
-            if (hdrVisible) ov._scroll.add_style_class_name('quicksearch-scroll-attached');
-            else ov._scroll.remove_style_class_name('quicksearch-scroll-attached');
+            if (hdrVisible) {
+                ov._scroll.add_style_class_name('quicksearch-scroll-attached');
+                try { ov._aiComposer.add_style_class_name('quicksearch-ai-composer-attached'); } catch (e2) {}
+                try { if (ov._hintsLabel) ov._hintsLabel.add_style_class_name('quicksearch-hints-attached'); } catch (e3) {}
+            } else {
+                ov._scroll.remove_style_class_name('quicksearch-scroll-attached');
+                try { ov._aiComposer.remove_style_class_name('quicksearch-ai-composer-attached'); } catch (e2) {}
+                try { if (ov._hintsLabel) ov._hintsLabel.remove_style_class_name('quicksearch-hints-attached'); } catch (e3) {}
+            }
         } catch (e) {}
         let h = 0;
         if (ov._scroll.visible) {
