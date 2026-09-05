@@ -67,8 +67,7 @@ const LAYOUT = {
     pillH: 54,          // search pill nominal height (px)
     filterH: 34,        // category filter row height (px) when visible
     hintsH: 22,         // keyboard hints bar height (px) when visible
-    maxResultsH: 664,   // hard cap for the results/chat panel height (px)
-    roomCapMin: 320     // minimum room kept below the pill (px)
+    maxResultsH: 664    // hard cap for the results/chat panel height (px)
 };
 
 const FALLBACK_URLS = {
@@ -1935,18 +1934,39 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!ov || !Array.isArray(sources) || sources.length === 0) return;
         try {
             const count = sources.length;
-            // UI-3: inline compact sources — 🔗 Sources + up to 3 clickable pills, with
-            // "View more" on its OWN line below (P2-2) so a long title or narrow window
-            // can never push it out of the panel. Pills open the source directly
-            // (structural http(s) gate in _openSourceUrl); View more toggles the full
-            // popover kept from the previous UI.
+            // UI-3: inline compact sources — up to 3 clickable pills, metadata only.
+            // P2 (final): layout is three stacked rows — 🔗 Sources label, then pills in
+            // a WRAPPING flow container (narrow panels / DPI / font scaling wrap to
+            // multiple lines instead of overflowing), then "View more" on its own line.
+            // Pills open the source directly (structural http(s) gate in _openSourceUrl);
+            // View more toggles the full popover kept from the previous UI.
             const wrap = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-sources-wrap" });
-            const row = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-button quicksearch-ai-sources-row", x_expand: false, x_fill: false });
+            // header line: 🔗 Sources (own line — compact even on very narrow panels)
+            const headRow = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-button quicksearch-ai-sources-row", x_expand: false, x_fill: false });
             const icon = new St.Icon({ icon_name: "emblem-shared-symbolic", icon_size: 11, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-sources-button-icon" });
             try { icon.icon_name = "text-x-generic-symbolic"; } catch (e) {}
             const label = new St.Label({ text: _("Sources"), style_class: "quicksearch-ai-sources-button-label" });
-            try { row.add(icon); } catch (e) {}
-            try { row.add(label); } catch (e) {}
+            try { headRow.add(icon); } catch (e) {}
+            try { headRow.add(label); } catch (e) {}
+            try { wrap.add(headRow); } catch (e) {}
+            // pills container: FlowLayout wraps when horizontal space runs out; falls
+            // back to a plain horizontal row on runtimes without FlowLayout.
+            let flowBox = null;
+            try {
+                flowBox = new St.Widget({
+                    style_class: "quicksearch-ai-sources-row",
+                    x_expand: true, x_fill: true,
+                    layout_manager: new Clutter.FlowLayout({
+                        orientation: Clutter.Orientation.HORIZONTAL,
+                        homogeneous: false,
+                        column_spacing: 6,
+                        row_spacing: 4
+                    })
+                });
+            } catch (e) { flowBox = null; }
+            if (!flowBox) {
+                flowBox = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-row", x_expand: false, x_fill: false });
+            }
             const MAX_INLINE = 3;
             for (let i = 0; i < Math.min(count, MAX_INLINE); i++) {
                 const src = sources[i];
@@ -1966,9 +1986,9 @@ class QuickSearchApplet extends Applet.IconApplet {
                     try { this._openSourceUrl(url); } catch (e) {}
                     return Clutter.EVENT_STOP;
                 });
-                try { row.add(pill); } catch (e) {}
+                try { flowBox.add_actor(pill); } catch (e) { try { flowBox.add_child(pill); } catch (e2) {} }
             }
-            try { wrap.add(row); } catch (e) {}
+            try { wrap.add(flowBox); } catch (e) {}
             if (count > MAX_INLINE) {
                 const moreBtn = new St.Button({ style_class: "quicksearch-ai-sources-button-viewmore", reactive: true, track_hover: true, can_focus: false });
                 const moreLbl = new St.Label({ text: _("View more"), style_class: "quicksearch-ai-source-pill-label" });
@@ -2619,12 +2639,11 @@ class QuickSearchApplet extends Applet.IconApplet {
                 bottomReserve += (Math.round(Number(hh) || 0) || LAYOUT.hintsH) + 4;
             }
         } catch (e) { bottomReserve += LAYOUT.hintsH + 4; }
-        // P1-2: the ACTUAL remaining screen space is the hard upper bound — the
-        // roomCapMin floor only applies when that much space genuinely exists, so a
-        // small screen / high scaling / edge panel can never force overflow. The 1px
-        // floor keeps a safe (tiny) panel on degenerate layouts.
+        // P1: the ACTUAL remaining screen space is the hard upper bound — roomCap can
+        // never exceed the screen (small screens / high scaling / edge panels stay
+        // safe). The 1px floor is only a fallback for invalid/zero space.
         const avail = Math.max(0, global.screen_height - pillBottom - 6 - bottomReserve - 12);
-        const roomCap = Math.max(1, Math.min(avail, Math.max(LAYOUT.roomCapMin, avail)));
+        const roomCap = Math.max(1, avail);
         // chat-mode header [+ New Chat] pinned above the results panel
         let hdrH = 0;
         const hdrVisible = !!(ov._aiHeader && ov._aiHeader.visible);

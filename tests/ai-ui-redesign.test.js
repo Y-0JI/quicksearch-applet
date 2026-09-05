@@ -26,11 +26,12 @@ test('UI-1: search pill has leading search icon + compact close button (✕)', (
 
 test('UI-1: adaptive layout constants are the single source of truth', () => {
     assert.ok(APPLET_SRC.includes('const LAYOUT = {'), 'LAYOUT constants exist');
-    for (const k of ['topPad', 'pillH', 'filterH', 'hintsH', 'maxResultsH', 'roomCapMin']) {
+    for (const k of ['topPad', 'pillH', 'filterH', 'hintsH', 'maxResultsH']) {
         assert.ok(APPLET_SRC.includes(k + ':'), `LAYOUT has ${k}`);
     }
+    // P1 cleanup: roomCapMin was mathematically dead — it must not exist anywhere
+    assert.ok(!APPLET_SRC.includes('roomCapMin'), 'dead roomCapMin constant removed');
     assert.ok(APPLET_SRC.includes('LAYOUT.maxResultsH'), 'panel cap routed through LAYOUT');
-    assert.ok(APPLET_SRC.includes('LAYOUT.roomCapMin'), 'room cap routed through LAYOUT');
     assert.ok(CSS_SRC.includes('padding: 120px 0 0 0;'), 'dialog top padding matches LAYOUT.topPad');
     assert.ok(CSS_SRC.includes('min-height: 0;'), 'content no longer forces a tall fixed dialog');
 });
@@ -246,31 +247,43 @@ test('P1-1: single sizing authority — CSS has no conflicting max-height', () =
     assert.ok(capIdx !== -1, 'cap applied via LAYOUT in geometry');
 });
 
-test('P1-2: roomCap is hard-bounded by actual available screen space', () => {
+test('P1-2: roomCap is hard-bounded by actual available screen space, no dead min logic', () => {
     const idx = APPLET_SRC.indexOf('const avail = Math.max(0, global.screen_height');
     assert.ok(idx !== -1, 'available space computed (clamped >= 0)');
     const section = APPLET_SRC.slice(idx, idx + 400);
-    assert.ok(section.includes('Math.min(avail'), 'roomCap never exceeds available space');
-    assert.ok(section.includes('Math.max(LAYOUT.roomCapMin, avail)'), 'min only applied when space exists');
-    // behavior check: replicate the formula
-    function roomCap(avail, min) { return Math.max(1, Math.min(avail, Math.max(min, avail))); }
-    assert.equal(roomCap(700, 320), 700, 'plenty of space → full room');
-    assert.equal(roomCap(200, 320), 200, 'small screen → bounded by actual space, never forced to 320');
-    assert.equal(roomCap(0, 320), 1, 'degenerate layout → safe 1px fallback, no overflow');
-    assert.equal(roomCap(45, 320), 45, 'tiny space → tiny panel, never clipped');
+    assert.ok(section.includes('Math.max(1, avail)'), 'roomCap = max(1, avail) — simple, no redundant min');
+    assert.ok(!section.includes('Math.min(avail'), 'no dead Math.min(avail, ...) wrapper');
+    assert.ok(!section.includes('roomCapMin'), 'no roomCapMin reference left');
+    // behavior check: roomCap never exceeds available space in ANY condition
+    function roomCap(avail) { return Math.max(1, avail); }
+    assert.equal(roomCap(700), 700, 'plenty of space → full room');
+    assert.equal(roomCap(200), 200, 'small screen → bounded by actual space');
+    assert.equal(roomCap(45), 45, 'tiny space → tiny panel, never clipped');
+    assert.equal(roomCap(0), 1, 'invalid/zero space → safe 1px fallback, no overflow');
+    for (const v of [-50, 0, 1, 120, 320, 1080, 2160]) {
+        assert.ok(roomCap(v) <= Math.max(1, v), `roomCap(${v}) never exceeds available space`);
+    }
 });
 
-test('P2-2: sources stay inline-compact — pills capped, View more on its own line', () => {
+test('P2-2: sources stay inline-compact — wrapping pills, label + View more on own lines', () => {
     assert.ok(APPLET_SRC.includes('quicksearch-ai-sources-wrap'), 'vertical wrap container');
     const srcIdx = APPLET_SRC.indexOf('_renderSourcesForMessage(ov, sources) {');
-    const srcSection = APPLET_SRC.slice(srcIdx, srcIdx + 4500);
-    assert.ok(srcSection.includes('wrap.add(moreBtn)'), 'View more added BELOW the pill row');
+    const srcSection = APPLET_SRC.slice(srcIdx, srcIdx + 5000);
+    // P2 (final): pills live in a WRAPPING flow container so narrow panels / DPI /
+    // font scaling wrap to multiple lines instead of overflowing the panel
+    assert.ok(srcSection.includes('Clutter.FlowLayout'), 'pills use a wrapping flow layout');
+    assert.ok(srcSection.includes('orientation: Clutter.Orientation.HORIZONTAL'), 'flow wraps horizontally');
+    assert.ok(srcSection.includes('flowBox.add_actor(pill)') || srcSection.includes('flowBox.add_child(pill)'), 'pills added to the flow container');
+    assert.ok(srcSection.includes('flowBox = null') && srcSection.includes('St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-row"'), 'safe fallback to a plain row when FlowLayout is unavailable');
+    assert.ok(srcSection.includes('wrap.add(headRow)'), '🔗 Sources label on its own line above the pills');
+    assert.ok(srcSection.includes('wrap.add(moreBtn)'), 'View more added BELOW the pills');
     assert.ok(srcSection.includes('set_ellipsize(Pango.EllipsizeMode.END)'), 'pill labels ellipsize');
     assert.ok(srcSection.includes('title.length > 28'), 'JS caps source titles');
     assert.ok(CSS_SRC.includes('max-width: 180px'), 'pill label width capped in CSS');
     assert.ok(CSS_SRC.includes('.quicksearch-ai-sources-wrap'), 'wrap styled');
-    // still metadata, never a search-results list
+    // still metadata, never a search-results list / sidebar / big card
     assert.ok(!srcSection.includes('_buildRow'), 'sources never build launcher rows');
+    assert.ok(!srcSection.includes('sidebar'), 'no sidebar');
 });
 
 test('P2-3: long code lines scroll horizontally inside the code surface', () => {
