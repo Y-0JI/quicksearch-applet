@@ -340,8 +340,14 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             this._composerEntry.clutter_text.connect("key-press-event", (actor, event) => {
                 try { return this._applet._onComposerKeyPress(event); } catch (e) { return Clutter.EVENT_PROPAGATE; }
             });
-            this._composerEntry.connect("key-focus-in", () => this._startCaretBlink(this._composerEntry));
-            this._composerEntry.connect("key-focus-out", () => this._stopCaretBlink(this._composerEntry));
+            this._composerEntry.connect("key-focus-in", () => {
+                this._startCaretBlink(this._composerEntry);
+                try { this._aiComposer.add_style_class_name("quicksearch-ai-composer-focused"); } catch (e) {}
+            });
+            this._composerEntry.connect("key-focus-out", () => {
+                this._stopCaretBlink(this._composerEntry);
+                try { this._aiComposer.remove_style_class_name("quicksearch-ai-composer-focused"); } catch (e) {}
+            });
         } catch (e) {}
 
         // dedicated popup layer for context menu — must be above the
@@ -389,8 +395,15 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._keyFocusIds = [];
 
         // caret blink: 530ms toggle when entry has key focus
-        this._keyFocusIds.push(this._entry.connect("key-focus-in", () => this._startCaretBlink()));
-        this._keyFocusIds.push(this._entry.connect("key-focus-out", () => this._stopCaretBlink()));
+        // UI-5: keyboard focus lights the pill's accent border (visual focus state).
+        this._keyFocusIds.push(this._entry.connect("key-focus-in", () => {
+            this._startCaretBlink();
+            try { entryRow.add_style_class_name("quicksearch-entry-row-focused"); } catch (e) {}
+        }));
+        this._keyFocusIds.push(this._entry.connect("key-focus-out", () => {
+            this._stopCaretBlink();
+            try { entryRow.remove_style_class_name("quicksearch-entry-row-focused"); } catch (e) {}
+        }));
         this._entry.clutter_text.connect("text-changed", (actor) => {
             // reset to visible on typing so caret doesn't hide mid-type
             this._caretVisible = true;
@@ -1316,6 +1329,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         try {
             if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(ov._composerEntry);
             if (ov._startCaretBlink) ov._startCaretBlink(ov._composerEntry);
+            try { ov._aiComposer.add_style_class_name("quicksearch-ai-composer-focused"); } catch (e2) {}
         } catch (e) {}
     }
 
@@ -1327,6 +1341,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiEditId = null;
         this._aiMsgActors = {};
         try { if (ov._aiComposer) ov._aiComposer.visible = false; } catch (e) {}
+        try { if (ov._aiComposer) ov._aiComposer.remove_style_class_name("quicksearch-ai-composer-focused"); } catch (e) {}
         try { if (ov._aiHeader) ov._aiHeader.visible = false; } catch (e) {}
         try { if (ov._composerEntry) ov._composerEntry.set_text(''); } catch (e) {}
         try {
@@ -2299,6 +2314,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._cancelAILayoutSync();
         try { this._scheduleAILayoutSync(); } catch (e) {}
         global.stage.set_key_focus(this._overlay._entry);
+        // UI-5: the accent focus ring must be visible on every open even when the
+        // entry already owns keyboard focus (no new key-focus-in is emitted then).
+        try { this._overlay._entryRow.add_style_class_name("quicksearch-entry-row-focused"); } catch (e) {}
         this._overlay._startCaretBlink();
         this._overlay.setText("");
         if (this._overlay._composerEntry) try { this._overlay._composerEntry.set_text(''); } catch (e) {}
@@ -2345,6 +2363,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._ptrInPopup = false;
         if (this._overlay) {
             try { this._overlay._stopCaretBlink(); } catch (e) {}
+            try { if (this._overlay._entryRow) this._overlay._entryRow.remove_style_class_name("quicksearch-entry-row-focused"); } catch (e) {}
+            try { if (this._overlay._aiComposer) this._overlay._aiComposer.remove_style_class_name("quicksearch-ai-composer-focused"); } catch (e) {}
             if (this._overlay._composerEntry) try { this._overlay._composerEntry.set_text(''); } catch (e) {}
             this._overlay.close(global.get_current_time());
         }

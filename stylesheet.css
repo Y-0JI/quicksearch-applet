@@ -19,14 +19,14 @@
     spacing: 6px;
     padding: 9px 12px;
     margin-bottom: 6px;
-    background-color: rgba(36, 39, 46, 0.97);
-    border: 1px solid rgba(255, 255, 255, 0.09);
+    background-color: rgba(29, 34, 43, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 24px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.36);
 }
 
 .quicksearch-entry {
-    padding: 4px 10px;
+    padding: 6px 10px;
     font-size: 13pt;
     width: 560px;
     color: rgba(255, 255, 255, 0.95);
@@ -43,31 +43,31 @@
    via _syncRegionGeometry(); CSS only provides the surface style. Overflow behaviour
    (AUTOMATIC vertical scroll) is set on the St.ScrollView in applet.js. */
 .quicksearch-results {
-    padding: 6px 4px;
-    background-color: rgba(36, 39, 46, 0.97);
-    border: 1px solid rgba(255, 255, 255, 0.09);
+    padding: 8px 6px;
+    background-color: rgba(29, 34, 43, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 16px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.36);
 }
 
 .quicksearch-section-header {
-    color: rgba(255, 255, 255, 0.45);
+    color: rgba(255, 255, 255, 0.40);
     font-size: 8.5pt;
     font-weight: bold;
-    padding: 8px 8px 2px 8px;
+    padding: 10px 10px 3px 10px;
 }
 
 .quicksearch-row {
-    padding: 5px 8px;
-    border-radius: 8px;
+    padding: 6px 10px;
+    border-radius: 10px;
 }
 
 .quicksearch-row-selected {
-    background-color: rgba(255, 255, 255, 0.14);
+    background-color: rgba(120, 180, 255, 0.16);
 }
 
 .quicksearch-row-inner {
-    spacing: 10px;
+    spacing: 12px;
     max-width: 640px;
 }
 
@@ -77,15 +77,15 @@
 }
 
 .quicksearch-desc {
-    color: rgba(255, 255, 255, 0.62);
+    color: rgba(255, 255, 255, 0.58);
     font-size: 9pt;
 }
 
 .quicksearch-context-menu {
-    background: rgba(36, 39, 46, 0.97);
-    border: 1px solid rgba(255, 255, 255, 0.09);
+    background: rgba(29, 34, 43, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 12px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.36);
     padding: 6px;
     color: rgba(255,255,255,0.95);
 }
@@ -120,9 +120,17 @@
     color: rgba(255,255,255,0.40);
 }
 
-.quicksearch-mode-button { padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.10); background-color: rgba(255,255,255,0.06); }
-.quicksearch-mode-button:hover { background-color: rgba(255,255,255,0.12); }
-.quicksearch-mode-active { border-color: rgba(255,255,255,0.18); }
+.quicksearch-mode-button { padding: 4px 12px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.08); background-color: rgba(255,255,255,0.04); }
+.quicksearch-mode-content { spacing: 6px; }
+.quicksearch-mode-icon { color: rgba(200, 200, 200, 0.85); }
+.quicksearch-mode-label { font-size: 8.5pt; color: rgba(200, 200, 200, 0.90); }
+.quicksearch-mode-button:hover { background-color: rgba(255,255,255,0.10); }
+.quicksearch-mode-active {
+    border-color: rgba(120, 180, 255, 0.50);
+    background-color: rgba(120, 180, 255, 0.14);
+}
+.quicksearch-mode-active .quicksearch-mode-label,
+.quicksearch-mode-active .quicksearch-mode-icon { color: rgba(255, 255, 255, 0.95); }
 .quicksearch-ai-loading, .quicksearch-ai-answer, .quicksearch-ai-error { padding: 10px 8px; font-size: 10pt; }
 .quicksearch-ai-error { color: rgba(255,120,120,0.95); }
 
@@ -143,8 +151,8 @@
 .quicksearch-sources-popover {
     padding: 8px;
     spacing: 6px;
-    background-color: rgba(30, 32, 40, 0.98);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background-color: rgba(29, 34, 43, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 12px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.50);
 }
@@ -238,8 +246,8 @@
 .quicksearch-ai-chat-header {
     spacing: 6px;
     padding: 3px 8px;
-    background-color: rgba(36, 39, 46, 0.97);
-    border: 1px solid rgba(255, 255, 255, 0.09);
+    background-color: rgba(29, 34, 43, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-bottom: 0;
     border-radius: 16px 16px 0 0;
 }
@@ -279,7 +287,7 @@
 .quicksearch-scroll-attached {
     border-top: 0;
     border-radius: 0 0 16px 16px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.36);
 }
 
 /* follow-up composer: small, directly under the results panel */
@@ -287,10 +295,10 @@
     padding: 8px 10px 10px 10px;
     spacing: 4px;
     margin-top: 6px;
-    background-color: rgba(36, 39, 46, 0.97);
-    border: 1px solid rgba(255, 255, 255, 0.09);
+    background-color: rgba(29, 34, 43, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 18px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.36);
 }
 
 .quicksearch-ai-composer-editrow {
@@ -352,8 +360,8 @@
 .quicksearch-ai-send {
     padding: 7px 18px;
     border-radius: 999px;
-    border: 1px solid rgba(120, 180, 255, 0.35);
-    background-color: rgba(120, 180, 255, 0.18);
+    border: 1px solid rgba(120, 180, 255, 0.40);
+    background-color: rgba(120, 180, 255, 0.24);
 }
 
 .quicksearch-ai-send-label {
@@ -400,7 +408,7 @@
 
 /* UI-1: leading search icon + compact close button inside the search pill */
 .quicksearch-search-icon {
-    color: rgba(255, 255, 255, 0.45);
+    color: rgba(255, 255, 255, 0.55);
 }
 .quicksearch-close-button {
     padding: 3px 8px;
@@ -434,10 +442,10 @@
     padding: 0 4px 6px 4px;
 }
 .quicksearch-filter-chip {
-    padding: 3px 10px;
+    padding: 3px 12px;
     border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background-color: rgba(255, 255, 255, 0.03);
 }
 .quicksearch-filter-chip-label {
     font-size: 8.5pt;
@@ -450,11 +458,11 @@
     color: rgba(255, 255, 255, 0.95);
 }
 .quicksearch-filter-chip-active {
-    border-color: rgba(120, 180, 255, 0.45);
-    background-color: rgba(120, 180, 255, 0.16);
+    border-color: rgba(120, 180, 255, 0.55);
+    background-color: rgba(120, 180, 255, 0.22);
 }
 .quicksearch-filter-chip-active .quicksearch-filter-chip-label {
-    color: rgba(255, 255, 255, 0.95);
+    color: rgba(255, 255, 255, 1.0);
 }
 
 /* UI-2: Best Match presentation — distinct surface, thin accent border, Enter hint */
@@ -462,11 +470,11 @@
     color: rgba(140, 180, 255, 0.85);
 }
 .quicksearch-best-match {
-    background-color: rgba(120, 180, 255, 0.10);
-    border: 1px solid rgba(120, 180, 255, 0.25);
+    background-color: rgba(120, 180, 255, 0.13);
+    border: 1px solid rgba(120, 180, 255, 0.32);
 }
 .quicksearch-best-match:hover {
-    background-color: rgba(120, 180, 255, 0.16);
+    background-color: rgba(120, 180, 255, 0.18);
 }
 .quicksearch-best-match-hint {
     font-size: 8pt;
@@ -480,7 +488,19 @@
     color: rgba(255, 255, 255, 0.45);
 }
 .quicksearch-row:hover {
-    background-color: rgba(255, 255, 255, 0.08);
+    background-color: rgba(120, 180, 255, 0.09);
+}
+
+/* UI-5: keyboard focus is carried by the accent — pill + AI composer light up their
+   border (class toggled by applet.js on key-focus-in/out). Same soft-blue accent as
+   selected rows / active chips, per design doc §17: one accent for selection, active
+   filter, active mode and focus state. */
+.quicksearch-entry-row-focused {
+    border-color: rgba(120, 180, 255, 0.55);
+    background-color: rgba(34, 40, 50, 0.98);
+}
+.quicksearch-ai-composer-focused {
+    border-color: rgba(120, 180, 255, 0.45);
 }
 
 /* UI-3: AI answer heading — small, above every answer surface */
@@ -494,12 +514,12 @@
 /* UI-3: code block surface + functional copy action.
    P2-3: long lines scroll horizontally inside this surface (never escape the panel). */
 .quicksearch-ai-md-codebox {
-    background-color: rgba(0, 0, 0, 0.28);
-    border: 1px solid rgba(255, 255, 255, 0.10);
+    background-color: rgba(0, 0, 0, 0.32);
+    border: 1px solid rgba(120, 180, 255, 0.16);
     border-radius: 10px;
     padding: 6px 8px;
-    margin: 2px 6px;
-    spacing: 4px;
+    margin: 3px 8px 4px 8px;
+    spacing: 5px;
 }
 .quicksearch-ai-md-code-scroll {
     background: none;
