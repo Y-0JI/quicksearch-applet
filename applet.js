@@ -286,11 +286,9 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         } catch (e) {
             try { global.log("[quicksearch@yoji] hints bar init failed: " + e); } catch (e2) {}
         }
-        // Composer fills the conversation panel width (x_fill) so it flushes with
-        // the attached scroll above — presentation only, geometry stays in _syncRegionGeometry.
-        try { this.contentLayout.add(this._aiComposer, { x_fill: true }); } catch (e) {
-            try { this.contentLayout.add(this._aiComposer); } catch (e2) {}
-        }
+        // P2: the composer is NOT a contentLayout sibling — it becomes the LAST child of
+        // the unified AI chat pane (_aiPane) assembled below, so it is structurally the
+        // footer region of the conversation surface, never a separate floating panel.
         // conversation header pinned above the results panel (chat mode only): [+ New Chat]
         this._aiHeader = new St.BoxLayout({ style_class: "quicksearch-ai-chat-header", vertical: false, visible: false });
         // Phase 15: the header lives above the conversation in AI chat mode, so it is
@@ -312,7 +310,20 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._aiHeader.add(this._headerModeButton);
         this._aiHeader.add(_headerGap, { expand: true });
         this._aiHeader.add(this._resetButton);
-        this.resultsRegion.add_actor(this._aiHeader);
+        // P2/P3: ONE dedicated AI chat surface owns the AI-mode regions. Children in
+        // vertical order: chat header, conversation scroll (inserted on demand between
+        // header and hint while a conversation is active), footer hint, composer.
+        // The pane provides the single rounded surface — children need no outer chrome.
+        this._aiPane = new St.BoxLayout({ style_class: "quicksearch-ai-pane", vertical: true, visible: false });
+        try { this._aiPane.add(this._aiHeader, { x_fill: true }); } catch (e) {}
+        try {
+            this._aiHintLabel = new St.Label({ text: "", style_class: "quicksearch-ai-hint", visible: false });
+            this._aiPane.add(this._aiHintLabel, { x_fill: true });
+        } catch (e) {
+            try { global.log("[quicksearch@yoji] ai hint label init failed: " + e); } catch (e2) {}
+        }
+        try { this._aiPane.add(this._aiComposer, { x_fill: true }); } catch (e) {}
+        try { this.contentLayout.add(this._aiPane); } catch (e) {}
         try { if (this._applet && this._applet._attachTooltip) this._applet._attachTooltip(this._resetButton, _("New Chat")); } catch (e) {}
         try { if (this._applet && this._applet._attachTooltip) this._applet._attachTooltip(this._headerModeButton, _("Switch to search mode")); } catch (e) {}
         try { if (this._applet && this._applet._attachTooltip) this._applet._attachTooltip(this._stopButton, _("Stop generating")); } catch (e) {}
@@ -1292,6 +1303,10 @@ class QuickSearchApplet extends Applet.IconApplet {
         const composerActive = this._mode === 'ai' && this._hasConversation();
         try { ov._aiComposer.visible = composerActive; } catch (e) {}
         try { if (ov._aiHeader) ov._aiHeader.visible = composerActive; } catch (e) {}
+        // P2: the AI chat pane is the single container shown while a conversation runs.
+        try { if (ov._aiPane) ov._aiPane.visible = composerActive; } catch (e) {}
+        try { if (ov._aiHintLabel) ov._aiHintLabel.visible = composerActive; } catch (e) {}
+        try { this._applyAiChatLayout(composerActive); } catch (e) {}
         try {
             ov._entryRow.visible = !composerActive;
             ov._entry.reactive = !composerActive;
@@ -1318,6 +1333,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!ov || !ov._composerEntry) return;
         try { ov._aiComposer.visible = true; } catch (e) {}
         try { if (ov._aiHeader) ov._aiHeader.visible = true; } catch (e) {}
+        try { if (ov._aiPane) ov._aiPane.visible = true; } catch (e) {}
+        try { if (ov._aiHintLabel) ov._aiHintLabel.visible = true; } catch (e) {}
+        try { this._applyAiChatLayout(true); } catch (e) {}
         try {
             ov._entryRow.visible = false;
             ov._entry.reactive = false;
@@ -1347,6 +1365,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { if (ov._aiComposer) ov._aiComposer.visible = false; } catch (e) {}
         try { if (ov._aiComposer) ov._aiComposer.remove_style_class_name("quicksearch-ai-composer-focused"); } catch (e) {}
         try { if (ov._aiHeader) ov._aiHeader.visible = false; } catch (e) {}
+        try { if (ov._aiPane) ov._aiPane.visible = false; } catch (e) {}
+        try { if (ov._aiHintLabel) ov._aiHintLabel.visible = false; } catch (e) {}
+        try { this._applyAiChatLayout(false); } catch (e) {}
         try { if (ov._composerEntry) ov._composerEntry.set_text(''); } catch (e) {}
         try {
             ov._entryRow.visible = true;
@@ -2642,24 +2663,142 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     // UI-4: subtle, context-aware keyboard hints under the panel. Search shows
     // navigation only while a query/results are present; AI shows send/close.
+    // P7: the footer hint lives INSIDE the AI chat pane (above the composer) while a
+    // conversation is running; outside chat the search-mode hints label is used.
     _updateHints() {
         const ov = this._overlay;
-        if (!ov || !ov._hintsLabel) return;
+        if (!ov) return;
+        const aiChat = this._mode === 'ai' && this._hasConversation();
         let text = "";
-        if (this._mode === 'ai') {
-            if (this._hasConversation()) text = _("Enter Send \u00b7 Esc Close");
-            else text = _("Enter Ask \u00b7 Esc Close");
-        } else {
+        if (aiChat) text = _("Enter Send \u00b7 Esc Close");
+        else if (this._mode === 'ai') text = _("Enter Ask \u00b7 Esc Close");
+        else {
             const q = (ov.getText && typeof ov.getText === 'function') ? String(ov.getText() || '').trim() : '';
             if (q || (this._rows && this._rows.length > 0)) text = _("\u2191 \u2193 Navigate \u00b7 Enter Open \u00b7 Esc Close");
         }
-        try { ov._hintsLabel.set_text(text); } catch (e) {}
-        try { ov._hintsLabel.visible = text !== ""; } catch (e) {}
+        if (aiChat) {
+            try { if (ov._aiHintLabel) ov._aiHintLabel.set_text(text); } catch (e) {}
+            try { if (ov._aiHintLabel) ov._aiHintLabel.visible = text !== ""; } catch (e) {}
+            try { if (ov._hintsLabel) ov._hintsLabel.visible = false; } catch (e) {}
+        } else {
+            try { if (ov._hintsLabel) ov._hintsLabel.set_text(text); } catch (e) {}
+            try { if (ov._hintsLabel) ov._hintsLabel.visible = text !== ""; } catch (e) {}
+            try { if (ov._aiHintLabel) ov._aiHintLabel.visible = false; } catch (e) {}
+        }
+    }
+
+    // P2/P3: while a conversation is active the shared results scroll becomes a child
+    // of the AI chat pane (between header and footer hint); otherwise it lives back in
+    // the search results region. Structural ownership, no CSS seam patching.
+    _applyAiChatLayout(active) {
+        const ov = this._overlay;
+        if (!ov) return;
+        const pane = ov._aiPane;
+        const region = ov.resultsRegion;
+        if (!pane) return;
+        try {
+            if (active) {
+                // Clutter reparent requires an explicit detach first — insert_child_at_index
+                // is a silent no-op while the actor still has a parent.
+                if (ov._scroll && ov._scroll.get_parent() !== pane) {
+                    const cur = ov._scroll.get_parent();
+                    if (cur) {
+                        try { cur.remove_child(ov._scroll); } catch (e) {
+                            try { cur.remove_actor(ov._scroll); } catch (e2) {}
+                        }
+                    }
+                    try { pane.insert_child_at_index(ov._scroll, 1); } catch (e) {
+                        try { pane.add_child(ov._scroll); } catch (e2) {}
+                    }
+                }
+            } else if (ov._scroll && ov._scroll.get_parent() === pane) {
+                try { pane.remove_child(ov._scroll); } catch (e) {}
+                if (region) {
+                    try { region.insert_child_at_index(ov._scroll, 0); } catch (e) {
+                        try { region.add_child(ov._scroll); } catch (e2) {}
+                    }
+                }
+                try { if (ov._autoScroll) ov._autoScroll.raise_top(); } catch (e) {}
+            }
+            try { if (region) region.visible = !active; } catch (e) {}
+        } catch (e) {
+            try { global.log("[quicksearch@yoji] applyAiChatLayout failed: " + e); } catch (e2) {}
+        }
+    }
+
+    // P6: AI chat geometry — the pane packs header / conversation scroll / footer hint /
+    // composer naturally (BoxLayout vertical). The ONLY manual number is the conversation
+    // scroll height, capped so the whole pane fits the screen: compact when the content is
+    // short, grows up to the cap, scrolls only at the cap. Composer always visible at the
+    // bottom, no overlap, no manual seam offsets.
+    _syncAiPaneGeometry() {
+        const ov = this._overlay;
+        if (!ov || !ov._aiPane) return;
+        try {
+            const w = Math.max(240, Math.round(Number(this._lastPanelWidth) || 0) || 690);
+            let headerH = 0, hintH = 0, compH = 0;
+            try {
+                if (ov._aiHeader && ov._aiHeader.visible) {
+                    const [, h] = ov._aiHeader.get_preferred_height(w);
+                    headerH = Math.max(1, Math.round(Number(h) || 0));
+                }
+            } catch (e) { headerH = 32; }
+            try {
+                if (ov._aiHintLabel && ov._aiHintLabel.visible) {
+                    const [, h] = ov._aiHintLabel.get_preferred_height(w);
+                    hintH = Math.max(1, Math.round(Number(h) || 0));
+                }
+            } catch (e) { hintH = 14; }
+            try {
+                if (ov._aiComposer && ov._aiComposer.visible) {
+                    const [, h] = ov._aiComposer.get_preferred_height(w);
+                    compH = Math.max(1, Math.round(Number(h) || 0));
+                }
+            } catch (e) { compH = 48; }
+            let natH = 0;
+            if (ov._scroll && ov.resultsBox) {
+                try {
+                    const [, contentNat] = ov.resultsBox.get_preferred_height(w);
+                    natH = Number(contentNat) || 0;
+                } catch (e) { natH = 0; }
+                if (natH <= 0) {
+                    try {
+                        const [, fb] = ov._scroll.get_preferred_height(w);
+                        natH = Number(fb) || 0;
+                    } catch (e) { natH = 0; }
+                }
+                natH += 16;
+            }
+            const fixed = headerH + hintH + compH + 40;
+            const avail = Math.max(60, global.screen_height - Math.max(24, LAYOUT.topPad) - fixed - 20);
+            const scrollH = Math.max(40, Math.min(natH, LAYOUT.maxResultsH, avail));
+            try { this._applyAiChatLayout(true); } catch (e) {}
+            if (ov._scroll) {
+                // Compact while content fits: the scroll keeps its natural height so the
+                // pane hugs the conversation. Only at the cap does the scroll become the
+                // expanding child (its fixed height then drives the visible area).
+                try { ov._scroll.x_fill = true; } catch (e) {}
+                try { ov._scroll.y_fill = true; } catch (e) {}
+                try { ov._scroll.y_expand = natH > scrollH; } catch (e) {}
+                try { ov._scroll.set_size(w, scrollH); } catch (e) {}
+            }
+            const totalH = headerH + scrollH + hintH + compH + 16;
+            try { ov._aiPane.set_size(w, Math.min(totalH, global.screen_height - Math.max(20, LAYOUT.topPad))); } catch (e) {}
+            // resume/keep at the latest turn while the user is following the stream
+            try { if (this._aiStickBottom) this._scheduleAIScroll(true); } catch (e) {}
+        } catch (e) {
+            try { global.log("[quicksearch@yoji] syncAiPaneGeometry failed: " + e); } catch (e2) {}
+        }
     }
 
     _syncRegionGeometry() {
         const ov = this._overlay;
         if (!ov || !ov.resultsRegion) return;
+        // P6: once a conversation exists the AI chat pane owns sizing (single cap).
+        if (this._mode === 'ai' && this._hasConversation()) {
+            try { this._syncAiPaneGeometry(); } catch (e) {}
+            return;
+        }
         const pw = Math.round(ov._entryRow.get_transformed_size()[0]) || 0;
         if (pw > 0) this._lastPanelWidth = pw;
         const w = pw || this._lastPanelWidth || 690;

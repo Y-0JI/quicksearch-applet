@@ -251,15 +251,48 @@
     color: rgba(255, 255, 255, 0.92);
 }
 
-/* chat header pinned above the results panel — flat, same PANEL colour as the
-   conversation scroll and the composer below, so the three read as ONE surface
-   (rounded top here, rounded bottom on the composer). */
+/* P2/P3 — AI CHAT PANE: the pane owns the surface (single background, radius,
+   border, shadow). Header / conversation / footer hint / composer are its inner
+   regions and carry no outer chrome, so no seams need to be hidden. */
+.quicksearch-ai-pane {
+    background-color: rgba(31, 36, 45, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 14px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.42);
+    padding: 4px;
+    spacing: 0;
+}
+
+/* inner regions of the AI pane — flat by design */
+.quicksearch-ai-pane .quicksearch-ai-chat-header {
+    spacing: 6px;
+    padding: 0 2px 4px 2px;
+    background: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.quicksearch-ai-pane .quicksearch-results {
+    background: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 2px 2px;
+}
+
+.quicksearch-ai-hint {
+    padding: 2px 10px 4px 10px;
+    font-size: 8pt;
+    color: rgba(255, 255, 255, 0.34);
+}
+
+/* chat header content — quiet text control */
 .quicksearch-ai-chat-header {
     spacing: 6px;
-    padding: 4px 10px;
-    background-color: rgba(31, 36, 45, 0.97);
+    padding: 0 2px 4px 2px;
+    background: none;
     border: none;
-    border-radius: 14px 14px 0 0;
 }
 
 /* Phase 15: always-reachable AI -> Search switch (chat header). Small, subtle. */
@@ -293,31 +326,23 @@
     color: rgba(255, 255, 255, 0.95);
 }
 
-/* results scroll attached under the chat header: borderless so header + conversation
-   + composer form one continuous panel (header rounds the top, composer the bottom). */
+/* legacy class retained for compatibility — the pane structure handles connection */
 .quicksearch-scroll-attached {
     border: none;
     border-radius: 0;
     box-shadow: none;
 }
 
-/* follow-up composer: same PANEL surface as the conversation above. When the
-   conversation is attached it flushes under the scroll (bottom rounding only) —
-   the composer is the tail of the SAME surface, never a separate floating card. */
+/* follow-up composer: the FOOTER REGION of the AI pane (last child), not a second
+   panel — transparent here, the pane supplies the single rounded surface. */
 .quicksearch-ai-composer {
-    padding: 8px 10px 9px 10px;
+    padding: 0 2px 2px 2px;
     spacing: 4px;
-    margin-top: 6px;
-    background-color: rgba(31, 36, 45, 0.97);
-    border: none;
-    border-radius: 14px;
-    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.36);
-}
-
-.quicksearch-ai-composer-attached {
     margin-top: 0;
-    border-radius: 0 0 14px 14px;
-    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.40);
+    background: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 .quicksearch-ai-composer-editrow {
@@ -605,16 +630,9 @@
     color: rgba(255, 255, 255, 0.40);
 }
 
-/* UI-4: subtle, context-aware keyboard hints. In attached AI chat the hint row is
-   painted with the same PANEL surface, so header + conversation + hints + composer
-   form ONE continuous rounded column (never a desktop gap between surfaces). */
+/* UI-4: search-mode keyboard hints under the results panel */
 .quicksearch-hints {
     padding: 4px 10px 2px 10px;
     font-size: 8pt;
     color: rgba(255, 255, 255, 0.40);
-}
-
-.quicksearch-hints-attached {
-    background-color: rgba(31, 36, 45, 0.97);
-    padding: 0 12px 5px 12px;
 }
