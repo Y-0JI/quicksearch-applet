@@ -2794,14 +2794,13 @@ class QuickSearchApplet extends Applet.IconApplet {
     _syncRegionGeometry() {
         const ov = this._overlay;
         if (!ov || !ov.resultsRegion) return;
-        // P6: once a conversation exists the AI chat pane owns sizing (single cap).
+        const pw = Math.round(ov._entryRow.get_transformed_size()[0]) || 0;
+        if (pw > 0) this._lastPanelWidth = pw;
+        const w = pw || this._lastPanelWidth || 690;
         if (this._mode === 'ai' && this._hasConversation()) {
             try { this._syncAiPaneGeometry(); } catch (e) {}
             return;
         }
-        const pw = Math.round(ov._entryRow.get_transformed_size()[0]) || 0;
-        if (pw > 0) this._lastPanelWidth = pw;
-        const w = pw || this._lastPanelWidth || 690;
         let entryVisible = false;
         try { entryVisible = !!ov._entryRow && ov._entryRow.visible; } catch (e) {}
         let pillBottom = LAYOUT.topPad + LAYOUT.pillH;
@@ -2820,50 +2819,8 @@ class QuickSearchApplet extends Applet.IconApplet {
                 pillBottom += filterH + 4;
             }
         } catch (e) { pillBottom += LAYOUT.filterH + 4; }
-        // Phase 9: keep the results area clear of the bottom follow-up composer so a long
-        // conversation never renders underneath it (§1/§5).
-        let bottomReserve = 0;
-        if (this._mode === 'ai' && ov._aiComposer && ov._aiComposer.visible) {
-            try {
-                const [, ch] = ov._aiComposer.get_preferred_height(w);
-                bottomReserve = (Number(ch) || 0) + 10;
-            } catch (e) { bottomReserve = 110; }
-        }
-        // UI-4: keyboard hints bar height also reserves room below the panel.
-        try {
-            if (ov._hintsLabel && ov._hintsLabel.visible) {
-                const [, hh] = ov._hintsLabel.get_preferred_height(w);
-                bottomReserve += (Math.round(Number(hh) || 0) || LAYOUT.hintsH) + 4;
-            }
-        } catch (e) { bottomReserve += LAYOUT.hintsH + 4; }
-        // P1: the ACTUAL remaining screen space is the hard upper bound — roomCap can
-        // never exceed the screen (small screens / high scaling / edge panels stay
-        // safe). The 1px floor is only a fallback for invalid/zero space.
-        const avail = Math.max(0, global.screen_height - pillBottom - 6 - bottomReserve - 12);
+        const avail = Math.max(0, global.screen_height - pillBottom - 6 - 12);
         const roomCap = Math.max(1, avail);
-        // chat-mode header [+ New Chat] pinned above the results panel
-        let hdrH = 0;
-        const hdrVisible = !!(ov._aiHeader && ov._aiHeader.visible);
-        if (hdrVisible) {
-            try {
-                const [, hh] = ov._aiHeader.get_preferred_height(w);
-                hdrH = Math.round(Number(hh) || 0);
-            } catch (e) { hdrH = 0; }
-            if (hdrH <= 0) hdrH = 34;
-            try { ov._aiHeader.set_position(0, 0); } catch (e) {}
-            try { ov._aiHeader.set_size(w, hdrH); } catch (e) {}
-        }
-        try {
-            if (hdrVisible) {
-                ov._scroll.add_style_class_name('quicksearch-scroll-attached');
-                try { ov._aiComposer.add_style_class_name('quicksearch-ai-composer-attached'); } catch (e2) {}
-                try { if (ov._hintsLabel) ov._hintsLabel.add_style_class_name('quicksearch-hints-attached'); } catch (e3) {}
-            } else {
-                ov._scroll.remove_style_class_name('quicksearch-scroll-attached');
-                try { ov._aiComposer.remove_style_class_name('quicksearch-ai-composer-attached'); } catch (e2) {}
-                try { if (ov._hintsLabel) ov._hintsLabel.remove_style_class_name('quicksearch-hints-attached'); } catch (e3) {}
-            }
-        } catch (e) {}
         let h = 0;
         if (ov._scroll.visible) {
             let natH = 0;
@@ -2877,12 +2834,9 @@ class QuickSearchApplet extends Applet.IconApplet {
             }
             natH += 16;
             const mainH = Math.min(natH, LAYOUT.maxResultsH, roomCap);
-            ov._scroll.set_position(0, hdrH);
+            ov._scroll.set_position(0, 0);
             ov._scroll.set_size(w, mainH);
-            h = mainH + hdrH;
-        } else if (hdrVisible) {
-            ov._scroll.set_position(0, hdrH);
-            h = hdrH;
+            h = mainH;
         }
         if (ov._autoScroll.visible) {
             let natH = 0;
@@ -2896,9 +2850,9 @@ class QuickSearchApplet extends Applet.IconApplet {
             }
             natH += 16;
             const autoH = Math.min(natH, roomCap);
-            ov._autoScroll.set_position(0, hdrH);
+            ov._autoScroll.set_position(0, 0);
             ov._autoScroll.set_size(w, autoH);
-            h = Math.max(h, autoH + hdrH);
+            h = Math.max(h, autoH);
             ov._autoScroll.raise_top();
         }
         ov.resultsRegion.set_size(w, h);
