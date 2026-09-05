@@ -73,8 +73,6 @@ msgstr "Files"
 msgid "Folders"
 msgstr "Folders"
 
-msgid "Settings"
-msgstr "Settings"
 
 msgid "Web"
 msgstr "Web"

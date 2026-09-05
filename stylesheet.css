@@ -39,13 +39,15 @@
     selection-background-color: rgba(255, 255, 255, 0.85);
 }
 
+/* P1-1: no hard-coded max-height here — the panel cap is owned by JS LAYOUT.maxResultsH
+   via _syncRegionGeometry(); CSS only provides the surface style. Overflow behaviour
+   (AUTOMATIC vertical scroll) is set on the St.ScrollView in applet.js. */
 .quicksearch-results {
     padding: 6px 4px;
     background-color: rgba(36, 39, 46, 0.97);
     border: 1px solid rgba(255, 255, 255, 0.09);
     border-radius: 16px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-    max-height: 650px;
 }
 
 .quicksearch-section-header {
@@ -417,7 +419,16 @@
     color: rgba(255, 255, 255, 0.95);
 }
 
-/* UI-2: horizontal category filter chips — compact, subtle, never a nav bar */
+/* UI-2: horizontal category filter chips — compact, subtle, never a nav bar.
+   P2-1: chips live in a horizontal scroll container so a narrow panel / high DPI /
+   font scaling can never push them out — overflow scrolls, every category stays
+   reachable, and the row itself never grows vertically. */
+.quicksearch-filter-scroll {
+    max-height: 44px;
+    background: none;
+    border: none;
+    padding: 0;
+}
 .quicksearch-filter-row {
     spacing: 6px;
     padding: 0 4px 6px 4px;
@@ -480,7 +491,8 @@
     color: rgba(255, 255, 255, 0.85);
 }
 
-/* UI-3: code block surface + functional copy action */
+/* UI-3: code block surface + functional copy action.
+   P2-3: long lines scroll horizontally inside this surface (never escape the panel). */
 .quicksearch-ai-md-codebox {
     background-color: rgba(0, 0, 0, 0.28);
     border: 1px solid rgba(255, 255, 255, 0.10);
@@ -488,6 +500,11 @@
     padding: 6px 8px;
     margin: 2px 6px;
     spacing: 4px;
+}
+.quicksearch-ai-md-code-scroll {
+    background: none;
+    border: none;
+    padding: 0;
 }
 .quicksearch-ai-md-code-header {
     spacing: 6px;
@@ -510,20 +527,26 @@
     color: rgba(255, 255, 255, 0.95);
 }
 
-/* UI-3: inline sources row — 🔗 label + pills + View more (kept popover for full list) */
+/* UI-3: inline sources — 🔗 label + pills, with View more on its own line below
+   (P2-2: long titles / narrow windows can never push it out of the panel). */
+.quicksearch-ai-sources-wrap {
+    spacing: 4px;
+    padding: 4px 8px;
+}
 .quicksearch-ai-sources-row {
     spacing: 6px;
-    padding: 4px 8px;
 }
 .quicksearch-ai-source-pill {
     padding: 3px 10px;
     border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.12);
     background-color: rgba(255, 255, 255, 0.05);
+    max-width: 200px;
 }
 .quicksearch-ai-source-pill-label {
     font-size: 8pt;
     color: rgba(140, 180, 255, 0.90);
+    max-width: 180px;
 }
 .quicksearch-ai-source-pill:hover {
     background-color: rgba(120, 180, 255, 0.18);

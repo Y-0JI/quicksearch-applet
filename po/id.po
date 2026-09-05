@@ -74,8 +74,6 @@ msgstr "File"
 msgid "Folders"
 msgstr "Folder"
 
-msgid "Settings"
-msgstr "Pengaturan"
 
 msgid "Web"
 msgstr "Web"

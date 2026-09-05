@@ -37,16 +37,40 @@ test('UI-1: adaptive layout constants are the single source of truth', () => {
 
 // ---- UI-2: Search experience ----
 
-test('UI-2: horizontal category filter chips exist with the full category set', () => {
+test('UI-2: horizontal category filter chips exist — All/Apps/Files/Folders/Web', () => {
     assert.ok(APPLET_SRC.includes('quicksearch-filter-row'), 'filter row class');
     assert.ok(APPLET_SRC.includes('quicksearch-filter-chip'), 'chip class');
     assert.ok(APPLET_SRC.includes('this._filterButtons'), 'chip registry');
-    for (const cat of ['all', 'app', 'file', 'folder', 'settings', 'web']) {
+    for (const cat of ['all', 'app', 'file', 'folder', 'web']) {
         assert.ok(APPLET_SRC.includes('"' + cat + '"') || APPLET_SRC.includes("'" + cat + "'"), `category ${cat} present`);
     }
     assert.ok(APPLET_SRC.includes('_setCategory'), 'category setter exists');
     assert.ok(APPLET_SRC.includes('_syncFilterUI'), 'chip active-state sync exists');
     assert.ok(APPLET_SRC.includes('quicksearch-filter-chip-active'), 'active chip highlight');
+});
+
+test('P2-4: no fake Settings category — chips are provider-backed only', () => {
+    // Settings had no real provider/type (only a keyword heuristic) → removed.
+    assert.ok(!APPLET_SRC.includes('["settings", _("Settings")]') && !APPLET_SRC.includes("[\"settings\", _\\(\"Settings\")]"), 'no Settings chip entry');
+    const validIdx = APPLET_SRC.indexOf('const valid = ["all", "app", "file", "folder", "web"];');
+    assert.ok(validIdx !== -1, 'valid category list has no settings');
+    assert.ok(!APPLET_SRC.slice(validIdx, validIdx + 200).includes('settings'), 'setter rejects settings');
+    const filterIdx = APPLET_SRC.indexOf('_filterResults(results) {');
+    const filterSection = APPLET_SRC.slice(filterIdx, filterIdx + 1400);
+    assert.ok(!filterSection.includes('cat === \'settings\''), 'filter has no settings branch');
+    // po files no longer carry a dead Settings string
+    const pot = fs.readFileSync(path.join(ROOT, 'po/quicksearch@yoji.pot'), 'utf8');
+    assert.ok(!pot.includes('msgid "Settings"'), 'Settings string removed from pot');
+});
+
+test('P2-1: category chips live in a horizontal overflow scroll (responsive-safe)', () => {
+    assert.ok(APPLET_SRC.includes('quicksearch-filter-scroll'), 'filter scroll container');
+    assert.ok(APPLET_SRC.includes('this._filterScroll = new St.ScrollView'), 'scroll built as ScrollView');
+    assert.ok(APPLET_SRC.includes('St.PolicyType.AUTOMATIC, St.PolicyType.NEVER'), 'horizontal overflow policy');
+    assert.ok(APPLET_SRC.includes('this._filterScroll.add_actor(this._filterRow)') || APPLET_SRC.includes('this._filterScroll.add_child(this._filterRow)'), 'chips inside scroll container');
+    assert.ok(CSS_SRC.includes('.quicksearch-filter-scroll'), 'filter scroll styled');
+    // no second nav layer / sidebar / dropdown
+    assert.ok(!APPLET_SRC.includes('quicksearch-filter-menu'), 'no filter dropdown');
 });
 
 test('UI-2: category filter is presentation-only — never re-ranks', () => {
@@ -63,8 +87,7 @@ test('UI-2: category filter is presentation-only — never re-ranks', () => {
     const folder = mk('file', 160, 2); folder.icon = 'folder-symbolic';
     const app = mk('app', 150, 3);
     const web = mk('web', 90, 4);
-    const settingsApp = mk('app', 140, 5); settingsApp.title = 'System Settings';
-    const all = [file, folder, app, web, settingsApp];
+    const all = [file, folder, app, web];
     const sorted = all.slice().sort((a, b) => b.score - a.score);
 
     // replicate _filterResults (applet method; GJS-only file cannot be required)
@@ -76,11 +99,6 @@ test('UI-2: category filter is presentation-only — never re-ranks', () => {
             if (cat === 'web') return r.type === 'web';
             if (cat === 'file') return r.type === 'file' && String(r.icon || '') !== 'folder-symbolic';
             if (cat === 'folder') return r.type === 'file' && String(r.icon || '') === 'folder-symbolic';
-            if (cat === 'settings') {
-                if (r.type !== 'app') return false;
-                const hay = String(r.title || '').toLowerCase() + ' ' + String(r.description || '').toLowerCase();
-                return hay.indexOf('settings') !== -1 || hay.indexOf('pengaturan') !== -1 || hay.indexOf('preferensi') !== -1;
-            }
             return true;
         });
     }
@@ -88,9 +106,10 @@ test('UI-2: category filter is presentation-only — never re-ranks', () => {
     assert.deepEqual(filterResults(sorted, 'all').map(r => r.id), sorted.map(r => r.id), 'all keeps global order');
     assert.deepEqual(filterResults(sorted, 'file').map(r => r.id), [file.id], 'file excludes folders');
     assert.deepEqual(filterResults(sorted, 'folder').map(r => r.id), [folder.id], 'folder = folder-symbolic only');
-    assert.deepEqual(filterResults(sorted, 'app').map(r => r.id), [app.id, settingsApp.id], 'apps kept');
-    assert.deepEqual(filterResults(sorted, 'settings').map(r => r.id), [settingsApp.id], 'settings app only');
+    assert.deepEqual(filterResults(sorted, 'app').map(r => r.id), [app.id], 'apps kept');
     assert.deepEqual(filterResults(sorted, 'web').map(r => r.id), [web.id], 'web kept');
+    // unknown categories fall through to All (defensive, matches _setCategory)
+    assert.deepEqual(filterResults(sorted, 'settings').map(r => r.id), sorted.map(r => r.id), 'unknown category → all');
 });
 
 test('UI-2: Best Match leads the panel and is NOT duplicated in sections', () => {
@@ -140,11 +159,11 @@ test('UI-2: empty state exists and stays out of the idle panel', () => {
 
 test('UI-3: AI Mode stays strictly separated from search UI', () => {
     // filter chips are hidden in AI mode from BOTH the mode sync and the AI renderer
-    assert.ok(APPLET_SRC.includes("if (ov._filterRow) ov._filterRow.visible = false"), 'mode sync hides chips in AI');
+    // (via the shared _setFilterRowVisible helper that hides row + scroll wrapper)
+    assert.ok(APPLET_SRC.includes('_setFilterRowVisible(false)'), 'mode sync hides chips in AI');
     const renderIdx = APPLET_SRC.indexOf('_renderAIState() {');
     const aiSection = APPLET_SRC.slice(renderIdx, renderIdx + 1200);
-    assert.ok(aiSection.includes('ov._filterRow'), 'AI renderer touches the filter row');
-    assert.ok(aiSection.includes('visible = false'), 'AI renderer hides it');
+    assert.ok(aiSection.includes('_setFilterRowVisible(false)'), 'AI renderer hides the chips');
     // no local apps/files results are ever rendered in AI mode — the AI renderer
     // only ever adds conversation messages, headings, sources, errors
     assert.ok(!aiSection.includes('_buildLocals'), 'AI renderer never builds local launcher rows');
@@ -214,4 +233,54 @@ test('UI-4: adaptive sizing — panel grows to content, capped, scrollable', () 
     assert.ok(APPLET_SRC.includes('resultsRegion.set_size(w, h)'), 'region sized to content preserved');
     assert.ok(APPLET_SRC.includes('St.PolicyType.AUTOMATIC'), 'scroll policy automatic (cap + scroll)');
     assert.ok(APPLET_SRC.includes('Math.min(natH, LAYOUT.maxResultsH, roomCap)'), 'grow-to-cap behavior');
+});
+
+// ---- Follow-up fixes (P1/P2) ----
+
+test('P1-1: single sizing authority — CSS has no conflicting max-height', () => {
+    // JS LAYOUT.maxResultsH owns the cap; CSS only styles the surface.
+    const resultsCss = CSS_SRC.slice(CSS_SRC.indexOf('.quicksearch-results {'), CSS_SRC.indexOf('.quicksearch-results {') + 300);
+    assert.ok(!resultsCss.includes('max-height'), 'no hard-coded max-height in .quicksearch-results');
+    assert.ok(APPLET_SRC.includes('LAYOUT.maxResultsH'), 'JS owns the cap');
+    const capIdx = APPLET_SRC.indexOf('const mainH = Math.min(natH, LAYOUT.maxResultsH, roomCap)');
+    assert.ok(capIdx !== -1, 'cap applied via LAYOUT in geometry');
+});
+
+test('P1-2: roomCap is hard-bounded by actual available screen space', () => {
+    const idx = APPLET_SRC.indexOf('const avail = Math.max(0, global.screen_height');
+    assert.ok(idx !== -1, 'available space computed (clamped >= 0)');
+    const section = APPLET_SRC.slice(idx, idx + 400);
+    assert.ok(section.includes('Math.min(avail'), 'roomCap never exceeds available space');
+    assert.ok(section.includes('Math.max(LAYOUT.roomCapMin, avail)'), 'min only applied when space exists');
+    // behavior check: replicate the formula
+    function roomCap(avail, min) { return Math.max(1, Math.min(avail, Math.max(min, avail))); }
+    assert.equal(roomCap(700, 320), 700, 'plenty of space → full room');
+    assert.equal(roomCap(200, 320), 200, 'small screen → bounded by actual space, never forced to 320');
+    assert.equal(roomCap(0, 320), 1, 'degenerate layout → safe 1px fallback, no overflow');
+    assert.equal(roomCap(45, 320), 45, 'tiny space → tiny panel, never clipped');
+});
+
+test('P2-2: sources stay inline-compact — pills capped, View more on its own line', () => {
+    assert.ok(APPLET_SRC.includes('quicksearch-ai-sources-wrap'), 'vertical wrap container');
+    const srcIdx = APPLET_SRC.indexOf('_renderSourcesForMessage(ov, sources) {');
+    const srcSection = APPLET_SRC.slice(srcIdx, srcIdx + 4500);
+    assert.ok(srcSection.includes('wrap.add(moreBtn)'), 'View more added BELOW the pill row');
+    assert.ok(srcSection.includes('set_ellipsize(Pango.EllipsizeMode.END)'), 'pill labels ellipsize');
+    assert.ok(srcSection.includes('title.length > 28'), 'JS caps source titles');
+    assert.ok(CSS_SRC.includes('max-width: 180px'), 'pill label width capped in CSS');
+    assert.ok(CSS_SRC.includes('.quicksearch-ai-sources-wrap'), 'wrap styled');
+    // still metadata, never a search-results list
+    assert.ok(!srcSection.includes('_buildRow'), 'sources never build launcher rows');
+});
+
+test('P2-3: long code lines scroll horizontally inside the code surface', () => {
+    assert.ok(APPLET_SRC.includes('quicksearch-ai-md-code-scroll'), 'code scroll container');
+    const codeIdx = APPLET_SRC.indexOf('block.kind === \'code\'');
+    const codeSection = APPLET_SRC.slice(codeIdx, codeIdx + 3000);
+    assert.ok(codeSection.includes('St.PolicyType.AUTOMATIC, St.PolicyType.NEVER'), 'horizontal overflow policy');
+    assert.ok(codeSection.includes('codeScroll.add_actor(codeLbl)') || codeSection.includes('codeScroll.add_child(codeLbl)'), 'code label inside scroll');
+    assert.ok(codeSection.includes('set_line_wrap(false)'), 'code lines stay single-line (scroll, not wrap)');
+    assert.ok(codeSection.includes('quicksearch-ai-md-code-copy'), 'copy button still present');
+    assert.ok(codeSection.includes('codeHeader.add(copyBtn'), 'copy stays above the scroll area (visible + clickable)');
+    assert.ok(CSS_SRC.includes('.quicksearch-ai-md-code-scroll'), 'code scroll styled');
 });

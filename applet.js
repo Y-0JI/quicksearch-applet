@@ -155,14 +155,23 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         // UI-2: horizontal category filter chips (Search mode only, hidden while idle).
         // Presentation-only: switching a chip re-renders the ALREADY ranked result set
         // through a type filter — ranking/Best Match logic is never re-run.
-        this._filterRow = new St.BoxLayout({ style_class: "quicksearch-filter-row", vertical: false, visible: false });
+        // P2-1: the chips live inside a horizontal ScrollView so a narrow panel / high
+        // DPI / font scaling can never push them out of the container — all categories
+        // stay reachable via horizontal overflow instead of a second nav layer.
+        this._filterRow = new St.BoxLayout({ style_class: "quicksearch-filter-row", vertical: false, visible: false, x_expand: false, x_fill: false });
+        this._filterScroll = new St.ScrollView({
+            style_class: "quicksearch-filter-scroll",
+            x_fill: true, y_fill: false,
+            clip_to_allocation: true,
+            visible: false
+        });
+        try { this._filterScroll.set_policy(St.PolicyType.AUTOMATIC, St.PolicyType.NEVER); } catch (e) {}
         this._filterButtons = [];
         const _categories = [
             ["all", _("All")],
             ["app", _("Apps")],
             ["file", _("Files")],
             ["folder", _("Folders")],
-            ["settings", _("Settings")],
             ["web", _("Web")]
         ];
         for (let ci = 0; ci < _categories.length; ci++) {
@@ -178,7 +187,8 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             this._filterButtons.push({ id: catId, button: btn, label: lbl });
             this._filterRow.add(btn);
         }
-        this.contentLayout.add(this._filterRow);
+        try { this._filterScroll.add_actor(this._filterRow); } catch (e) { try { this._filterScroll.add_child(this._filterRow); } catch (e2) {} }
+        this.contentLayout.add(this._filterScroll);
         this._caretBlinkId = 0;
         this._caretVisible = true;
         this._blinkEntry = this._entry;
@@ -1042,7 +1052,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             }
         } catch (e) {}
         // UI-2/8: category chips belong to Search Mode only — AI Mode never shows them
-        try { if (ov._filterRow) ov._filterRow.visible = false; } catch (e) {}
+        try { this._setFilterRowVisible(false); } catch (e) {}
         try { this._syncAIComposerState(); } catch (e) {}
         try { this._syncAIFooter(); } catch (e) {}
         try { this._updateHints(); } catch (e) {}
@@ -1135,7 +1145,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 this._sortedResults = [];
                 try { if (this._overlay._scroll) this._overlay._scroll.visible = false; } catch (e) {}
                 try { if (this._overlay._autoScroll) this._overlay._autoScroll.visible = false; } catch (e) {}
-                try { if (this._overlay._filterRow) this._overlay._filterRow.visible = false; } catch (e) {}
+                try { this._setFilterRowVisible(false); } catch (e) {}
             } else {
                 this._autoRows = [];
                 this._mainRows = [];
@@ -1644,11 +1654,13 @@ class QuickSearchApplet extends Applet.IconApplet {
             for (const block of arr) {
                 // UI-3: code blocks get a distinct surface + a FUNCTIONAL copy action
                 // (St.Clipboard — same API the message copy action uses).
+                // P2-3: long lines scroll horizontally inside the code surface instead of
+                // escaping the panel; the copy button stays above, visible + clickable.
                 if (block.kind === 'code') {
                     try {
                         const codeText = String((block.lines || []).join('\n'));
                         const codeBox = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-md-codebox" });
-                        const codeLbl = new St.Label({ text: '', style_class: "quicksearch-ai-md-code" });
+                        const codeLbl = new St.Label({ text: '', style_class: "quicksearch-ai-md-code", x_expand: false, x_fill: false });
                         try {
                             const ct = codeLbl.get_clutter_text();
                             ct.set_line_wrap(false);
@@ -1662,6 +1674,13 @@ class QuickSearchApplet extends Applet.IconApplet {
                         if (!ok) {
                             try { codeLbl.set_text(codeText); } catch (e2) {}
                         }
+                        const codeScroll = new St.ScrollView({
+                            style_class: "quicksearch-ai-md-code-scroll",
+                            x_fill: true, y_fill: false,
+                            clip_to_allocation: true
+                        });
+                        try { codeScroll.set_policy(St.PolicyType.AUTOMATIC, St.PolicyType.NEVER); } catch (e) {}
+                        try { codeScroll.add_actor(codeLbl); } catch (e) { try { codeScroll.add_child(codeLbl); } catch (e2) {} }
                         const codeHeader = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-md-code-header" });
                         const copyBtn = this._buildIconActionButton(["edit-copy-symbolic", "edit-copy"], _("Copy code"), "quicksearch-ai-md-code-copy", () => {
                             this._copyUserMessageToClipboard(codeText);
@@ -1669,7 +1688,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                         try { copyBtn.add_style_class_name("quicksearch-ai-action-icon-btn"); } catch (e) {}
                         try { codeHeader.add(copyBtn, { x_align: St.Align.END }); } catch (e) {}
                         try { codeBox.add(codeHeader); } catch (e) {}
-                        try { codeBox.add(codeLbl); } catch (e) {}
+                        try { codeBox.add(codeScroll); } catch (e) {}
                         box.add_child(codeBox);
                     } catch (e) {}
                     continue;
@@ -1714,7 +1733,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!ov || !ov.resultsBox) return;
         try { if (ov._autoScroll) ov._autoScroll.visible = false; } catch (e) {}
         // UI-2/8: strict separation — AI Mode never renders search filter chips
-        try { if (ov._filterRow) ov._filterRow.visible = false; } catch (e) {}
+        try { this._setFilterRowVisible(false); } catch (e) {}
         this._autoRows = [];
         try { while (ov.resultsBox.get_n_children() > 0) ov.resultsBox.remove_child(ov.resultsBox.get_child_at_index(0)); } catch (e) {}
         this._clearMsgTooltips();
@@ -1916,10 +1935,13 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!ov || !Array.isArray(sources) || sources.length === 0) return;
         try {
             const count = sources.length;
-            // UI-3: inline compact row — 🔗 Sources + up to 3 clickable pills + View more.
-            // Pills open the source directly (structural http(s) gate in _openSourceUrl);
-            // View more toggles the full popover kept from the previous UI.
-            const row = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-button quicksearch-ai-sources-row" });
+            // UI-3: inline compact sources — 🔗 Sources + up to 3 clickable pills, with
+            // "View more" on its OWN line below (P2-2) so a long title or narrow window
+            // can never push it out of the panel. Pills open the source directly
+            // (structural http(s) gate in _openSourceUrl); View more toggles the full
+            // popover kept from the previous UI.
+            const wrap = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-sources-wrap" });
+            const row = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-button quicksearch-ai-sources-row", x_expand: false, x_fill: false });
             const icon = new St.Icon({ icon_name: "emblem-shared-symbolic", icon_size: 11, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-sources-button-icon" });
             try { icon.icon_name = "text-x-generic-symbolic"; } catch (e) {}
             const label = new St.Label({ text: _("Sources"), style_class: "quicksearch-ai-sources-button-label" });
@@ -1933,6 +1955,11 @@ class QuickSearchApplet extends Applet.IconApplet {
                 if (title.length > 28) title = title.slice(0, 28) + '\u2026';
                 const pill = new St.Button({ style_class: "quicksearch-ai-source-pill", reactive: true, track_hover: true, can_focus: false });
                 const pillLbl = new St.Label({ text: title, style_class: "quicksearch-ai-source-pill-label" });
+                try {
+                    const ct = pillLbl.get_clutter_text();
+                    ct.set_line_wrap(false);
+                    if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.END);
+                } catch (e) {}
                 try { pill.set_child(pillLbl); } catch (e) {}
                 const url = src.url;
                 pill.connect("clicked", () => {
@@ -1941,6 +1968,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 });
                 try { row.add(pill); } catch (e) {}
             }
+            try { wrap.add(row); } catch (e) {}
             if (count > MAX_INLINE) {
                 const moreBtn = new St.Button({ style_class: "quicksearch-ai-sources-button-viewmore", reactive: true, track_hover: true, can_focus: false });
                 const moreLbl = new St.Label({ text: _("View more"), style_class: "quicksearch-ai-source-pill-label" });
@@ -1951,9 +1979,9 @@ class QuickSearchApplet extends Applet.IconApplet {
                     try { this._toggleSourcesPopover(capturedSources, moreBtn, capturedId); } catch (e) {}
                     return Clutter.EVENT_STOP;
                 });
-                try { row.add(moreBtn); } catch (e) {}
+                try { wrap.add(moreBtn); } catch (e) {}
             }
-            ov.resultsBox.add_child(row);
+            ov.resultsBox.add_child(wrap);
         } catch (e) {}
     }
 
@@ -2485,14 +2513,24 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     // ---- UI-2: category filter (presentation only — never re-ranks) ----
 
+    // P2-4: no Settings chip — there is no dedicated Settings provider/type, only an
+    // unreliable keyword heuristic, so the category is omitted until a real source
+    // exists (reliability over filter count).
     _setCategory(id) {
-        const valid = ["all", "app", "file", "folder", "settings", "web"];
+        const valid = ["all", "app", "file", "folder", "web"];
         if (valid.indexOf(id) === -1) id = "all";
         this._category = id;
         this._syncFilterUI();
         if (this._mode === 'search') {
             try { this.renderResults(this._current || []); } catch (e) {}
         }
+    }
+
+    // Mirrors filter-row visibility to both the inner chip row and its scroll wrapper.
+    _setFilterRowVisible(v) {
+        const ov = this._overlay;
+        try { if (ov && ov._filterRow) ov._filterRow.visible = v; } catch (e) {}
+        try { if (ov && ov._filterScroll) ov._filterScroll.visible = v; } catch (e) {}
     }
 
     _syncFilterUI() {
@@ -2509,8 +2547,8 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     // Type filter over the ALREADY-ranked result set. "Folders"/"Files" split file
-    // results by their folder icon; "Settings" keeps apps whose name/description
-    // mention settings; unknown categories fall through to All.
+    // results by their folder icon; unknown categories fall through to All. There is
+    // deliberately NO Settings category (P2-4) — only a real provider would justify it.
     _filterResults(results) {
         const cat = this._category || 'all';
         if (cat === 'all') return results;
@@ -2520,11 +2558,6 @@ class QuickSearchApplet extends Applet.IconApplet {
             if (cat === 'web') return r.type === 'web';
             if (cat === 'file') return r.type === 'file' && String(r.icon || '') !== 'folder-symbolic';
             if (cat === 'folder') return r.type === 'file' && String(r.icon || '') === 'folder-symbolic';
-            if (cat === 'settings') {
-                if (r.type !== 'app') return false;
-                const hay = String(r.title || '').toLowerCase() + ' ' + String(r.description || '').toLowerCase();
-                return hay.indexOf('settings') !== -1 || hay.indexOf('pengaturan') !== -1 || hay.indexOf('preferensi') !== -1;
-            }
             return true;
         });
     }
@@ -2586,7 +2619,12 @@ class QuickSearchApplet extends Applet.IconApplet {
                 bottomReserve += (Math.round(Number(hh) || 0) || LAYOUT.hintsH) + 4;
             }
         } catch (e) { bottomReserve += LAYOUT.hintsH + 4; }
-        const roomCap = Math.max(LAYOUT.roomCapMin, global.screen_height - pillBottom - 6 - bottomReserve - 12);
+        // P1-2: the ACTUAL remaining screen space is the hard upper bound — the
+        // roomCapMin floor only applies when that much space genuinely exists, so a
+        // small screen / high scaling / edge panel can never force overflow. The 1px
+        // floor keeps a safe (tiny) panel on degenerate layouts.
+        const avail = Math.max(0, global.screen_height - pillBottom - 6 - bottomReserve - 12);
+        const roomCap = Math.max(1, Math.min(avail, Math.max(LAYOUT.roomCapMin, avail)));
         // chat-mode header [+ New Chat] pinned above the results panel
         let hdrH = 0;
         const hdrVisible = !!(ov._aiHeader && ov._aiHeader.visible);
@@ -2852,7 +2890,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             const ov = this._overlay;
             if (ov && ov._filterRow) {
                 const q = (ov.getText && typeof ov.getText === 'function') ? String(ov.getText() || '').trim() : '';
-                ov._filterRow.visible = this._mode === 'search' && !!q;
+                this._setFilterRowVisible(this._mode === 'search' && !!q);
             }
         } catch (e) {}
 

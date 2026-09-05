@@ -97,9 +97,6 @@ msgstr ""
 msgid "Folders"
 msgstr ""
 
-#: applet.js
-msgid "Settings"
-msgstr ""
 
 #: applet.js
 msgid "Web"
