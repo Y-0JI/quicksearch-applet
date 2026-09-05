@@ -171,7 +171,7 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         // _filterRow/_filterScroll/_filterButtons existing, so a partial init is safe.
         this._filterButtons = [];
         try {
-            this._filterRow = new St.BoxLayout({ style_class: "quicksearch-filter-row", vertical: false, visible: false, x_expand: false, x_fill: false });
+            this._filterRow = new St.BoxLayout({ style_class: "quicksearch-filter-row", vertical: false, visible: false, x_expand: false });
             this._filterScroll = new St.ScrollView({
                 style_class: "quicksearch-filter-scroll",
                 x_fill: true, y_fill: false,
@@ -1683,7 +1683,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                     try {
                         const codeText = String((block.lines || []).join('\n'));
                         const codeBox = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-md-codebox" });
-                        const codeLbl = new St.Label({ text: '', style_class: "quicksearch-ai-md-code", x_expand: false, x_fill: false });
+                        const codeLbl = new St.Label({ text: '', style_class: "quicksearch-ai-md-code", x_expand: false });
                         try {
                             const ct = codeLbl.get_clutter_text();
                             ct.set_line_wrap(false);
@@ -1966,7 +1966,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             // View more toggles the full popover kept from the previous UI.
             const wrap = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-sources-wrap" });
             // header line: 🔗 Sources (own line — compact even on very narrow panels)
-            const headRow = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-button quicksearch-ai-sources-row", x_expand: false, x_fill: false });
+            const headRow = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-button quicksearch-ai-sources-row", x_expand: false });
             const icon = new St.Icon({ icon_name: "emblem-shared-symbolic", icon_size: 11, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-sources-button-icon" });
             try { icon.icon_name = "text-x-generic-symbolic"; } catch (e) {}
             const label = new St.Label({ text: _("Sources"), style_class: "quicksearch-ai-sources-button-label" });
@@ -1979,7 +1979,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             try {
                 flowBox = new St.Widget({
                     style_class: "quicksearch-ai-sources-row",
-                    x_expand: true, x_fill: true,
+                    x_expand: true,
                     layout_manager: new Clutter.FlowLayout({
                         orientation: Clutter.Orientation.HORIZONTAL,
                         homogeneous: false,
@@ -1989,7 +1989,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 });
             } catch (e) { flowBox = null; }
             if (!flowBox) {
-                flowBox = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-row", x_expand: false, x_fill: false });
+                flowBox = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-row", x_expand: false });
             }
             const MAX_INLINE = 3;
             for (let i = 0; i < Math.min(count, MAX_INLINE); i++) {
