@@ -80,3 +80,63 @@ msgstr ""
 #: settings-schema.json
 msgid "AI model (e.g. gpt-4o-mini, coba9router)"
 msgstr ""
+
+#: applet.js
+msgid "All"
+msgstr ""
+
+#: applet.js
+msgid "Apps"
+msgstr ""
+
+#: applet.js
+msgid "Files"
+msgstr ""
+
+#: applet.js
+msgid "Folders"
+msgstr ""
+
+#: applet.js
+msgid "Settings"
+msgstr ""
+
+#: applet.js
+msgid "Web"
+msgstr ""
+
+#: applet.js
+msgid "Best Match"
+msgstr ""
+
+#: applet.js
+msgid "Enter"
+msgstr ""
+
+#: applet.js
+msgid "✨ AI Answer"
+msgstr ""
+
+#: applet.js
+msgid "Copy code"
+msgstr ""
+
+#: applet.js
+msgid "View more"
+msgstr ""
+
+#: applet.js
+msgid "Tidak ada hasil untuk pencarian ini."
+msgstr ""
+
+#: applet.js
+msgid "↑ ↓ Navigate · Enter Open · Esc Close"
+msgstr ""
+
+#: applet.js
+msgid "Enter Send · Esc Close"
+msgstr ""
+
+#: applet.js
+msgid "Enter Ask · Esc Close"
+msgstr ""

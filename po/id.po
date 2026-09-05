@@ -61,3 +61,48 @@ msgstr "Kunci API AI (9router)"
 
 msgid "AI model (e.g. gpt-4o-mini, coba9router)"
 msgstr "Model AI (mis. gpt-4o-mini, coba9router)"
+
+msgid "All"
+msgstr "Semua"
+
+msgid "Apps"
+msgstr "Aplikasi"
+
+msgid "Files"
+msgstr "File"
+
+msgid "Folders"
+msgstr "Folder"
+
+msgid "Settings"
+msgstr "Pengaturan"
+
+msgid "Web"
+msgstr "Web"
+
+msgid "Best Match"
+msgstr "Paling Sesuai"
+
+msgid "Enter"
+msgstr "Enter"
+
+msgid "✨ AI Answer"
+msgstr "✨ Jawaban AI"
+
+msgid "Copy code"
+msgstr "Salin kode"
+
+msgid "View more"
+msgstr "Lihat lainnya"
+
+msgid "Tidak ada hasil untuk pencarian ini."
+msgstr "Tidak ada hasil untuk pencarian ini."
+
+msgid "↑ ↓ Navigate · Enter Open · Esc Close"
+msgstr "↑ ↓ Navigasi · Enter Buka · Esc Tutup"
+
+msgid "Enter Send · Esc Close"
+msgstr "Enter Kirim · Esc Tutup"
+
+msgid "Enter Ask · Esc Close"
+msgstr "Enter Tanya · Esc Tutup"

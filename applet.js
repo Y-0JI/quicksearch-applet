@@ -60,6 +60,17 @@ function _(str) {
 
 const RECENT_MAX = 15;
 
+// UI/UX redesign (ADVANCED_SEARCH_AI_UIUX_REDESIGN): single source of truth for the
+// adaptive layout. Presentation only — search/AI ranking + logic stay untouched.
+const LAYOUT = {
+    topPad: 120,        // dialog top padding (px) — keeps the pill floating near the top
+    pillH: 54,          // search pill nominal height (px)
+    filterH: 34,        // category filter row height (px) when visible
+    hintsH: 22,         // keyboard hints bar height (px) when visible
+    maxResultsH: 664,   // hard cap for the results/chat panel height (px)
+    roomCapMin: 320     // minimum room kept below the pill (px)
+};
+
 const FALLBACK_URLS = {
     ddgo: q => 'https://duckduckgo.com/?q=' + encodeURIComponent(q),
     google: q => 'https://www.google.com/search?q=' + encodeURIComponent(q),
@@ -82,6 +93,14 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._entry.clutter_text.set_cursor_visible(true);
         const entryRow = new St.BoxLayout({ style_class: "quicksearch-entry-row" });
         this._entryRow = entryRow;
+        // UI-1: leading search icon inside the pill (launcher identity)
+        this._searchIcon = new St.Icon({
+            icon_name: "system-search",
+            icon_size: 14,
+            icon_type: St.IconType.SYMBOLIC,
+            style_class: "quicksearch-search-icon"
+        });
+        entryRow.add(this._searchIcon);
         entryRow.add(this._entry, { expand: true });
         // AI mode control lives inside the existing searchbox pill (Phase AI-4).
         // Single overlay, single searchbox — toggle does not create a second searchbox.
@@ -108,6 +127,22 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._modeIcon = _modeIcon;
         this._modeLabel = _modeLabel;
         entryRow.add(this._modeButton);
+        // UI-1: compact close button at the right of the search pill (✕)
+        this._closeButton = new St.Button({
+            style_class: "quicksearch-close-button",
+            can_focus: false,
+            reactive: true,
+            track_hover: true
+        });
+        const _closeLabel = new St.Label({ text: _("\u2715"), style_class: "quicksearch-close-button-label" });
+        try { this._closeButton.set_child(_closeLabel); } catch (e) {}
+        entryRow.add(this._closeButton);
+        try {
+            this._closeButton.connect("clicked", () => {
+                try { this._applet.close(); } catch (e) {}
+                return Clutter.EVENT_STOP;
+            });
+        } catch (e) {}
         try {
             this._modeButton.connect("clicked", () => {
                 try { this._applet._toggleMode(); } catch (e) {}
@@ -116,6 +151,34 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         } catch (e) {}
         this.contentLayout.add_style_class_name("quicksearch-content");
         this.contentLayout.add(entryRow);
+
+        // UI-2: horizontal category filter chips (Search mode only, hidden while idle).
+        // Presentation-only: switching a chip re-renders the ALREADY ranked result set
+        // through a type filter — ranking/Best Match logic is never re-run.
+        this._filterRow = new St.BoxLayout({ style_class: "quicksearch-filter-row", vertical: false, visible: false });
+        this._filterButtons = [];
+        const _categories = [
+            ["all", _("All")],
+            ["app", _("Apps")],
+            ["file", _("Files")],
+            ["folder", _("Folders")],
+            ["settings", _("Settings")],
+            ["web", _("Web")]
+        ];
+        for (let ci = 0; ci < _categories.length; ci++) {
+            const catId = _categories[ci][0];
+            const catLabel = _categories[ci][1];
+            const btn = new St.Button({ style_class: "quicksearch-filter-chip", can_focus: false, reactive: true, track_hover: true });
+            const lbl = new St.Label({ text: catLabel, style_class: "quicksearch-filter-chip-label" });
+            try { btn.set_child(lbl); } catch (e) {}
+            btn.connect("clicked", () => {
+                try { this._applet._setCategory(catId); } catch (e) {}
+                return Clutter.EVENT_STOP;
+            });
+            this._filterButtons.push({ id: catId, button: btn, label: lbl });
+            this._filterRow.add(btn);
+        }
+        this.contentLayout.add(this._filterRow);
         this._caretBlinkId = 0;
         this._caretVisible = true;
         this._blinkEntry = this._entry;
@@ -180,10 +243,16 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._composerSend = new St.Button({ style_class: "quicksearch-ai-send", can_focus: false, reactive: false, track_hover: true });
         const _sendLabel = new St.Label({ text: _("Send"), style_class: "quicksearch-ai-send-label" });
         try { this._composerSend.set_child(_sendLabel); } catch (e) {}
+        // UI-3: compact “+” prefix before the follow-up entry (AI-tool feel, not a chat app)
+        this._composerPlus = new St.Icon({ icon_name: "list-add-symbolic", icon_size: 12, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-composer-plus" });
+        this._composerRow.add(this._composerPlus);
         this._composerRow.add(this._composerEntry, { expand: true });
         this._composerRow.add(this._stopButton);
         this._composerRow.add(this._composerSend);
         this._aiComposer.add(this._composerRow);
+        // UI-4: context-aware keyboard hints bar (subtle, under the panel area)
+        this._hintsLabel = new St.Label({ text: "", style_class: "quicksearch-hints", visible: false });
+        this.contentLayout.add(this._hintsLabel);
         this.contentLayout.add(this._aiComposer);
         // conversation header pinned above the results panel (chat mode only): [+ New Chat]
         this._aiHeader = new St.BoxLayout({ style_class: "quicksearch-ai-chat-header", vertical: false, visible: false });
@@ -725,6 +794,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._sourcesPopover = null;
         this._sourcesPopoverAnchorId = null;
 
+        // ---- UI-2: active category filter (presentation only) ----
+        this._category = 'all';
+
         // ---- AI Search mode state (Phase AI-4/AI-5) ----
         // Spec AI-4 §4.2: explicit _searchMode = 'normal' | 'ai' (alias to _mode='search'|'ai' for compat)
         // _mode kept as legacy alias; _searchMode is canonical per spec.
@@ -969,8 +1041,11 @@ class QuickSearchApplet extends Applet.IconApplet {
                 ov._modeButton.remove_style_class_name("quicksearch-mode-active");
             }
         } catch (e) {}
+        // UI-2/8: category chips belong to Search Mode only — AI Mode never shows them
+        try { if (ov._filterRow) ov._filterRow.visible = false; } catch (e) {}
         try { this._syncAIComposerState(); } catch (e) {}
         try { this._syncAIFooter(); } catch (e) {}
+        try { this._updateHints(); } catch (e) {}
     }
 
     // Phase 15: mode switching is a two-way door. Entry-row pill and the chat-header
@@ -1060,6 +1135,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 this._sortedResults = [];
                 try { if (this._overlay._scroll) this._overlay._scroll.visible = false; } catch (e) {}
                 try { if (this._overlay._autoScroll) this._overlay._autoScroll.visible = false; } catch (e) {}
+                try { if (this._overlay._filterRow) this._overlay._filterRow.visible = false; } catch (e) {}
             } else {
                 this._autoRows = [];
                 this._mainRows = [];
@@ -1566,8 +1642,39 @@ class QuickSearchApplet extends Applet.IconApplet {
             const arr = (blocks && blocks.length) ? blocks :
                 [{ kind: 'paragraph', lines: text.split('\n').map(l => ({ spans: [{ style: 'plain', text: l }] })) }];
             for (const block of arr) {
-                const cls = block.kind === 'list' ? "quicksearch-ai-md-list" :
-                    (block.kind === 'code' ? "quicksearch-ai-md-code" : "quicksearch-ai-md-text");
+                // UI-3: code blocks get a distinct surface + a FUNCTIONAL copy action
+                // (St.Clipboard — same API the message copy action uses).
+                if (block.kind === 'code') {
+                    try {
+                        const codeText = String((block.lines || []).join('\n'));
+                        const codeBox = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-md-codebox" });
+                        const codeLbl = new St.Label({ text: '', style_class: "quicksearch-ai-md-code" });
+                        try {
+                            const ct = codeLbl.get_clutter_text();
+                            ct.set_line_wrap(false);
+                            if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
+                        } catch (e) {}
+                        let ok = false;
+                        try {
+                            const markup = (mdMod && typeof mdMod.blockToMarkup === 'function') ? mdMod.blockToMarkup(block) : null;
+                            if (markup != null) ok = this._setLabelMarkupSafe(codeLbl, markup);
+                        } catch (e) { ok = false; }
+                        if (!ok) {
+                            try { codeLbl.set_text(codeText); } catch (e2) {}
+                        }
+                        const codeHeader = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-md-code-header" });
+                        const copyBtn = this._buildIconActionButton(["edit-copy-symbolic", "edit-copy"], _("Copy code"), "quicksearch-ai-md-code-copy", () => {
+                            this._copyUserMessageToClipboard(codeText);
+                        });
+                        try { copyBtn.add_style_class_name("quicksearch-ai-action-icon-btn"); } catch (e) {}
+                        try { codeHeader.add(copyBtn, { x_align: St.Align.END }); } catch (e) {}
+                        try { codeBox.add(codeHeader); } catch (e) {}
+                        try { codeBox.add(codeLbl); } catch (e) {}
+                        box.add_child(codeBox);
+                    } catch (e) {}
+                    continue;
+                }
+                const cls = block.kind === 'list' ? "quicksearch-ai-md-list" : "quicksearch-ai-md-text";
                 const lbl = new St.Label({ text: '', style_class: cls });
                 try {
                     const ct = lbl.get_clutter_text();
@@ -1606,6 +1713,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         const ov = this._overlay;
         if (!ov || !ov.resultsBox) return;
         try { if (ov._autoScroll) ov._autoScroll.visible = false; } catch (e) {}
+        // UI-2/8: strict separation — AI Mode never renders search filter chips
+        try { if (ov._filterRow) ov._filterRow.visible = false; } catch (e) {}
         this._autoRows = [];
         try { while (ov.resultsBox.get_n_children() > 0) ov.resultsBox.remove_child(ov.resultsBox.get_child_at_index(0)); } catch (e) {}
         this._clearMsgTooltips();
@@ -1664,9 +1773,18 @@ class QuickSearchApplet extends Applet.IconApplet {
                     if (this._aiMsgActors) this._aiMsgActors[uid] = block;
                 } catch (e) {}
             } else if (msg.role === 'assistant') {
+                // UI-3: small "✨ AI Answer" heading marks every answer surface — it is
+                // re-created per render (streaming deltas rebuild it), never duplicated.
+                const addAnswerHeading = () => {
+                    try {
+                        const h = new St.Label({ text: _("\u2728 AI Answer"), style_class: "quicksearch-ai-answer-heading" });
+                        ov.resultsBox.add_child(h);
+                    } catch (e) {}
+                };
                 if (msg.status === 'streaming') {
                     if (msg.content) {
                         try {
+                            addAnswerHeading();
                             const actor = this._buildAiAnswerActor(String(msg.content));
                             if (actor) ov.resultsBox.add_child(actor);
                         } catch (e) {}
@@ -1679,6 +1797,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                     }
                 } else if (msg.status === 'complete') {
                     try {
+                        addAnswerHeading();
                         const actor = this._buildAiAnswerActor(String(msg.content || ''));
                         if (actor) ov.resultsBox.add_child(actor);
                     } catch (e) {}
@@ -1696,6 +1815,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                     // §8: partial content remains visible, status shown, request inactive
                     if (msg.content) {
                         try {
+                            addAnswerHeading();
                             const actor = this._buildAiAnswerActor(String(msg.content));
                             if (actor) ov.resultsBox.add_child(actor);
                         } catch (e) {}
@@ -1710,6 +1830,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                     const errText = diagOn ? this._buildAiDiagnosticText(msg.error) : _("Unable to get an AI response.");
                     if (msg.content) {
                         try {
+                            addAnswerHeading();
                             const actor = this._buildAiAnswerActor(String(msg.content));
                             if (actor) ov.resultsBox.add_child(actor);
                         } catch (e) {}
@@ -1732,6 +1853,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { this._syncRegionGeometry(); } catch (e) {}
         try { this._syncSelection(); } catch (e) {}
         try { this._syncAIComposerState(); } catch (e) {}
+        try { this._updateHints(); } catch (e) {}
         if (messages.length > 0) {
             try { this._ensureScrollTracking(); } catch (e) {}
             try { this._scheduleAIScroll(false); } catch (e) {}
@@ -1794,21 +1916,44 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!ov || !Array.isArray(sources) || sources.length === 0) return;
         try {
             const count = sources.length;
-            const btn = new St.Button({ style_class: "quicksearch-ai-sources-button", reactive: true, track_hover: true, can_focus: false });
-            const box = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-button-content" });
+            // UI-3: inline compact row — 🔗 Sources + up to 3 clickable pills + View more.
+            // Pills open the source directly (structural http(s) gate in _openSourceUrl);
+            // View more toggles the full popover kept from the previous UI.
+            const row = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-button quicksearch-ai-sources-row" });
             const icon = new St.Icon({ icon_name: "emblem-shared-symbolic", icon_size: 11, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-sources-button-icon" });
             try { icon.icon_name = "text-x-generic-symbolic"; } catch (e) {}
-            const label = new St.Label({ text: _("Sources") + " \u00b7 " + count, style_class: "quicksearch-ai-sources-button-label" });
-            try { box.add(icon); } catch (e) {}
-            try { box.add(label); } catch (e) {}
-            try { btn.set_child(box); } catch (e) {}
-            const capturedSources = sources.slice();
-            const capturedId = msgId || String(count) + "-" + String(sources[0] && sources[0].url || "");
-            btn.connect("clicked", () => {
-                try { this._toggleSourcesPopover(capturedSources, btn, capturedId); } catch (e) {}
-                return Clutter.EVENT_STOP;
-            });
-            ov.resultsBox.add_child(btn);
+            const label = new St.Label({ text: _("Sources"), style_class: "quicksearch-ai-sources-button-label" });
+            try { row.add(icon); } catch (e) {}
+            try { row.add(label); } catch (e) {}
+            const MAX_INLINE = 3;
+            for (let i = 0; i < Math.min(count, MAX_INLINE); i++) {
+                const src = sources[i];
+                if (!src || typeof src.url !== 'string' || !src.url) continue;
+                let title = typeof src.title === 'string' && src.title.trim() ? src.title.trim() : (src.domain || src.url);
+                if (title.length > 28) title = title.slice(0, 28) + '\u2026';
+                const pill = new St.Button({ style_class: "quicksearch-ai-source-pill", reactive: true, track_hover: true, can_focus: false });
+                const pillLbl = new St.Label({ text: title, style_class: "quicksearch-ai-source-pill-label" });
+                try { pill.set_child(pillLbl); } catch (e) {}
+                const url = src.url;
+                pill.connect("clicked", () => {
+                    try { this._openSourceUrl(url); } catch (e) {}
+                    return Clutter.EVENT_STOP;
+                });
+                try { row.add(pill); } catch (e) {}
+            }
+            if (count > MAX_INLINE) {
+                const moreBtn = new St.Button({ style_class: "quicksearch-ai-sources-button-viewmore", reactive: true, track_hover: true, can_focus: false });
+                const moreLbl = new St.Label({ text: _("View more"), style_class: "quicksearch-ai-source-pill-label" });
+                try { moreBtn.set_child(moreLbl); } catch (e) {}
+                const capturedSources = sources.slice();
+                const capturedId = msgId || String(count) + "-" + String(sources[0] && sources[0].url || "");
+                moreBtn.connect("clicked", () => {
+                    try { this._toggleSourcesPopover(capturedSources, moreBtn, capturedId); } catch (e) {}
+                    return Clutter.EVENT_STOP;
+                });
+                try { row.add(moreBtn); } catch (e) {}
+            }
+            ov.resultsBox.add_child(row);
         } catch (e) {}
     }
 
@@ -2060,6 +2205,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiStreaming = false;
         this._aiEditId = null;
         this._aiMsgActors = {};
+        // UI-2: every open starts on the All filter (predictable launcher state)
+        this._category = 'all';
+        try { this._syncFilterUI(); } catch (e) {}
         this._cancelAIScroll();
         if (this._aiEngine) try { this._aiEngine.cancel(); } catch (e) {}
         this._aiGen++;
@@ -2335,6 +2483,69 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._engine.query(text, (results) => this.renderResults(results));
     }
 
+    // ---- UI-2: category filter (presentation only — never re-ranks) ----
+
+    _setCategory(id) {
+        const valid = ["all", "app", "file", "folder", "settings", "web"];
+        if (valid.indexOf(id) === -1) id = "all";
+        this._category = id;
+        this._syncFilterUI();
+        if (this._mode === 'search') {
+            try { this.renderResults(this._current || []); } catch (e) {}
+        }
+    }
+
+    _syncFilterUI() {
+        const ov = this._overlay;
+        if (!ov || !ov._filterButtons) return;
+        for (let i = 0; i < ov._filterButtons.length; i++) {
+            const fb = ov._filterButtons[i];
+            const active = fb.id === this._category;
+            try {
+                if (active) fb.button.add_style_class_name("quicksearch-filter-chip-active");
+                else fb.button.remove_style_class_name("quicksearch-filter-chip-active");
+            } catch (e) {}
+        }
+    }
+
+    // Type filter over the ALREADY-ranked result set. "Folders"/"Files" split file
+    // results by their folder icon; "Settings" keeps apps whose name/description
+    // mention settings; unknown categories fall through to All.
+    _filterResults(results) {
+        const cat = this._category || 'all';
+        if (cat === 'all') return results;
+        return (Array.isArray(results) ? results : []).filter(r => {
+            if (!r) return false;
+            if (cat === 'app') return r.type === 'app';
+            if (cat === 'web') return r.type === 'web';
+            if (cat === 'file') return r.type === 'file' && String(r.icon || '') !== 'folder-symbolic';
+            if (cat === 'folder') return r.type === 'file' && String(r.icon || '') === 'folder-symbolic';
+            if (cat === 'settings') {
+                if (r.type !== 'app') return false;
+                const hay = String(r.title || '').toLowerCase() + ' ' + String(r.description || '').toLowerCase();
+                return hay.indexOf('settings') !== -1 || hay.indexOf('pengaturan') !== -1 || hay.indexOf('preferensi') !== -1;
+            }
+            return true;
+        });
+    }
+
+    // UI-4: subtle, context-aware keyboard hints under the panel. Search shows
+    // navigation only while a query/results are present; AI shows send/close.
+    _updateHints() {
+        const ov = this._overlay;
+        if (!ov || !ov._hintsLabel) return;
+        let text = "";
+        if (this._mode === 'ai') {
+            if (this._hasConversation()) text = _("Enter Send \u00b7 Esc Close");
+            else text = _("Enter Ask \u00b7 Esc Close");
+        } else {
+            const q = (ov.getText && typeof ov.getText === 'function') ? String(ov.getText() || '').trim() : '';
+            if (q || (this._rows && this._rows.length > 0)) text = _("\u2191 \u2193 Navigate \u00b7 Enter Open \u00b7 Esc Close");
+        }
+        try { ov._hintsLabel.set_text(text); } catch (e) {}
+        try { ov._hintsLabel.visible = text !== ""; } catch (e) {}
+    }
+
     _syncRegionGeometry() {
         const ov = this._overlay;
         if (!ov || !ov.resultsRegion) return;
@@ -2343,11 +2554,22 @@ class QuickSearchApplet extends Applet.IconApplet {
         const w = pw || this._lastPanelWidth || 690;
         let entryVisible = false;
         try { entryVisible = !!ov._entryRow && ov._entryRow.visible; } catch (e) {}
-        let pillBottom = 146 + 54;
+        let pillBottom = LAYOUT.topPad + LAYOUT.pillH;
         if (entryVisible) {
             const pillTf = ov._entryRow.get_transformed_position();
-            pillBottom = (pillTf[1] || 146) + (ov._entryRow.get_transformed_size()[1] || 54);
+            pillBottom = (pillTf[1] || LAYOUT.topPad) + (ov._entryRow.get_transformed_size()[1] || LAYOUT.pillH);
         }
+        // UI-2: the category filter row sits between the pill and the results panel,
+        // so the available room below the pill must shrink by its height.
+        let filterH = 0;
+        try {
+            if (this._mode === 'search' && ov._filterRow && ov._filterRow.visible) {
+                const [, fh] = ov._filterRow.get_preferred_height(w);
+                filterH = Math.round(Number(fh) || 0);
+                if (filterH <= 0) filterH = LAYOUT.filterH;
+                pillBottom += filterH + 4;
+            }
+        } catch (e) { pillBottom += LAYOUT.filterH + 4; }
         // Phase 9: keep the results area clear of the bottom follow-up composer so a long
         // conversation never renders underneath it (§1/§5).
         let bottomReserve = 0;
@@ -2357,7 +2579,14 @@ class QuickSearchApplet extends Applet.IconApplet {
                 bottomReserve = (Number(ch) || 0) + 10;
             } catch (e) { bottomReserve = 110; }
         }
-        const roomCap = Math.max(320, global.screen_height - pillBottom - 6 - bottomReserve - 12);
+        // UI-4: keyboard hints bar height also reserves room below the panel.
+        try {
+            if (ov._hintsLabel && ov._hintsLabel.visible) {
+                const [, hh] = ov._hintsLabel.get_preferred_height(w);
+                bottomReserve += (Math.round(Number(hh) || 0) || LAYOUT.hintsH) + 4;
+            }
+        } catch (e) { bottomReserve += LAYOUT.hintsH + 4; }
+        const roomCap = Math.max(LAYOUT.roomCapMin, global.screen_height - pillBottom - 6 - bottomReserve - 12);
         // chat-mode header [+ New Chat] pinned above the results panel
         let hdrH = 0;
         const hdrVisible = !!(ov._aiHeader && ov._aiHeader.visible);
@@ -2386,7 +2615,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 natH = Number(fb) || 0;
             }
             natH += 16;
-            const mainH = Math.min(natH, 664, roomCap);
+            const mainH = Math.min(natH, LAYOUT.maxResultsH, roomCap);
             ov._scroll.set_position(0, hdrH);
             ov._scroll.set_size(w, mainH);
             h = mainH + hdrH;
@@ -2617,14 +2846,37 @@ class QuickSearchApplet extends Applet.IconApplet {
             ["web", _("WEB")]
         ];
 
+        // UI-2: category chips are visible in Search Mode as soon as a query exists
+        // (keeps the idle state compact). AI Mode never shows them.
+        try {
+            const ov = this._overlay;
+            if (ov && ov._filterRow) {
+                const q = (ov.getText && typeof ov.getText === 'function') ? String(ov.getText() || '').trim() : '';
+                ov._filterRow.visible = this._mode === 'search' && !!q;
+            }
+        } catch (e) {}
+
+        // UI-2: Best Match hierarchy — the highest-ranked result of the CURRENT
+        // (filtered) set leads the panel as a distinct surface, then the grouped
+        // sections follow WITHOUT duplicating it. Ranking logic itself is untouched.
+        const display = this._filterResults(this._sortedResults);
         const mainRows = [];
-        for (let s = 0; s < SECTION_ORDER.length; s++) {
-            const type = SECTION_ORDER[s][0];
-            const header = SECTION_ORDER[s][1];
-            const group = results.filter(r => r.type === type);
-            if (!group.length) continue;
-            if (header) mainRows.push({ header: header });
-            for (const r of group) mainRows.push({ result: r });
+        if (display.length > 0) {
+            const best = display[0];
+            mainRows.push({ header: _("Best Match"), bestHeader: true });
+            mainRows.push({ result: best, bestMatch: true });
+            for (let s = 0; s < SECTION_ORDER.length; s++) {
+                const type = SECTION_ORDER[s][0];
+                const header = SECTION_ORDER[s][1];
+                const group = display.filter(r => r.type === type && r.id !== best.id);
+                if (!group.length) continue;
+                if (header) mainRows.push({ header: header });
+                for (const r of group) mainRows.push({ result: r });
+            }
+        } else {
+            // empty state: only when a query is actually present (idle stays clean)
+            const q = this._overlay && this._overlay.getText ? String(this._overlay.getText() || '').trim() : '';
+            if (q) mainRows.push({ empty: true });
         }
         this._renderMainRows(mainRows);
     }
@@ -2635,11 +2887,16 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._mainRows = [];
         for (let i = 0; i < flat.length; i++) {
             const item = flat[i];
+            if (item.empty) {
+                const lbl = new St.Label({ text: _("Tidak ada hasil untuk pencarian ini."), style_class: "quicksearch-empty" });
+                try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+                box.add_child(lbl);
+                continue;
+            }
             if (item.header) {
-                box.add_child(new St.Label({
-                    text: item.header,
-                    style_class: "quicksearch-section-header"
-                }));
+                const hdr = new St.Label({ text: item.header, style_class: "quicksearch-section-header" });
+                if (item.bestHeader) try { hdr.add_style_class_name("quicksearch-bestmatch-header"); } catch (e) {}
+                box.add_child(hdr);
                 continue;
             }
             const row = this._buildRow(item);
@@ -2649,6 +2906,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._overlay._scroll.visible = flat.length > 0;
         this._syncRegionGeometry();
         this._syncSelection();
+        try { this._updateHints(); } catch (e) {}
     }
 
     _syncSelection() {
@@ -2712,11 +2970,25 @@ class QuickSearchApplet extends Applet.IconApplet {
         content.add(icon);
         content.add(labels);
 
+        // UI-2: Best Match gets a subtle keyboard hint on the right (Enter) — the row
+        // itself stays a plain list row, never an oversized card.
+        let bestMatch = false;
+        try { bestMatch = !!(item && item.bestMatch); } catch (e) { bestMatch = false; }
+        if (bestMatch) {
+            try {
+                const enterLbl = new St.Label({ text: _("Enter"), style_class: "quicksearch-best-match-hint" });
+                content.add(enterLbl, { x_align: St.Align.END, expand: true });
+            } catch (e) {}
+        }
+
         const button = new St.Button({
             style_class: "quicksearch-row",
             x_align: St.Align.START,
             child: content
         });
+        if (bestMatch) {
+            try { button.add_style_class_name("quicksearch-best-match"); } catch (e) {}
+        }
 
         const row = { button: button, result: r };
         button.connect("clicked", () => this.activateRow(row));

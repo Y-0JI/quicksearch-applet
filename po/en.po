@@ -60,3 +60,48 @@ msgstr "AI API key (9router)"
 
 msgid "AI model (e.g. gpt-4o-mini, coba9router)"
 msgstr "AI model (e.g. gpt-4o-mini, coba9router)"
+
+msgid "All"
+msgstr "All"
+
+msgid "Apps"
+msgstr "Apps"
+
+msgid "Files"
+msgstr "Files"
+
+msgid "Folders"
+msgstr "Folders"
+
+msgid "Settings"
+msgstr "Settings"
+
+msgid "Web"
+msgstr "Web"
+
+msgid "Best Match"
+msgstr "Best Match"
+
+msgid "Enter"
+msgstr "Enter"
+
+msgid "✨ AI Answer"
+msgstr "✨ AI Answer"
+
+msgid "Copy code"
+msgstr "Copy code"
+
+msgid "View more"
+msgstr "View more"
+
+msgid "Tidak ada hasil untuk pencarian ini."
+msgstr "No results for this search."
+
+msgid "↑ ↓ Navigate · Enter Open · Esc Close"
+msgstr "↑ ↓ Navigate · Enter Open · Esc Close"
+
+msgid "Enter Send · Esc Close"
+msgstr "Enter Send · Esc Close"
+
+msgid "Enter Ask · Esc Close"
+msgstr "Enter Ask · Esc Close"
