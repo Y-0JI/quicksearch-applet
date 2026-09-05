@@ -7,7 +7,10 @@
 //
 // Intents: simple | explanation | data | list | troubleshooting | comparison | howto | current
 // Flags:   completeness (explicit "semua/lengkap/full list" request) and live (current/real-time).
-//          Both EN and ID keyword sets are supported.
+// Depth:   concise | normal | detailed — how DEEP the user wants the explanation, kept separate
+//          from completeness. completeness answers "give me ALL the items"; depth answers "how
+//          deep should the explanation go". An explicit depth request (detail/rinci/mendalam/...)
+//          overrides the default brevity guidance downstream. Both EN and ID keyword sets supported.
 
 const _COMPLETENESS_RE = /(semua|seluruh|lengkap|lengkapnya|daftar\s*lengkap|skuad\s*lengkap|semua\s*pemain|seluruh\s*daftar|siapa\s*saja|full\s*(?:list|squad)|list\s*all|complete\s*list|all\s*players|\ball\b|\bevery\b)/i;
 // Live intent precision (AI Pipeline V3 P1): split into STRONG live signals (time/recency
@@ -102,19 +105,39 @@ function _isIntentLive(s) {
     return _LIVE_SUBJECT_RE.test(s);
 }
 
-// detectResponseIntent(query) -> { primary, flags:{completeness,live}, secondary:[] }
+// ── ANSWER DEPTH (detail level) ──────────────────────────────────────────────
+// Depth detection is deliberately separate from completeness. "daftar lengkap pemain" means
+// completeness (all items) and stays depth normal; "jelaskan Docker secara mendalam" is a
+// depth request. Bare "lengkap"/"complete" is therefore NOT a depth signal on its own — it
+// only counts when it clearly asks for thoroughness (secara lengkap, lebih lengkap, tutorial
+// lengkap, complete explanation). Strong depth words (detail/rinci/mendalam/detailed/...) are
+// unambiguous and always count.
+const _DEPTH_DETAILED_RE = /(\bmendalam\b|\bmendetail\b|\brinci\b|\bdetil\b|\bdetail\b|detailed|thorough(?:ly)?|comprehensive|in[- ]depth|exhaustive|elaborate|extensive|more\s+detail|(?:secara|lebih|sangat)\s+(?:detail|detil|rinci|lengkap|mendalam)|(?:penjelasan|pembahasan|tutorial|panduan|uraian)\s+(?:yang\s+)?(?:lengkap|mendalam|detail|rinci)|jangan\s+(?:terlalu\s+)?(?:singkat|pendek)|tidak\s+(?:terlalu\s+)?singkat|do\s+not\s+be\s+brief|don'?t\s+be\s+brief|not\s+too\s+brief|explain\s+(?:it\s+)?fully|full\s+explanation|complete\s+explanation|step\s*[- ]by\s*[- ]step.{0,25}(?:lengkap|detail|rinci|mendalam)|deep\s+dive)/i;
+// Explicit brevity request (user wants a SHORT answer). Checked only after the detailed
+// markers, so "detail" always wins over "singkat" when both appear.
+const _DEPTH_CONCISE_RE = /(secara\s+singkat|singkat\s+saja|jawab(?:lah)?\s+(?:secara\s+)?singkat|jawaban\s+(?:yang\s+)?singkat|jelaskan\s+secara\s+singkat|secara\s+ringkas|ringkas\s+saja|jawab\s+ringkas|tolong\s+(?:singkat|ringkas)|pendek\s+saja|jangan\s+panjang|answer\s+briefly|be\s+brief|keep\s+it\s+short|short\s+answer|\bbriefly\b|concise(?:ly)?|in\s+short)/i;
+
+function _detectDepth(s) {
+    if (_DEPTH_DETAILED_RE.test(s)) return 'detailed';
+    if (_DEPTH_CONCISE_RE.test(s)) return 'concise';
+    return 'normal';
+}
+
+// detectResponseIntent(query) -> { primary, flags:{completeness,live}, depth, secondary:[] }
 function detectResponseIntent(query) {
     const s = String(query || '').trim();
     const normalized = s.toLowerCase().replace(/[.!?]+/g, ' ').replace(/\s+/g, ' ').trim();
     const out = {
         primary: 'simple',
         flags: { completeness: false, live: false },
+        depth: 'normal',
         secondary: []
     };
     if (!normalized) return out;
 
     if (_COMPLETENESS_RE.test(normalized)) out.flags.completeness = true;
     out.flags.live = _isIntentLive(normalized);
+    out.depth = _detectDepth(normalized);
 
     if (_isComparison(normalized)) {
         out.primary = 'comparison';

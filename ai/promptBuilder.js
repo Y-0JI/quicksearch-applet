@@ -68,6 +68,67 @@ const INTENT_GUIDANCE = {
     ].join(' ')
 };
 
+// DETAILED mode (intent.depth === 'detailed'): the user EXPLICITLY asked for a deep answer
+// (detail/rinci/mendalam/...). These blocks REPLACE the normal per-intent guidance so the
+// default brevity wording ("briefly", "short", "minimal") never fights an explicit depth
+// request. EXPLICIT USER DEPTH REQUEST OVERRIDES DEFAULT BREVITY GUIDANCE. Kept soft and
+// lightweight — the point is more explanation (what/why/how connect), never more filler.
+const DETAILED_INTENT_GUIDANCE = {
+    simple: [
+        'Answer directly in complete, natural sentences and do not compress the explanation for the sake of brevity.',
+        'Include the important reasoning and context the user needs to really understand the answer.'
+    ].join(' '),
+    explanation: [
+        'Open with a natural core explanation, then unfold it: what it is, why it works that way, and how it connects to related ideas.',
+        'Give the reasoning depth the user asked for — explain the mechanism and the context, not just the conclusion.',
+        'Use an example only when it genuinely clarifies.',
+        'Do not force headings or lists where natural paragraphs explain better.'
+    ].join(' '),
+    data: [
+        'Open with one short natural conclusion that answers the question, then explain the numbers and their context: what they mean, how they relate, and why they matter.',
+        'Use a list only for independent figures that are easier to read separately.',
+        'Interpret and connect the data rather than dumping every number found.'
+    ].join(' '),
+    list: [
+        'Give the full list, grouped under short headings when it has categories.',
+        'When the user also wants explanation, explain what the groups or notable items mean instead of only naming them.'
+    ].join(' '),
+    troubleshooting: [
+        'Briefly state the likely problem, then walk through causes and fixes from the most likely and safest.',
+        'Explain what each important fix does and why it helps, the result to expect, and any caveat to check before moving on.'
+    ].join(' '),
+    comparison: [
+        'Give a short conclusion first ("for need X, option A fits better; for need Y, option B wins"), then compare in depth: how each option works, the key differences (architecture, behavior, trade-offs), and when to choose each.',
+        'Add important limitations or nuances only when the evidence supports them.',
+        'Use a simple list or table only where it improves readability.'
+    ].join(' '),
+    howto: [
+        'Open with enough context to understand the goal, then give ordered steps numbered 1. 2. 3.',
+        'Explain each important step: what it does, why it is needed, what result to expect, and any error or note to watch for.',
+        'Do not pad trivial steps — explain what matters, keep the answer flowing and natural.'
+    ].join(' '),
+    current: [
+        'Lead with the current value or status, then explain what changed, why it matters, and the supporting context.',
+        'Do not present older or different-time data as if it were current.'
+    ].join(' ')
+};
+
+// Appended only when intent.depth === 'detailed' — the generic depth block (after the detailed
+// intent block). Explicit depth requests override any default brevity guidance.
+const DEPTH_DETAILED_GUIDANCE = [
+    'The user explicitly requested a detailed answer — this overrides any brevity guidance above.',
+    'Do not artificially shorten the explanation: explain the important reasoning, relationships, and context needed to understand the answer.',
+    'When giving instructions, explain what each important step does and why it matters.',
+    'Prefer a natural, connected explanation over simply adding more bullet points.',
+    'Use sections or ordered steps when they improve clarity, but do not turn the entire answer into a mechanical checklist.',
+    'More explanation, not more words: do not repeat information merely to make the answer longer.'
+].join(' ');
+
+// Appended only when intent.depth === 'concise' (explicit brevity request).
+const CONCISE_GUIDANCE = [
+    'The user explicitly asked for a short answer: be as brief as possible while still directly answering the question.'
+].join(' ');
+
 // Appended only when the query explicitly asks for completeness (semua/lengkap/full list).
 const COMPLETENESS_GUIDANCE = [
     'The user explicitly asked for completeness.',
@@ -90,17 +151,26 @@ const GROUNDED_GUIDANCE = [
 // consumer that only inspects that it exists. Use buildSystemPrompt() for actual generation.
 const SYSTEM_PROMPT = CORE_SYSTEM_PROMPT;
 
-// opts: { intent?: {primary, flags?, secondary?}, grounded?: boolean }
-// Builds CORE + the guidance for the detected intent (+completeness when requested, +grounded
-// evidence rules when this is the evidence leg). No intent -> core only.
+// opts: { intent?: {primary, flags?, depth?, secondary?}, grounded?: boolean }
+// Builds CORE + the guidance for the detected intent (+depth block when the user explicitly
+// asked detailed/concise, +completeness when requested, +grounded evidence rules when this is
+// the evidence leg). Depth is read from intent.depth: 'detailed' swaps in the depth-aware
+// intent guidance + DEPTH_DETAILED_GUIDANCE (explicit depth overrides default brevity),
+// 'concise' appends CONCISE_GUIDANCE. No intent -> core only.
 function buildSystemPrompt(opts) {
     opts = opts || {};
     const parts = [CORE_SYSTEM_PROMPT];
     const intent = (opts.intent && typeof opts.intent === 'object') ? opts.intent : null;
     const primary = (intent && typeof intent.primary === 'string') ? intent.primary : 'simple';
     const flags = (intent && intent.flags && typeof intent.flags === 'object') ? intent.flags : {};
-    const guidance = INTENT_GUIDANCE[primary];
+    const depth = (intent && intent.depth) || 'normal';
+    const detailed = depth === 'detailed';
+    const guidance = detailed
+        ? (DETAILED_INTENT_GUIDANCE[primary] || INTENT_GUIDANCE[primary])
+        : INTENT_GUIDANCE[primary];
     if (guidance) parts.push(guidance);
+    if (detailed) parts.push(DEPTH_DETAILED_GUIDANCE);
+    else if (depth === 'concise') parts.push(CONCISE_GUIDANCE);
     if (flags.completeness) parts.push(COMPLETENESS_GUIDANCE);
     if (opts.grounded) parts.push(GROUNDED_GUIDANCE);
     return parts.join('\n\n');
@@ -285,4 +355,4 @@ function buildHistoryMessages(history, limit) {
     return kept;
 }
 
-module.exports = { buildSystemPrompt, buildGroundingContext, buildUserPrompt, buildHistoryMessages, buildRuntimeContext, buildExpandedGroundingContext, SYSTEM_PROMPT, CORE_SYSTEM_PROMPT, INTENT_GUIDANCE, COMPLETENESS_GUIDANCE, GROUNDED_GUIDANCE, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_MSG_LEN, HISTORY_CHAR_BUDGET };
+module.exports = { buildSystemPrompt, buildGroundingContext, buildUserPrompt, buildHistoryMessages, buildRuntimeContext, buildExpandedGroundingContext, SYSTEM_PROMPT, CORE_SYSTEM_PROMPT, INTENT_GUIDANCE, DETAILED_INTENT_GUIDANCE, DEPTH_DETAILED_GUIDANCE, CONCISE_GUIDANCE, COMPLETENESS_GUIDANCE, GROUNDED_GUIDANCE, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_MSG_LEN, HISTORY_CHAR_BUDGET };
