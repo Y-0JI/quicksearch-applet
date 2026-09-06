@@ -301,9 +301,11 @@ test('mode switch is a two-way door: header Search switch + safe AI->Search life
 
 test('layout: no expanded region, composer packs under the results panel', () => {
     assert.ok(APPLET_SRC.includes('no `expand: true`'), 'results region must not expand');
-    assert.ok(APPLET_SRC.includes('ov._scroll.set_position(0, hdrH)'), 'scroll is offset below the chat header');
     assert.ok(APPLET_SRC.includes('resultsRegion.set_size(w, h)'), 'region sized to content');
-    assert.ok(APPLET_SRC.includes('quicksearch-scroll-attached'), 'attached scroll styling toggled');
+    // pane architecture: the conversation scroll is reparented INTO _aiPane while a
+    // conversation is active — the pane owns the surface, no CSS seam classes needed
+    assert.ok(APPLET_SRC.includes('ov._scroll.get_parent() !== pane'), 'scroll detach/reparent guarded');
+    assert.ok(APPLET_SRC.includes('_applyAiChatLayout'), 'AI chat layout application exists');
 });
 
 test('edit/resend staging goes through conversationState (single source of truth)', () => {

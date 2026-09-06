@@ -222,15 +222,16 @@ test('UI-4: context-aware keyboard hints (subtle, mode-aware)', () => {
     assert.ok(APPLET_SRC.includes('_("\\u2191 \\u2193 Navigate \\u00b7 Enter Open \\u00b7 Esc Close")') ||
               APPLET_SRC.includes('_("↑ ↓ Navigate · Enter Open · Esc Close")'), 'search hints translated');
     assert.ok(APPLET_SRC.includes('_("Enter Send \\u00b7 Esc Close")') || APPLET_SRC.includes('_("Enter Send · Esc Close")'), 'AI hints translated');
-    // geometry reserves room for the hints bar so content never renders under it
+    // search mode: geometry reserves the filter row; AI mode: the pane owns the hint
+    // (single surface: hint is a packed child of _aiPane, no manual height math)
     const geoIdx = APPLET_SRC.indexOf('_syncRegionGeometry() {');
     const geoSection = APPLET_SRC.slice(geoIdx, geoIdx + 2400);
-    assert.ok(geoSection.includes('ov._hintsLabel && ov._hintsLabel.visible'), 'hints height reserved in geometry');
     assert.ok(geoSection.includes('ov._filterRow && ov._filterRow.visible'), 'filter row height reserved in geometry');
+    assert.ok(APPLET_SRC.includes('_syncAiPaneGeometry'), 'AI pane owns its own chrome (hint/composer packed inside)');
 });
 
 test('UI-4: adaptive sizing — panel grows to content, capped, scrollable', () => {
-    assert.ok(APPLET_SRC.includes('ov._scroll.set_position(0, hdrH)'), 'scroll offset below chat header preserved');
+    assert.ok(APPLET_SRC.includes('ov._scroll.set_position(0, 0)'), 'scroll packs at pane top (pane owns chrome)');
     assert.ok(APPLET_SRC.includes('resultsRegion.set_size(w, h)'), 'region sized to content preserved');
     assert.ok(APPLET_SRC.includes('St.PolicyType.AUTOMATIC'), 'scroll policy automatic (cap + scroll)');
     assert.ok(APPLET_SRC.includes('Math.min(natH, LAYOUT.maxResultsH, roomCap)'), 'grow-to-cap behavior');
