@@ -25,8 +25,8 @@
 
 .quicksearch-entry {
     padding: 8px 10px;
-    font-size: 14pt;
-    width: 420px;
+    font-size: 13.5pt;
+    width: 460px;
     color: rgba(255, 255, 255, 0.95);
     background-color: rgba(0, 0, 0, 0);
     border: none;
@@ -526,6 +526,15 @@
     background-color: rgba(255, 255, 255, 0.05);
 }
 
+.quicksearch-row-chevron {
+    font-size: 14pt;
+    color: rgba(255,255,255,0.22);
+    padding-left: 8px;
+}
+.quicksearch-row:hover .quicksearch-row-chevron {
+    color: rgba(255,255,255,0.45);
+}
+
 .quicksearch-entry-row-focused {
     border-color: rgba(43, 100, 255, 0.40);
 }
@@ -534,10 +543,17 @@
 }
 
 .quicksearch-ai-answer-heading {
-    padding: 6px 10px 2px 10px;
-    font-size: 9pt;
+    padding: 8px 10px 4px 10px;
+    font-size: 8.5pt;
     font-weight: bold;
+    letter-spacing: 0.3px;
     color: rgba(86, 142, 255, 0.95);
+}
+
+.quicksearch-ai-loading {
+    padding: 12px 14px;
+    font-size: 9pt;
+    color: rgba(255,255,255,0.50);
 }
 
 .quicksearch-ai-md-codebox {

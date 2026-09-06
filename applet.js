@@ -1157,9 +1157,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiEditId = null;
         this._syncModeUI();
         this._renderAIState();
+        try { this._syncRegionGeometry(); } catch (e) {}
         try { this._scheduleAILayoutSync(); } catch (e) {}
         if (this._hasConversation()) {
-            // preserved conversation → bottom composer owns the input
             try { this._activateComposerInput(); } catch (e) {}
         } else {
             try {
@@ -1192,9 +1192,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._syncModeUI();
         // clear AI visuals
         try { this._clearAIStateVisualOnly(); } catch (e) { this._clearAIState(); }
-        // restore normal panel empty, then re-run query if text present
-        this.renderResults([]);
         try { this._deactivateComposerInput(); } catch (e) {}
+        this.renderResults([]);
+        try { this._syncRegionGeometry(); } catch (e) {}
         try {
             if (this._overlay && this._overlay._entry) {
                 if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(this._overlay._entry);
@@ -2778,7 +2778,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         const ov = this._overlay;
         if (!ov || !ov._aiPane) return;
         try {
-            const w = Math.max(240, Math.round(Number(this._lastPanelWidth) || 0) || 690);
+            const w = Math.max(240, Math.round(Number(this._lastPanelWidth) || 0) || 620);
             let headerH = 0, hintH = 0, compH = 0;
             try {
                 if (ov._aiHeader && ov._aiHeader.visible) {
@@ -2839,9 +2839,19 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!ov || !ov.resultsRegion) return;
         const pw = Math.round(ov._entryRow.get_transformed_size()[0]) || 0;
         if (pw > 0) this._lastPanelWidth = pw;
-        const w = pw || this._lastPanelWidth || 690;
+        const w = pw || this._lastPanelWidth || 620;
         if (this._mode === 'ai' && this._hasConversation()) {
             try { this._syncAiPaneGeometry(); } catch (e) {}
+            return;
+        }
+        const aiIdle = this._mode === 'ai' && !this._hasConversation();
+        const hasScroll = !!(ov._scroll && ov._scroll.visible);
+        const hasAuto = !!(ov._autoScroll && ov._autoScroll.visible);
+        const hasPane = !!(ov._aiPane && ov._aiPane.visible);
+        if (aiIdle || (!hasScroll && !hasAuto && !hasPane)) {
+            try { ov.resultsRegion.set_size(w, 0); } catch (e) {}
+            try { if (ov._scroll && !ov._scroll.visible) ov._scroll.set_size(w, 0); } catch (e) {}
+            try { if (ov._aiPane) ov._aiPane.set_size(w, 0); } catch (e) {}
             return;
         }
         let entryVisible = false;
@@ -2851,8 +2861,6 @@ class QuickSearchApplet extends Applet.IconApplet {
             const pillTf = ov._entryRow.get_transformed_position();
             pillBottom = (pillTf[1] || LAYOUT.topPad) + (ov._entryRow.get_transformed_size()[1] || LAYOUT.pillH);
         }
-        // UI-2: the category filter row sits between the pill and the results panel,
-        // so the available room below the pill must shrink by its height.
         let filterH = 0;
         try {
             if (this._mode === 'search' && ov._filterRow && ov._filterRow.visible) {
@@ -3234,6 +3242,11 @@ class QuickSearchApplet extends Applet.IconApplet {
             try {
                 const enterLbl = new St.Label({ text: _("Enter"), style_class: "quicksearch-best-match-hint" });
                 content.add(enterLbl, { x_align: St.Align.END, expand: true });
+            } catch (e) {}
+        } else {
+            try {
+                const chev = new St.Label({ text: "\u203a", style_class: "quicksearch-row-chevron" });
+                content.add(chev, { x_align: St.Align.END, expand: true });
             } catch (e) {}
         }
 
