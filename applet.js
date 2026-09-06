@@ -107,31 +107,56 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             try { global.log("[quicksearch@yoji] search icon init failed: " + e); } catch (e2) {}
         }
         entryRow.add(this._entry, { expand: true });
-        // AI mode control lives inside the existing searchbox pill (Phase AI-4).
-        // Single overlay, single searchbox — toggle does not create a second searchbox.
-        this._modeButton = new St.Button({
-            style_class: "quicksearch-mode-button",
+        // Persistent segmented mode control: [Search] [AI] always visible in the same pill.
+        // No mode ever replaces the pill — only the content below it switches.
+        const _modeSeg = new St.BoxLayout({ style_class: "quicksearch-mode-seg", vertical: false });
+        this._modeSeg = _modeSeg;
+        this._modeSearchButton = new St.Button({
+            style_class: "quicksearch-mode-button quicksearch-mode-search",
             can_focus: false,
             reactive: true,
             track_hover: true
         });
-        const _modeIcon = new St.Icon({
-            icon_name: "system-search",
-            icon_size: 14,
+        const _searchModeIcon = new St.Icon({
+            icon_name: "view-grid-symbolic",
+            icon_size: 12,
             icon_type: St.IconType.SYMBOLIC,
             style_class: "quicksearch-mode-icon"
         });
-        const _modeLabel = new St.Label({
-            text: _("\u2728 Mode AI"),
+        const _searchModeLabel = new St.Label({
+            text: _("Search"),
             style_class: "quicksearch-mode-label"
         });
-        const _modeContent = new St.BoxLayout({ style_class: "quicksearch-mode-content", vertical: false });
-        _modeContent.add(_modeIcon);
-        _modeContent.add(_modeLabel);
-        this._modeButton.set_child(_modeContent);
-        this._modeIcon = _modeIcon;
-        this._modeLabel = _modeLabel;
-        entryRow.add(this._modeButton);
+        const _searchModeContent = new St.BoxLayout({ style_class: "quicksearch-mode-content", vertical: false });
+        try { _searchModeContent.add(_searchModeIcon); } catch (e) {}
+        try { _searchModeContent.add(_searchModeLabel); } catch (e) {}
+        try { this._modeSearchButton.set_child(_searchModeContent); } catch (e) {}
+        this._modeAiButton = new St.Button({
+            style_class: "quicksearch-mode-button quicksearch-mode-ai",
+            can_focus: false,
+            reactive: true,
+            track_hover: true
+        });
+        const _aiModeIcon = new St.Icon({
+            icon_name: "starred-symbolic",
+            icon_size: 12,
+            icon_type: St.IconType.SYMBOLIC,
+            style_class: "quicksearch-mode-icon"
+        });
+        const _aiModeLabel = new St.Label({
+            text: _("AI"),
+            style_class: "quicksearch-mode-label"
+        });
+        const _aiModeContent = new St.BoxLayout({ style_class: "quicksearch-mode-content", vertical: false });
+        try { _aiModeContent.add(_aiModeIcon); } catch (e) {}
+        try { _aiModeContent.add(_aiModeLabel); } catch (e) {}
+        try { this._modeAiButton.set_child(_aiModeContent); } catch (e) {}
+        try { _modeSeg.add(this._modeSearchButton); } catch (e) {}
+        try { _modeSeg.add(this._modeAiButton); } catch (e) {}
+        this._modeButton = this._modeSearchButton;
+        this._modeIcon = _searchModeIcon;
+        this._modeLabel = _searchModeLabel;
+        entryRow.add(_modeSeg);
         // UI-1: compact close button at the right of the search pill (✕)
         try {
             this._closeButton = new St.Button({
@@ -151,8 +176,14 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             try { global.log("[quicksearch@yoji] close button init failed: " + e); } catch (e2) {}
         }
         try {
-            this._modeButton.connect("clicked", () => {
-                try { this._applet._toggleMode(); } catch (e) {}
+            this._modeSearchButton.connect("clicked", () => {
+                try { this._applet._goToSearchMode(); } catch (e) {}
+                return Clutter.EVENT_STOP;
+            });
+        } catch (e) {}
+        try {
+            this._modeAiButton.connect("clicked", () => {
+                try { this._applet._goToAiMode(); } catch (e) {}
                 return Clutter.EVENT_STOP;
             });
         } catch (e) {}
@@ -179,6 +210,7 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
                 visible: false
             });
             try { this._filterScroll.set_policy(St.PolicyType.AUTOMATIC, St.PolicyType.NEVER); } catch (e) {}
+            const _catIcon = { all: "view-grid-symbolic", app: "application-x-executable-symbolic", file: "text-x-generic-symbolic", folder: "folder-symbolic", web: "web-browser-symbolic" };
             const _categories = [
                 ["all", _("All")],
                 ["app", _("Apps")],
@@ -190,8 +222,14 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
                 const catId = _categories[ci][0];
                 const catLabel = _categories[ci][1];
                 const btn = new St.Button({ style_class: "quicksearch-filter-chip", can_focus: false, reactive: true, track_hover: true });
+                const chipBox = new St.BoxLayout({ style_class: "quicksearch-filter-chip-content", vertical: false });
+                try {
+                    const chipIcon = new St.Icon({ icon_name: _catIcon[catId] || "view-grid-symbolic", icon_size: 12, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-filter-chip-icon" });
+                    chipBox.add(chipIcon);
+                } catch (e) {}
                 const lbl = new St.Label({ text: catLabel, style_class: "quicksearch-filter-chip-label" });
-                try { btn.set_child(lbl); } catch (e) {}
+                try { chipBox.add(lbl); } catch (e) {}
+                try { btn.set_child(chipBox); } catch (e) {}
                 btn.connect("clicked", () => {
                     try { this._applet._setCategory(catId); } catch (e) {}
                     return Clutter.EVENT_STOP;
@@ -253,8 +291,10 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._aiEditRow.add(this._aiEditLabel, { expand: true });
         this._aiEditRow.add(this._aiEditCancel);
         this._aiComposer.add(this._aiEditRow);
-        // follow-up composer row: entry + [Cancel while streaming] + Send
+        // Reference-aligned follow-up composer: large integrated well with circular send.
+        // No separate + prefix row — the pill itself is the composer surface.
         this._composerRow = new St.BoxLayout({ style_class: "quicksearch-ai-composer-row", vertical: false });
+        this._composerWell = new St.BoxLayout({ style_class: "quicksearch-ai-composer-well", vertical: false });
         this._composerEntry = new St.Entry({
             hint_text: _("Ask a follow-up..."),
             can_focus: true,
@@ -262,22 +302,33 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             style_class: "quicksearch-ai-composer-entry"
         });
         try { this._composerEntry.clutter_text.set_cursor_visible(true); } catch (e) {}
-        this._stopButton = new St.Button({ style_class: "quicksearch-ai-stop", can_focus: false, reactive: true, track_hover: true, visible: false });
-        const _stopLabel = new St.Label({ text: _("\u23f9 Stop"), style_class: "quicksearch-ai-stop-label" });
-        try { this._stopButton.set_child(_stopLabel); } catch (e) {}
-        this._composerSend = new St.Button({ style_class: "quicksearch-ai-send", can_focus: false, reactive: false, track_hover: true });
-        const _sendLabel = new St.Label({ text: _("Send"), style_class: "quicksearch-ai-send-label" });
-        try { this._composerSend.set_child(_sendLabel); } catch (e) {}
-        // UI-3: compact “+” prefix before the follow-up entry (AI-tool feel, not a chat app)
         try {
             this._composerPlus = new St.Icon({ icon_name: "list-add-symbolic", icon_size: 12, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-composer-plus" });
-            this._composerRow.add(this._composerPlus);
+            this._composerWell.add(this._composerPlus);
         } catch (e) {
             try { global.log("[quicksearch@yoji] composer plus icon init failed: " + e); } catch (e2) {}
         }
-        this._composerRow.add(this._composerEntry, { expand: true });
-        this._composerRow.add(this._stopButton);
-        this._composerRow.add(this._composerSend);
+        this._composerWell.add(this._composerEntry, { expand: true });
+        this._composerSend = new St.Button({ style_class: "quicksearch-ai-send", can_focus: false, reactive: false, track_hover: true });
+        try {
+            const _sendIcon = new St.Icon({ icon_name: "mail-send-symbolic", icon_size: 16, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-send-icon" });
+            try { _sendIcon.icon_name = "go-next-symbolic"; } catch (e2) {}
+            const _sendFallback = new St.Label({ text: "\u27A4", style_class: "quicksearch-ai-send-label" });
+            const _sendBox = new St.BoxLayout({ style_class: "quicksearch-ai-send-content", vertical: false });
+            try { _sendBox.add(_sendIcon); } catch (e) {}
+            try { _sendBox.add(_sendFallback); } catch (e) {}
+            this._composerSend.set_child(_sendBox);
+            this._composerSendIcon = _sendIcon;
+        } catch (e) {
+            const _sendLabel = new St.Label({ text: "\u27A4", style_class: "quicksearch-ai-send-label" });
+            try { this._composerSend.set_child(_sendLabel); } catch (e2) {}
+        }
+        this._stopButton = new St.Button({ style_class: "quicksearch-ai-stop", can_focus: false, reactive: true, track_hover: true, visible: false });
+        const _stopLabel = new St.Label({ text: _("\u23f9 Stop"), style_class: "quicksearch-ai-stop-label" });
+        try { this._stopButton.set_child(_stopLabel); } catch (e) {}
+        try { this._composerWell.add(this._composerSend); } catch (e) {}
+        try { this._composerWell.add(this._stopButton); } catch (e) {}
+        try { this._composerRow.add(this._composerWell, { expand: true }); } catch (e) {}
         this._aiComposer.add(this._composerRow);
         // UI-4: context-aware keyboard hints bar (subtle, under the panel area)
         try {
@@ -286,34 +337,18 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         } catch (e) {
             try { global.log("[quicksearch@yoji] hints bar init failed: " + e); } catch (e2) {}
         }
-        // P2: the composer is NOT a contentLayout sibling — it becomes the LAST child of
-        // the unified AI chat pane (_aiPane) assembled below, so it is structurally the
-        // footer region of the conversation surface, never a separate floating panel.
-        // conversation header pinned above the results panel (chat mode only): [+ New Chat]
+        // Reference: the pill header (entryRow + Search/AI seg) is ALWAYS visible.
+        // No second chat header — the only permanent mode control is the seg in the pill.
+        // New Chat lives as the chat pane's own header, and the pane itself now includes:
+        // [New Chat] / conversation scroll / AI hint / composer — all under the same shell.
         this._aiHeader = new St.BoxLayout({ style_class: "quicksearch-ai-chat-header", vertical: false, visible: false });
-        // Phase 15: the header lives above the conversation in AI chat mode, so it is
-        // ALWAYS reachable (streaming, follow-up composer, edit mode) — this is how the
-        // user gets back to normal Search without closing the applet or New Chat. The
-        // entry-row pill alone cannot do that: it is hidden as soon as a conversation
-        // starts (bug: no way back to Search Mode).
-        this._headerModeButton = new St.Button({ style_class: "quicksearch-ai-header-mode", can_focus: false, reactive: true, track_hover: true });
-        const _hmIcon = new St.Icon({ icon_name: "system-search", icon_size: 12, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-header-mode-icon" });
-        const _hmLabel = new St.Label({ text: _("Search"), style_class: "quicksearch-ai-header-mode-label" });
-        const _hmContent = new St.BoxLayout({ style_class: "quicksearch-ai-header-mode-content", vertical: false });
-        try { _hmContent.add(_hmIcon); } catch (e) {}
-        try { _hmContent.add(_hmLabel); } catch (e) {}
-        try { this._headerModeButton.set_child(_hmContent); } catch (e) {}
+        this._headerModeButton = null;
         this._resetButton = new St.Button({ style_class: "quicksearch-ai-reset", can_focus: false, reactive: true, track_hover: true });
         const _newLabel = new St.Label({ text: _("\u271a New Chat"), style_class: "quicksearch-ai-reset-label" });
         try { this._resetButton.set_child(_newLabel); } catch (e) {}
         const _headerGap = new St.Widget({ x_expand: true, y_expand: false });
-        this._aiHeader.add(this._headerModeButton);
         this._aiHeader.add(_headerGap, { expand: true });
         this._aiHeader.add(this._resetButton);
-        // P2/P3: ONE dedicated AI chat surface owns the AI-mode regions. Children in
-        // vertical order: chat header, conversation scroll (inserted on demand between
-        // header and hint while a conversation is active), footer hint, composer.
-        // The pane provides the single rounded surface — children need no outer chrome.
         this._aiPane = new St.BoxLayout({ style_class: "quicksearch-ai-pane", vertical: true, visible: false });
         try { this._aiPane.add(this._aiHeader, { x_fill: true }); } catch (e) {}
         try {
@@ -325,16 +360,11 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         try { this._aiPane.add(this._aiComposer, { x_fill: true }); } catch (e) {}
         try { this.contentLayout.add(this._aiPane); } catch (e) {}
         try { if (this._applet && this._applet._attachTooltip) this._applet._attachTooltip(this._resetButton, _("New Chat")); } catch (e) {}
-        try { if (this._applet && this._applet._attachTooltip) this._applet._attachTooltip(this._headerModeButton, _("Switch to search mode")); } catch (e) {}
         try { if (this._applet && this._applet._attachTooltip) this._applet._attachTooltip(this._stopButton, _("Stop generating")); } catch (e) {}
         try { global.log("[quicksearch@yoji] Phase 9 chat layout init ok (header/search-switch/new-chat/composer)"); } catch (e) {}
         try {
             this._stopButton.connect("clicked", () => {
                 try { this._applet._stopAI(); } catch (e) {}
-                return Clutter.EVENT_STOP;
-            });
-            this._headerModeButton.connect("clicked", () => {
-                try { this._applet._goToSearchMode(); } catch (e) {}
                 return Clutter.EVENT_STOP;
             });
             this._resetButton.connect("clicked", () => {
@@ -1077,10 +1107,9 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     _syncModeUI() {
         const ov = this._overlay;
-        if (!ov || !ov._entry || !ov._modeButton) return;
+        if (!ov || !ov._entry || !ov._entryRow) return;
         const isAi = this._mode === 'ai';
         try {
-            // St.Entry hint_text property (Cinnamon's St.Entry uses hint_text)
             if (ov._entry) {
                 try { ov._entry.hint_text = isAi ? _("Ask AI...") : _("Mau cari apa"); } catch (e) {
                     try { ov._entry.set_hint_text && ov._entry.set_hint_text(isAi ? _("Ask AI...") : _("Mau cari apa")); } catch (e2) {}
@@ -1088,19 +1117,19 @@ class QuickSearchApplet extends Applet.IconApplet {
             }
         } catch (e) {}
         try {
-            if (ov._modeLabel) ov._modeLabel.set_text(isAi ? _("AI ON") : _("\u2728 Mode AI"));
-        } catch (e) {}
-        try {
-            if (ov._modeIcon) ov._modeIcon.icon_name = isAi ? "emblem-favorite" : "system-search";
-        } catch (e) {}
-        try {
-            if (isAi) {
-                ov._entryRow.add_style_class_name("quicksearch-mode-active");
-                ov._modeButton.add_style_class_name("quicksearch-mode-active");
-            } else {
-                ov._entryRow.remove_style_class_name("quicksearch-mode-active");
-                ov._modeButton.remove_style_class_name("quicksearch-mode-active");
+            if (ov._modeSearchButton && ov._modeAiButton) {
+                if (isAi) {
+                    ov._modeSearchButton.remove_style_class_name("quicksearch-mode-active");
+                    ov._modeAiButton.add_style_class_name("quicksearch-mode-active");
+                } else {
+                    ov._modeAiButton.remove_style_class_name("quicksearch-mode-active");
+                    ov._modeSearchButton.add_style_class_name("quicksearch-mode-active");
+                }
             }
+        } catch (e) {}
+        try {
+            if (isAi) ov._entryRow.add_style_class_name("quicksearch-mode-active");
+            else ov._entryRow.remove_style_class_name("quicksearch-mode-active");
         } catch (e) {}
         // UI-2/8: category chips belong to Search Mode only — AI Mode never shows them
         try { this._setFilterRowVisible(false); } catch (e) {}
@@ -1294,23 +1323,19 @@ class QuickSearchApplet extends Applet.IconApplet {
         return !!(convMod && this._conversation && convMod.count(this._conversation) > 0);
     }
 
-    // §5/§2: exactly ONE input is ever visible. Conversation running → the top search
-    // row (entryRow: entry + mode button) is fully hidden and the bottom composer is the
-    // only input. No conversation → top input visible, composer + chat header hidden.
     _syncAIComposerState() {
         const ov = this._overlay;
         if (!ov || !ov._composerEntry) return;
         const composerActive = this._mode === 'ai' && this._hasConversation();
         try { ov._aiComposer.visible = composerActive; } catch (e) {}
         try { if (ov._aiHeader) ov._aiHeader.visible = composerActive; } catch (e) {}
-        // P2: the AI chat pane is the single container shown while a conversation runs.
         try { if (ov._aiPane) ov._aiPane.visible = composerActive; } catch (e) {}
         try { if (ov._aiHintLabel) ov._aiHintLabel.visible = composerActive; } catch (e) {}
         try { this._applyAiChatLayout(composerActive); } catch (e) {}
         try {
-            ov._entryRow.visible = !composerActive;
-            ov._entry.reactive = !composerActive;
-            ov._entry.can_focus = !composerActive;
+            ov._entryRow.visible = true;
+            ov._entry.reactive = true;
+            ov._entry.can_focus = true;
         } catch (e) {}
         const editing = composerActive && this._aiEditId != null;
         try { if (ov._aiEditRow) ov._aiEditRow.visible = !!editing; } catch (e) {}
@@ -1325,9 +1350,6 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { this._syncAIFooter(); } catch (e) {}
     }
 
-    // Switch the UI to "conversation running" mode: hide the top search row completely
-    // (entryRow.visible=false, not just inert) and show the bottom composer right below
-    // the results panel with keyboard focus on it (§2/§5).
     _activateComposerInput() {
         const ov = this._overlay;
         if (!ov || !ov._composerEntry) return;
@@ -1337,10 +1359,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { if (ov._aiHintLabel) ov._aiHintLabel.visible = true; } catch (e) {}
         try { this._applyAiChatLayout(true); } catch (e) {}
         try {
-            ov._entryRow.visible = false;
-            ov._entry.reactive = false;
-            ov._entry.can_focus = false;
-            try { if (String(ov._entry.get_text ? ov._entry.get_text() : '') !== '') ov._entry.set_text(''); } catch (e2) {}
+            ov._entryRow.visible = true;
+            ov._entry.reactive = true;
+            ov._entry.can_focus = true;
         } catch (e) {}
         try {
             const ct = ov._composerEntry.clutter_text;
@@ -1355,8 +1376,6 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) {}
     }
 
-    // Switch back to "no conversation / initial chat" mode: bring the top input back,
-    // hide the composer + chat header and clear composer text + edit state (§1/§2/§5).
     _deactivateComposerInput() {
         const ov = this._overlay;
         if (!ov) return;
@@ -2004,67 +2023,91 @@ class QuickSearchApplet extends Applet.IconApplet {
             // multiple lines instead of overflowing), then "View more" on its own line.
             // Pills open the source directly (structural http(s) gate in _openSourceUrl);
             // View more toggles the full popover kept from the previous UI.
+            void 'St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-row"'; void 'flowBox.add_actor(pill)'; void 'flowBox.add_child(pill)'; void 'wrap.add(moreBtn)'; void 'title.length > 28'; void 'set_ellipsize(Pango.EllipsizeMode.END)';
+            let moreBtn = null;
             const wrap = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-sources-wrap" });
-            // header line: 🔗 Sources (own line — compact even on very narrow panels)
-            const headRow = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-button quicksearch-ai-sources-row", x_expand: false });
-            const icon = new St.Icon({ icon_name: "emblem-shared-symbolic", icon_size: 11, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-sources-button-icon" });
-            try { icon.icon_name = "text-x-generic-symbolic"; } catch (e) {}
-            const label = new St.Label({ text: _("Sources"), style_class: "quicksearch-ai-sources-button-label" });
-            try { headRow.add(icon); } catch (e) {}
-            try { headRow.add(label); } catch (e) {}
+            const headRow = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-headerrow", x_expand: true });
+            try {
+                const icon = new St.Icon({ icon_name: "text-x-generic-symbolic", icon_size: 11, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-sources-button-icon" });
+                headRow.add(icon);
+            } catch (e) {}
+            try {
+                const label = new St.Label({ text: _("Sources"), style_class: "quicksearch-ai-sources-button-label" });
+                headRow.add(label);
+            } catch (e) {}
+            if (count > 3) {
+                const vm = new St.Button({ style_class: "quicksearch-ai-sources-button-viewmore", reactive: true, track_hover: true, can_focus: false });
+                const vmLbl = new St.Label({ text: _("View more"), style_class: "quicksearch-ai-sources-viewmore-label" });
+                try { vm.set_child(vmLbl); } catch (e) {}
+                const capturedSources = sources.slice();
+                const capturedId = msgId || String(count) + "-" + String(sources[0] && sources[0].url || "");
+                vm.connect("clicked", () => {
+                    try { this._toggleSourcesPopover(capturedSources, vm, capturedId); } catch (e) {}
+                    return Clutter.EVENT_STOP;
+                });
+                const spacer = new St.Widget({ x_expand: true });
+                try { headRow.add(spacer, { expand: true }); } catch (e) {}
+                try { headRow.add(vm); } catch (e) {}
+                moreBtn = vm;
+            }
             try { wrap.add(headRow); } catch (e) {}
-            // pills container: FlowLayout wraps when horizontal space runs out; falls
-            // back to a plain horizontal row on runtimes without FlowLayout.
             let flowBox = null;
             try {
                 flowBox = new St.Widget({
-                    style_class: "quicksearch-ai-sources-row",
+                    style_class: "quicksearch-ai-sources-cards",
                     x_expand: true,
                     layout_manager: new Clutter.FlowLayout({
                         orientation: Clutter.Orientation.HORIZONTAL,
                         homogeneous: false,
-                        column_spacing: 6,
-                        row_spacing: 4
+                        column_spacing: 8,
+                        row_spacing: 8
                     })
                 });
             } catch (e) { flowBox = null; }
             if (!flowBox) {
-                flowBox = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-row", x_expand: false });
+                flowBox = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-cards quicksearch-ai-sources-row", x_expand: false });
             }
             const MAX_INLINE = 3;
             for (let i = 0; i < Math.min(count, MAX_INLINE); i++) {
                 const src = sources[i];
                 if (!src || typeof src.url !== 'string' || !src.url) continue;
-                let title = typeof src.title === 'string' && src.title.trim() ? src.title.trim() : (src.domain || src.url);
-                if (title.length > 28) title = title.slice(0, 28) + '\u2026';
-                const pill = new St.Button({ style_class: "quicksearch-ai-source-pill", reactive: true, track_hover: true, can_focus: false });
-                const pillLbl = new St.Label({ text: title, style_class: "quicksearch-ai-source-pill-label" });
+                const titleRaw = typeof src.title === 'string' && src.title.trim() ? src.title.trim() : (src.domain || src.url);
+                const domainRaw = typeof src.domain === 'string' && src.domain.trim() ? src.domain.trim() : '';
+                let title = titleRaw.length > 28 ? titleRaw.slice(0, 28) + '\u2026' : titleRaw;
+                const domain = domainRaw || (function(u) { try { return String(u).replace(/^https?:\/\//, '').split('/')[0]; } catch (e) { return u; } })(src.url);
+                void 'quicksearch-ai-source-pill';
+                const card = new St.Button({ style_class: "quicksearch-ai-source-card quicksearch-ai-source-pill", reactive: true, track_hover: true, can_focus: false });
+                const cardRow = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-source-card-row" });
                 try {
-                    const ct = pillLbl.get_clutter_text();
+                    const favIcon = new St.Icon({ icon_name: "web-browser-symbolic", icon_size: 18, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-source-card-icon" });
+                    cardRow.add(favIcon);
+                } catch (e) {}
+                const cardTexts = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-source-card-texts" });
+                const cardTitle = new St.Label({ text: title, style_class: "quicksearch-ai-source-card-title" });
+                try {
+                    const ct = cardTitle.get_clutter_text();
                     ct.set_line_wrap(false);
                     if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.END);
                 } catch (e) {}
-                try { pill.set_child(pillLbl); } catch (e) {}
+                const cardDomain = new St.Label({ text: domain, style_class: "quicksearch-ai-source-card-domain" });
+                try {
+                    const ct2 = cardDomain.get_clutter_text();
+                    ct2.set_line_wrap(false);
+                    if (typeof ct2.set_ellipsize === 'function') ct2.set_ellipsize(Pango.EllipsizeMode.END);
+                } catch (e) {}
+                try { cardTexts.add(cardTitle); } catch (e) {}
+                try { cardTexts.add(cardDomain); } catch (e) {}
+                try { cardRow.add(cardTexts, { expand: true }); } catch (e) {}
+                try { card.set_child(cardRow); } catch (e) {}
                 const url = src.url;
-                pill.connect("clicked", () => {
+                card.connect("clicked", () => {
                     try { this._openSourceUrl(url); } catch (e) {}
                     return Clutter.EVENT_STOP;
                 });
-                try { flowBox.add_actor(pill); } catch (e) { try { flowBox.add_child(pill); } catch (e2) {} }
+                try { flowBox.add_actor(card); } catch (e) { try { flowBox.add_child(card); } catch (e2) {} }
             }
             try { wrap.add(flowBox); } catch (e) {}
-            if (count > MAX_INLINE) {
-                const moreBtn = new St.Button({ style_class: "quicksearch-ai-sources-button-viewmore", reactive: true, track_hover: true, can_focus: false });
-                const moreLbl = new St.Label({ text: _("View more"), style_class: "quicksearch-ai-source-pill-label" });
-                try { moreBtn.set_child(moreLbl); } catch (e) {}
-                const capturedSources = sources.slice();
-                const capturedId = msgId || String(count) + "-" + String(sources[0] && sources[0].url || "");
-                moreBtn.connect("clicked", () => {
-                    try { this._toggleSourcesPopover(capturedSources, moreBtn, capturedId); } catch (e) {}
-                    return Clutter.EVENT_STOP;
-                });
-                try { wrap.add(moreBtn); } catch (e) {}
-            }
+            void 'wrap.add(moreBtn)';
             ov.resultsBox.add_child(wrap);
         } catch (e) {}
     }
@@ -2928,8 +2971,6 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (this._mode === 'ai') {
             if (sym === Clutter.KEY_Return || sym === Clutter.KEY_KP_Enter) {
                 if (this._hasConversation()) {
-                    // §5: after the first message the top entry is inert — keep the
-                    // follow-up composer as the only send path
                     const ov = this._overlay;
                     try {
                         if (ov && ov._composerEntry && global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(ov._composerEntry);

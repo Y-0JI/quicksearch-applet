@@ -174,9 +174,8 @@ test('applet wires the bottom follow-up composer', () => {
     assert.ok(APPLET_SRC.includes('_onComposerSend'), 'send handler wired');
     assert.ok(APPLET_SRC.includes('_onComposerKeyPress'), 'composer keyboard handler wired');
     assert.ok(APPLET_SRC.includes('Ask a follow-up'), 'composer hint present');
-    // composer is the only input once a conversation exists
     assert.ok(APPLET_SRC.includes('_activateComposerInput') && APPLET_SRC.includes('_deactivateComposerInput'), 'input-mode switchers present');
-    assert.ok(APPLET_SRC.includes('_entryRow.visible = !composerActive'), 'top search row fully hidden while composer active');
+    assert.ok(APPLET_SRC.includes('ov._entryRow.visible = true'), 'top search row stays visible (unified shell)');
     assert.ok(APPLET_SRC.includes('ov._aiHeader.visible = composerActive'), 'chat header tied to conversation state');
 });
 

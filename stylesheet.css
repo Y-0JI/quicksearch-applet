@@ -8,33 +8,25 @@
     color: #f2f3f5;
 }
 
-/* UI-4: adaptive — the dialog shrinks to its content (idle = just the search pill),
-   growing with results up to the panel cap handled by _syncRegionGeometry. */
 .quicksearch-content {
     padding: 0;
     min-height: 0;
 }
 
-/* Visual tokens (single design system, matched to advance_ui.png reference):
-   PANEL       = rgba(21,24,31)   — results, AI pane, context menu (deepest layer)
-   INPUT well  = rgba(30,34,43)   — search pill / composer entry (slightly lighter)
-   border      = rgba(255,255,255,0.07) neutral, calm
-   accent      = rgba(120,160,235) restrained royal-soft blue — focus / active / small feedback only
-   selected    = neutral charcoal rgba(163,178,204,0.13), NOT saturated blue   */
 .quicksearch-entry-row {
-    spacing: 6px;
-    padding: 6px 8px;
-    margin-bottom: 6px;
+    spacing: 8px;
+    padding: 8px 10px 8px 14px;
+    margin-bottom: 10px;
     background-color: rgba(30, 34, 43, 0.97);
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 18px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 24px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.40);
 }
 
 .quicksearch-entry {
-    padding: 6px 10px;
-    font-size: 13pt;
-    width: 560px;
+    padding: 8px 10px;
+    font-size: 14pt;
+    width: 420px;
     color: rgba(255, 255, 255, 0.95);
     background-color: rgba(0, 0, 0, 0);
     border: none;
@@ -45,27 +37,24 @@
     selection-background-color: rgba(255, 255, 255, 0.85);
 }
 
-/* P1-1: no hard-coded max-height here — the panel cap is owned by JS LAYOUT.maxResultsH
-   via _syncRegionGeometry(); CSS only provides the surface style. Overflow behaviour
-   (AUTOMATIC vertical scroll) is set on the St.ScrollView in applet.js. */
 .quicksearch-results {
-    padding: 7px 6px;
+    padding: 10px 8px 10px 8px;
     background-color: rgba(21, 24, 31, 0.98);
     border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 14px;
-    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.34);
+    border-radius: 18px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.38);
 }
 
 .quicksearch-section-header {
     color: rgba(255, 255, 255, 0.34);
     font-size: 8pt;
     font-weight: bold;
-    padding: 8px 12px 2px 12px;
+    padding: 10px 14px 4px 14px;
 }
 
 .quicksearch-row {
-    padding: 5px 10px;
-    border-radius: 8px;
+    padding: 8px 12px;
+    border-radius: 12px;
 }
 
 .quicksearch-row-selected {
@@ -126,20 +115,28 @@
     color: rgba(255,255,255,0.40);
 }
 
-/* Mode toggle in the search pill: quiet text control, accent only when AI is active. */
-.quicksearch-mode-button { padding: 4px 10px; border-radius: 999px; border: none; background: none; }
-.quicksearch-mode-content { spacing: 5px; }
+/* Persistent segmented mode control in the pill — matches advance_ui.png */
+.quicksearch-mode-seg {
+    spacing: 4px;
+    padding: 3px;
+    border-radius: 999px;
+    background-color: rgba(0, 0, 0, 0.18);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.quicksearch-mode-button { padding: 6px 16px; border-radius: 999px; border: none; background: none; }
+.quicksearch-mode-content { spacing: 6px; }
 .quicksearch-mode-icon { color: rgba(226, 231, 240, 0.70); }
-.quicksearch-mode-label { font-size: 8.5pt; color: rgba(226, 231, 240, 0.76); }
+.quicksearch-mode-label { font-size: 9pt; font-weight: 600; color: rgba(226, 231, 240, 0.76); }
 .quicksearch-mode-button:hover { background-color: rgba(255, 255, 255, 0.08); }
 .quicksearch-mode-button:hover .quicksearch-mode-icon,
 .quicksearch-mode-button:hover .quicksearch-mode-label { color: rgba(255, 255, 255, 0.95); }
 .quicksearch-mode-active {
-    border: 1px solid rgba(120, 160, 235, 0.28);
-    background-color: rgba(120, 160, 235, 0.10);
+    background-color: rgba(43, 100, 255, 1.0);
+    border: none;
 }
 .quicksearch-mode-active .quicksearch-mode-label,
-.quicksearch-mode-active .quicksearch-mode-icon { color: rgba(255, 255, 255, 0.95); }
+.quicksearch-mode-active .quicksearch-mode-icon { color: rgba(255, 255, 255, 1.0); }
+
 .quicksearch-ai-loading, .quicksearch-ai-answer, .quicksearch-ai-error { padding: 8px 10px; font-size: 10pt; }
 .quicksearch-ai-error { color: rgba(255,120,120,0.90); }
 
@@ -191,7 +188,6 @@
     color: rgba(255,255,255,0.45);
 }
 
-/* Phase 8: conversation UX */
 .quicksearch-ai-user {
     padding: 2px 4px 0 4px;
     font-size: 9.5pt;
@@ -199,9 +195,6 @@
     color: rgba(255, 255, 255, 0.78);
 }
 
-/* Phase 9: chat layout — composer directly under results, icon actions, chat header */
-
-/* user message: minimal ChatGPT-style block — content first, small action row below */
 .quicksearch-ai-user-block {
     padding: 2px 6px 0 6px;
     border-radius: 8px;
@@ -221,10 +214,6 @@
     background-color: rgba(255, 196, 0, 0.10);
 }
 
-/* utility action row: under the message, small, subtle, secondary.
-   Every user turn renders this same class, so the top padding below the
-   message text is identical for the first question and every follow-up:
-   a small but clear 5px gap between the text and the action icons. */
 .quicksearch-ai-msg-actions {
     spacing: 4px;
     padding: 5px 0 3px 10px;
@@ -251,22 +240,18 @@
     color: rgba(255, 255, 255, 0.92);
 }
 
-/* P2/P3 — AI CHAT PANE: the pane owns the surface (single background, radius,
-   border, shadow). Header / conversation / footer hint / composer are its inner
-   regions and carry no outer chrome, so no seams need to be hidden. */
 .quicksearch-ai-pane {
     background-color: rgba(21, 24, 31, 0.98);
     border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 14px;
+    border-radius: 18px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.38);
-    padding: 4px;
-    spacing: 0;
+    padding: 10px;
+    spacing: 6px;
 }
 
-/* inner regions of the AI pane — flat by design */
 .quicksearch-ai-pane .quicksearch-ai-chat-header {
     spacing: 6px;
-    padding: 0 2px 4px 2px;
+    padding: 0 2px 6px 2px;
     background: none;
     border: none;
     border-radius: 0;
@@ -287,7 +272,6 @@
     color: rgba(255, 255, 255, 0.34);
 }
 
-/* chat header content — quiet text control */
 .quicksearch-ai-chat-header {
     spacing: 6px;
     padding: 0 2px 4px 2px;
@@ -295,8 +279,6 @@
     border: none;
 }
 
-/* Phase 15: always-reachable AI -> Search switch (chat header). Small, subtle. */
-/* quiet text button in the chat header (back to Search) */
 .quicksearch-ai-header-mode {
     padding: 2px 10px;
     border-radius: 999px;
@@ -326,19 +308,16 @@
     color: rgba(255, 255, 255, 0.95);
 }
 
-/* legacy class retained for compatibility — the pane structure handles connection */
 .quicksearch-scroll-attached {
     border: none;
     border-radius: 0;
     box-shadow: none;
 }
 
-/* follow-up composer: the FOOTER REGION of the AI pane (last child), not a second
-   panel — transparent here, the pane supplies the single rounded surface. */
 .quicksearch-ai-composer {
     padding: 0 2px 2px 2px;
     spacing: 4px;
-    margin-top: 0;
+    margin-top: 4px;
     background: none;
     border: none;
     border-radius: 0;
@@ -371,7 +350,6 @@
     background-color: rgba(255, 196, 0, 0.24);
 }
 
-/* small pill buttons: Stop (replaces Send while a request is active) and New Chat (header) */
 .quicksearch-ai-stop, .quicksearch-ai-reset {
     padding: 3px 12px;
     border-radius: 12px;
@@ -385,16 +363,25 @@
 .quicksearch-ai-reset:hover { background-color: rgba(255,255,255,0.12); }
 
 .quicksearch-ai-composer-row {
+    spacing: 0;
+}
+
+.quicksearch-ai-composer-well {
     spacing: 8px;
+    padding: 6px 6px 6px 12px;
+    background-color: rgba(30, 34, 43, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 24px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.18);
 }
 
 .quicksearch-ai-composer-entry {
-    padding: 6px 12px;
+    padding: 6px 8px;
     font-size: 11pt;
     color: rgba(255, 255, 255, 0.95);
-    background-color: rgba(30, 34, 43, 0.90);
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 14px;
+    background-color: rgba(0, 0, 0, 0);
+    border: none;
+    border-radius: 0;
     caret-color: rgba(255, 255, 255, 0.90);
     caret-size: 1px;
     selected-color: rgba(0, 0, 0, 0.85);
@@ -402,24 +389,32 @@
 }
 
 .quicksearch-ai-send {
-    padding: 6px 16px;
-    border-radius: 12px;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 999px;
     border: none;
-    background-color: rgba(120, 160, 235, 0.20);
+    background-color: rgba(43, 100, 255, 1.0);
+}
+
+.quicksearch-ai-send-content { spacing: 0; }
+
+.quicksearch-ai-send-icon {
+    color: rgba(255,255,255,1.0);
 }
 
 .quicksearch-ai-send-label {
-    font-size: 10pt;
-    font-weight: bold;
-    color: rgba(255, 255, 255, 0.95);
+    font-size: 12pt;
+    color: rgba(255, 255, 255, 1.0);
 }
 
 .quicksearch-ai-send:hover {
-    background-color: rgba(120, 160, 235, 0.28);
+    background-color: rgba(60, 115, 255, 1.0);
 }
 
 .quicksearch-ai-send-disabled {
-    background-color: rgba(255, 255, 255, 0.05);
+    background-color: rgba(255, 255, 255, 0.08);
+    opacity: 0.55;
 }
 .quicksearch-ai-truncated {
     padding: 6px 8px;
@@ -428,7 +423,6 @@
     color: rgba(255, 220, 120, 0.90);
 }
 
-/* AI answer markdown rendering — safe St.Label stack (presentation only) */
 .quicksearch-ai-answer-md {
     padding: 8px 8px 12px 8px;
     spacing: 4px;
@@ -448,12 +442,11 @@
     font-family: monospace;
 }
 
-/* UI-1: leading search icon + compact close button inside the search pill */
 .quicksearch-search-icon {
     color: rgba(255, 255, 255, 0.48);
 }
 .quicksearch-close-button {
-    padding: 3px 8px;
+    padding: 4px 10px;
     border-radius: 999px;
     border: none;
     background: none;
@@ -469,63 +462,61 @@
     color: rgba(255, 255, 255, 0.95);
 }
 
-/* UI-2: horizontal category filter chips — quiet flat labels (no bordered pill
-   containers), restrained accent fill only on the ACTIVE chip.
-   P2-1: chips live in a horizontal scroll container so a narrow panel / high DPI /
-   font scaling can never push them out — overflow scrolls, every category stays
-   reachable, and the row itself never grows vertically. */
 .quicksearch-filter-scroll {
-    max-height: 40px;
+    max-height: 44px;
     background: none;
     border: none;
     padding: 0;
 }
 .quicksearch-filter-row {
-    spacing: 6px;
-    padding: 0 6px 5px 6px;
+    spacing: 8px;
+    padding: 0 6px 10px 6px;
 }
 .quicksearch-filter-chip {
-    padding: 3px 10px;
+    padding: 6px 14px;
     border-radius: 999px;
-    border: none;
-    background: none;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background-color: rgba(255,255,255,0.03);
 }
+.quicksearch-filter-chip-content { spacing: 6px; }
+.quicksearch-filter-chip-icon { color: rgba(226, 231, 240, 0.70); }
 .quicksearch-filter-chip-label {
-    font-size: 8.5pt;
-    color: rgba(226, 231, 240, 0.58);
+    font-size: 9pt;
+    font-weight: 500;
+    color: rgba(226, 231, 240, 0.72);
 }
 .quicksearch-filter-chip:hover {
-    background-color: rgba(255, 255, 255, 0.06);
+    background-color: rgba(255, 255, 255, 0.07);
 }
-.quicksearch-filter-chip:hover .quicksearch-filter-chip-label {
+.quicksearch-filter-chip:hover .quicksearch-filter-chip-label,
+.quicksearch-filter-chip:hover .quicksearch-filter-chip-icon {
     color: rgba(255, 255, 255, 0.92);
 }
 .quicksearch-filter-chip-active {
-    background-color: rgba(120, 160, 235, 0.14);
+    background-color: rgba(43, 100, 255, 1.0);
+    border-color: rgba(43, 100, 255, 1.0);
 }
-.quicksearch-filter-chip-active .quicksearch-filter-chip-label {
+.quicksearch-filter-chip-active .quicksearch-filter-chip-label,
+.quicksearch-filter-chip-active .quicksearch-filter-chip-icon {
     color: rgba(255, 255, 255, 1.0);
 }
 
-/* UI-2: Best Match — quiet emphasis: neutral surface, ONE thin accent border,
-   accent only on the tiny header/hint labels. Not a saturated card. */
 .quicksearch-bestmatch-header {
     color: rgba(120, 160, 235, 0.82);
 }
 .quicksearch-best-match {
-    background-color: rgba(255, 255, 255, 0.035);
-    border: 1px solid rgba(120, 160, 235, 0.16);
+    background-color: rgba(43, 100, 255, 0.14);
+    border: 1px solid rgba(43, 100, 255, 0.22);
+    border-radius: 14px;
 }
 .quicksearch-best-match:hover {
-    background-color: rgba(255, 255, 255, 0.06);
+    background-color: rgba(43, 100, 255, 0.18);
 }
 .quicksearch-best-match-hint {
     font-size: 8pt;
-    color: rgba(120, 160, 235, 0.72);
+    color: rgba(120, 160, 235, 0.85);
 }
 
-/* UI-2: empty state + result row hover/focus polish (hover = neutral charcoal,
-   never blue) */
 .quicksearch-empty {
     padding: 12px 10px;
     font-size: 9.5pt;
@@ -535,32 +526,27 @@
     background-color: rgba(255, 255, 255, 0.05);
 }
 
-/* UI-5: keyboard focus — restrained accent border (no glow, no bright fill) on the
-   input well / composer; selection and hover stay neutral charcoal. */
 .quicksearch-entry-row-focused {
-    border-color: rgba(120, 160, 235, 0.32);
+    border-color: rgba(43, 100, 255, 0.40);
 }
-.quicksearch-ai-composer-focused {
-    background-color: rgba(34, 39, 49, 0.97);
+.quicksearch-ai-composer-focused .quicksearch-ai-composer-well {
+    border-color: rgba(43, 100, 255, 0.32);
 }
 
-/* UI-3: AI answer heading — small, above every answer surface */
 .quicksearch-ai-answer-heading {
-    padding: 4px 10px 0 10px;
+    padding: 6px 10px 2px 10px;
     font-size: 9pt;
     font-weight: bold;
-    color: rgba(240, 243, 248, 0.90);
+    color: rgba(86, 142, 255, 0.95);
 }
 
-/* UI-3: code block surface + functional copy action.
-   P2-3: long lines scroll horizontally inside this surface (never escape the panel). */
 .quicksearch-ai-md-codebox {
-    background-color: rgba(0, 0, 0, 0.22);
+    background-color: rgba(0, 0, 0, 0.26);
     border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 10px;
-    padding: 6px 8px;
-    margin: 3px 8px 4px 8px;
-    spacing: 5px;
+    border-radius: 12px;
+    padding: 8px 10px;
+    margin: 4px 8px 6px 8px;
+    spacing: 6px;
 }
 .quicksearch-ai-md-code-scroll {
     background: none;
@@ -588,14 +574,40 @@
     color: rgba(255, 255, 255, 0.95);
 }
 
-/* UI-3: inline sources — secondary METADATA, visually quieter than the answer text:
-   neutral labels (not blue), no bright containers, subtle View more link. */
 .quicksearch-ai-sources-wrap {
-    spacing: 4px;
-    padding: 2px 10px 4px 10px;
+    spacing: 8px;
+    padding: 10px 10px 6px 10px;
 }
-.quicksearch-ai-sources-row {
+.quicksearch-ai-sources-headerrow {
     spacing: 6px;
+    padding: 0 2px;
+}
+.quicksearch-ai-sources-cards {
+    spacing: 8px;
+}
+.quicksearch-ai-source-card {
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    background-color: rgba(255, 255, 255, 0.045);
+    min-width: 160px;
+    max-width: 200px;
+}
+.quicksearch-ai-source-card:hover {
+    background-color: rgba(43, 100, 255, 0.08);
+    border-color: rgba(43, 100, 255, 0.14);
+}
+.quicksearch-ai-source-card-row { spacing: 10px; }
+.quicksearch-ai-source-card-icon { color: rgba(86, 142, 255, 0.95); }
+.quicksearch-ai-source-card-texts { spacing: 2px; }
+.quicksearch-ai-source-card-title {
+    font-size: 9pt;
+    font-weight: 600;
+    color: rgba(255,255,255,0.92);
+}
+.quicksearch-ai-source-card-domain {
+    font-size: 8pt;
+    color: rgba(255,255,255,0.45);
 }
 .quicksearch-ai-source-pill {
     padding: 2px 9px;
@@ -616,7 +628,7 @@
     color: rgba(255, 255, 255, 0.90);
 }
 .quicksearch-ai-sources-button-viewmore {
-    padding: 2px 9px;
+    padding: 2px 10px;
     border-radius: 12px;
     border: none;
     background: none;
@@ -624,15 +636,17 @@
 .quicksearch-ai-sources-button-viewmore:hover {
     background-color: rgba(255, 255, 255, 0.06);
 }
+.quicksearch-ai-sources-viewmore-label {
+    font-size: 8pt;
+    color: rgba(86, 142, 255, 0.95);
+}
 
-/* UI-3: compact follow-up composer “+” prefix */
 .quicksearch-ai-composer-plus {
     color: rgba(255, 255, 255, 0.40);
 }
 
-/* UI-4: search-mode keyboard hints under the results panel */
 .quicksearch-hints {
-    padding: 4px 10px 2px 10px;
+    padding: 6px 10px 2px 10px;
     font-size: 8pt;
     color: rgba(255, 255, 255, 0.40);
 }
