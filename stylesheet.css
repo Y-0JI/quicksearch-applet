@@ -17,18 +17,18 @@
    light border; the input row is roomier (ref content block is ~78px tall). */
 .quicksearch-entry-row {
     spacing: 8px;
-    padding: 10px 12px 10px 16px;
+    padding: 8px 10px 8px 10px;
     margin-bottom: 10px;
-    background-color: rgba(21, 28, 36, 0.97);
-    border: 1px solid rgba(255, 255, 255, 0.11);
-    border-radius: 24px;
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.40);
+    background-color: rgba(22, 28, 36, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 22px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38);
 }
 
 .quicksearch-entry {
-    padding: 8px 10px;
-    font-size: 13.5pt;
-    width: 460px;
+    padding: 7px 8px;
+    font-size: 11pt;
+    width: 380px;
     color: rgba(255, 255, 255, 0.95);
     background-color: rgba(0, 0, 0, 0);
     border: none;
@@ -40,42 +40,59 @@
 }
 
 .quicksearch-results {
-    padding: 10px 8px 10px 8px;
+    padding: 8px 6px 8px 6px;
     background-color: rgba(19, 26, 32, 0.98);
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    border-radius: 18px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.38);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 16px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
 }
 
 .quicksearch-section-header {
-    color: rgba(255, 255, 255, 0.34);
-    font-size: 8pt;
-    font-weight: bold;
-    padding: 10px 14px 4px 14px;
+    color: rgba(255, 255, 255, 0.32);
+    font-size: 7.5pt;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    padding: 12px 12px 4px 12px;
 }
 
 .quicksearch-row {
-    padding: 8px 12px;
-    border-radius: 12px;
+    padding: 7px 10px;
+    border-radius: 10px;
+    border: 1px solid transparent;
 }
 
 .quicksearch-row-selected {
-    background-color: rgba(163, 178, 204, 0.13);
+    background-color: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.06);
 }
 
 .quicksearch-row-inner {
-    spacing: 12px;
+    spacing: 10px;
     max-width: 640px;
 }
 
 .quicksearch-title {
-    color: rgba(255, 255, 255, 0.80);
-    font-size: 11pt;
+    color: rgba(255, 255, 255, 0.88);
+    font-size: 10pt;
+    font-weight: 500;
 }
 
 .quicksearch-desc {
-    color: rgba(255, 255, 255, 0.64);
-    font-size: 9pt;
+    color: rgba(255, 255, 255, 0.50);
+    font-size: 8.5pt;
+}
+
+.quicksearch-type {
+    font-size: 7pt;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.28);
+    padding: 2px 6px;
+    border-radius: 999px;
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .quicksearch-context-menu {
@@ -119,16 +136,16 @@
 
 /* Persistent segmented mode control in the pill — matches advance_ui.png */
 .quicksearch-mode-seg {
-    spacing: 4px;
-    padding: 3px;
+    spacing: 3px;
+    padding: 2px;
     border-radius: 999px;
-    background-color: rgba(0, 0, 0, 0.18);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background-color: rgba(0, 0, 0, 0.20);
+    border: 1px solid rgba(255, 255, 255, 0.05);
 }
-.quicksearch-mode-button { padding: 6px 16px; border-radius: 999px; border: none; background: none; }
-.quicksearch-mode-content { spacing: 6px; }
-.quicksearch-mode-icon { color: rgba(226, 231, 240, 0.70); }
-.quicksearch-mode-label { font-size: 9pt; font-weight: 600; color: rgba(226, 231, 240, 0.76); }
+.quicksearch-mode-button { padding: 5px 12px; border-radius: 999px; border: none; background: none; }
+.quicksearch-mode-content { spacing: 5px; }
+.quicksearch-mode-icon { color: rgba(226, 231, 240, 0.68); }
+.quicksearch-mode-label { font-size: 8.5pt; font-weight: 600; color: rgba(226, 231, 240, 0.74); }
 .quicksearch-mode-button:hover { background-color: rgba(255, 255, 255, 0.08); }
 .quicksearch-mode-button:hover .quicksearch-mode-icon,
 .quicksearch-mode-button:hover .quicksearch-mode-label { color: rgba(255, 255, 255, 0.95); }
@@ -460,20 +477,37 @@
     color: rgba(255, 255, 255, 0.42);
 }
 .quicksearch-close-button {
-    padding: 4px 10px;
+    padding: 4px 8px;
     border-radius: 999px;
     border: none;
     background: none;
 }
 .quicksearch-close-button-label {
-    font-size: 11pt;
-    color: rgba(255, 255, 255, 0.50);
+    font-size: 10pt;
+    color: rgba(255, 255, 255, 0.48);
 }
 .quicksearch-close-button:hover {
     background-color: rgba(255, 255, 255, 0.10);
 }
 .quicksearch-close-button:hover .quicksearch-close-button-label {
     color: rgba(255, 255, 255, 0.95);
+}
+.quicksearch-search-button {
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background-color: rgba(255, 255, 255, 0.08);
+}
+.quicksearch-search-button-label {
+    font-size: 8.5pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.88);
+}
+.quicksearch-search-button:hover {
+    background-color: rgba(255, 255, 255, 0.14);
+}
+.quicksearch-search-button:hover .quicksearch-search-button-label {
+    color: rgba(255, 255, 255, 1.0);
 }
 
 /* Ref (advance_ui.png) draws a 1px hairline (rgb 49,57,67 ~= white 10%) between
@@ -520,20 +554,28 @@
 }
 
 .quicksearch-bestmatch-header {
-    color: rgba(76, 127, 195, 0.82);
-    letter-spacing: 0.25px;
+    color: rgba(255, 255, 255, 0.38);
+    font-size: 7.5pt;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
 }
 .quicksearch-best-match {
-    background-color: rgba(25, 83, 169, 0.30);
-    border: 1px solid rgba(25, 83, 169, 0.45);
-    border-radius: 14px;
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
 }
 .quicksearch-best-match:hover {
-    background-color: rgba(25, 83, 169, 0.40);
+    background-color: rgba(255, 255, 255, 0.09);
+}
+.quicksearch-best-match.quicksearch-row-selected {
+    background-color: rgba(25, 83, 169, 0.22);
+    border-color: rgba(25, 83, 169, 0.35);
 }
 .quicksearch-best-match-hint {
-    font-size: 8pt;
-    color: rgba(76, 127, 195, 0.85);
+    font-size: 7.5pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.32);
 }
 
 .quicksearch-empty {
@@ -541,17 +583,38 @@
     font-size: 9.5pt;
     color: rgba(255, 255, 255, 0.45);
 }
+.quicksearch-empty-box {
+    padding: 28px 16px 24px 16px;
+    spacing: 6px;
+}
+.quicksearch-empty-title {
+    font-size: 10pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.72);
+    text-align: center;
+}
+.quicksearch-empty-sub {
+    font-size: 8.5pt;
+    color: rgba(255, 255, 255, 0.38);
+    text-align: center;
+}
 .quicksearch-row:hover {
-    background-color: rgba(255, 255, 255, 0.05);
+    background-color: rgba(255, 255, 255, 0.04);
+}
+.quicksearch-row-selected:hover {
+    background-color: rgba(255, 255, 255, 0.07);
 }
 
 .quicksearch-row-chevron {
-    font-size: 14pt;
-    color: rgba(255,255,255,0.22);
+    font-size: 11pt;
+    color: rgba(255,255,255,0.18);
     padding-left: 8px;
 }
 .quicksearch-row:hover .quicksearch-row-chevron {
-    color: rgba(255,255,255,0.45);
+    color: rgba(255,255,255,0.32);
+}
+.quicksearch-row-selected .quicksearch-row-chevron {
+    color: rgba(255,255,255,0.38);
 }
 
 .quicksearch-entry-row-focused {
