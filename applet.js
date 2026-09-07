@@ -1219,21 +1219,15 @@ class QuickSearchApplet extends Applet.IconApplet {
             const wrapper = ov.dialogLayout ? ov.dialogLayout.get_parent() : null;
             const bin = ov._backgroundBin;
             if (wrapper && bin) {
-                const sh = global.screen_height || 1080;
                 const sw = global.screen_width || 1366;
+                const sh = global.screen_height || 1080;
                 const pw = 739;
-                if (idleCenter) {
-                    const wrapperH = 80;
-                    const py = Math.round((sh - wrapperH) / 2);
-                    const px = Math.round((sw - pw) / 2);
-                    try { wrapper.set_position(px, py); } catch (e) {}
-                    try { wrapper.set_size(pw, wrapperH); } catch (e) {}
-                } else {
-                    const px = Math.round((sw - pw) / 2);
-                    const py = 96;
-                    try { wrapper.set_position(px, py); } catch (e) {}
-                    try { wrapper.set_size(pw, -1); } catch (e) {}
-                }
+                const px = Math.round((sw - pw) / 2);
+                const py = idleCenter ? Math.round(sh / 2 - 80) : 96;
+                const h = idleCenter ? 160 : -1;
+                try { wrapper.set_position(px, py); } catch (e) {}
+                try { wrapper.set_size(pw, h); } catch (e) {}
+                try { ov.dialogLayout.set_height(h); } catch (e) {}
             }
         } catch (e) {}
         try { this._setFilterRowVisible(!isAi && (st === 'searching' || st === 'search-results')); } catch (e) {}
@@ -2498,30 +2492,29 @@ class QuickSearchApplet extends Applet.IconApplet {
                 const sw = global.screen_width || 1366;
                 const pw = 739;
                 const sh = global.screen_height || 1080;
-                const idleOpen = this._uiState === 'idle-search' || this._uiState === 'ai-input';
-                const px = Math.round((sw - pw) / 2);
-                const pyIdle = Math.round((sh - 80) / 2);
-                const pyTop = 96;
-                const py = idleOpen ? pyIdle : pyTop;
-                try { this._overlay.dialogLayout.set_height(-1); } catch (e) {}
-                try { this._overlay.dialogLayout.set_y_align(idleOpen ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); } catch (e) {}
-                try { this._overlay.contentLayout.set_y_align(idleOpen ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); } catch (e) {}
-                try { this._overlay.dialogLayout.set_y_expand(idleOpen); } catch (e) {}
-                try { this._overlay.contentLayout.set_y_expand(idleOpen); } catch (e) {}
-                try {
-                    if (idleOpen) { this._overlay.contentLayout.add_style_class_name("quicksearch-content-idle"); this._overlay.add_style_class_name("quicksearch-dialog-idle"); }
-                    else { try { this._overlay.contentLayout.remove_style_class_name("quicksearch-content-idle"); } catch (e) {} try { this._overlay.remove_style_class_name("quicksearch-dialog-idle"); } catch (e) {} }
-                } catch (e) {}
-                try { bin.set_translation(0, 0, 0); } catch (e) {}
-                try { wrapper.set_layout_manager(new Clutter.FixedLayout()); } catch (e) {}
-                try { dlg.set_layout_manager(new Clutter.FixedLayout()); } catch (e) {}
-                try { dlg.set_position(0, 0); } catch (e) {}
-                try { dlg.set_size(pw, -1); } catch (e) {}
                 const doPos = () => {
                     const st = this._uiState;
                     const isIdle = (! (this._mode === 'ai') && st === 'idle-search') || (this._mode === 'ai' && st === 'ai-input');
+                    const px = Math.round((sw - pw) / 2);
+                    const sH = global.screen_height || sh;
+                    const pyIdle = Math.round(sH / 2 - 60);
+                    const pyTop = 96;
                     const curPy = isIdle ? pyIdle : pyTop;
-                    const curH = isIdle ? 80 : -1;
+                    const curH = isIdle ? 160 : -1;
+                    try { this._overlay.dialogLayout.set_height(curH); } catch (e) {}
+                    try { this._overlay.dialogLayout.set_y_align(isIdle ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); } catch (e) {}
+                    try { this._overlay.contentLayout.set_y_align(isIdle ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); } catch (e) {}
+                    try { this._overlay.dialogLayout.set_y_expand(isIdle); } catch (e) {}
+                    try { this._overlay.contentLayout.set_y_expand(isIdle); } catch (e) {}
+                    try {
+                        if (isIdle) { this._overlay.contentLayout.add_style_class_name("quicksearch-content-idle"); this._overlay.add_style_class_name("quicksearch-dialog-idle"); }
+                        else { try { this._overlay.contentLayout.remove_style_class_name("quicksearch-content-idle"); } catch (e2) {} try { this._overlay.remove_style_class_name("quicksearch-dialog-idle"); } catch (e2) {} }
+                    } catch (e) {}
+                    try { bin.set_translation(0, 0, 0); } catch (e) {}
+                    try { wrapper.set_layout_manager(new Clutter.FixedLayout()); } catch (e) {}
+                    try { dlg.set_layout_manager(new Clutter.FixedLayout()); } catch (e) {}
+                    try { dlg.set_position(0, 0); } catch (e) {}
+                    try { dlg.set_size(pw, -1); } catch (e) {}
                     try { bin.set_translation(0, 0, 0); } catch (e) {}
                     try { wrapper.set_position(px, curPy); } catch (e) {}
                     try { wrapper.set_size(pw, curH); } catch (e) {}
@@ -2539,14 +2532,13 @@ class QuickSearchApplet extends Applet.IconApplet {
                 };
                 try { doPos(); } catch (e) {}
                 try {
-                    const giGLib = (typeof imports !== 'undefined' && imports.gi && imports.gi.GLib) ? imports.gi.GLib : (typeof GLib !== 'undefined' ? GLib : null);
+                    const giGLib = (typeof imports !== 'undefined' && imports.gi && imports.gi.GLib) ? imports.gi.GLib : null;
                     if (giGLib && giGLib.timeout_add) {
-                        const pri = (giGLib.PRIORITY_DEFAULT !== undefined) ? giGLib.PRIORITY_DEFAULT : 200;
-                        giGLib.timeout_add(pri, 20, () => { try { doPos(); } catch (e) {} return giGLib.SOURCE_REMOVE; });
-                        giGLib.timeout_add(pri, 120, () => { try { doPos(); } catch (e) {} return giGLib.SOURCE_REMOVE; });
+                        const pri = giGLib.PRIORITY_DEFAULT !== undefined ? giGLib.PRIORITY_DEFAULT : 200;
+                        giGLib.timeout_add(pri, 16, () => { try { doPos(); } catch (e2) {} return giGLib.SOURCE_REMOVE; });
                     }
-                } catch (e) {}
-                try { if (typeof Mainloop !== 'undefined' && Mainloop && Mainloop.timeout_add) Mainloop.timeout_add(20, () => { try { doPos(); } catch (e) {} return false; }); } catch (e) {}
+                } catch (e2) {}
+                try { if (typeof Mainloop !== 'undefined' && Mainloop && Mainloop.timeout_add) Mainloop.timeout_add(16, () => { try { doPos(); } catch (e2) {} return false; }); } catch (e2) {}
             }
         } catch (e) {}
         this._cancelAILayoutSync();
