@@ -2490,11 +2490,6 @@ class QuickSearchApplet extends Applet.IconApplet {
                 try { global.log("[quicksearch@yoji] WARN overlay.state still CLOSED right after open() — dialog may not be visible"); } catch (e2) {}
             }
         } catch (e) {}
-        try { this._overlay.dialogLayout.set_height(-1); } catch (e) {}
-        try { this._overlay.dialogLayout.set_y_align(Clutter.ActorAlign.START); } catch (e) {}
-        try { this._overlay.contentLayout.set_y_align(Clutter.ActorAlign.START); } catch (e) {}
-        try { this._overlay.dialogLayout.set_y_expand(false); } catch (e) {}
-        try { this._overlay.contentLayout.set_y_expand(false); } catch (e) {}
         try {
             const dlg = this._overlay.dialogLayout;
             const wrapper = dlg ? dlg.get_parent() : null;
@@ -2502,17 +2497,34 @@ class QuickSearchApplet extends Applet.IconApplet {
             if (wrapper && bin) {
                 const sw = global.screen_width || 1366;
                 const pw = 739;
+                const sh = global.screen_height || 1080;
+                const idleOpen = this._uiState === 'idle-search' || this._uiState === 'ai-input';
                 const px = Math.round((sw - pw) / 2);
-                const py = 96;
+                const pyIdle = Math.round((sh - 80) / 2);
+                const pyTop = 96;
+                const py = idleOpen ? pyIdle : pyTop;
+                try { this._overlay.dialogLayout.set_height(-1); } catch (e) {}
+                try { this._overlay.dialogLayout.set_y_align(idleOpen ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); } catch (e) {}
+                try { this._overlay.contentLayout.set_y_align(idleOpen ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); } catch (e) {}
+                try { this._overlay.dialogLayout.set_y_expand(idleOpen); } catch (e) {}
+                try { this._overlay.contentLayout.set_y_expand(idleOpen); } catch (e) {}
+                try {
+                    if (idleOpen) { this._overlay.contentLayout.add_style_class_name("quicksearch-content-idle"); this._overlay.add_style_class_name("quicksearch-dialog-idle"); }
+                    else { try { this._overlay.contentLayout.remove_style_class_name("quicksearch-content-idle"); } catch (e) {} try { this._overlay.remove_style_class_name("quicksearch-dialog-idle"); } catch (e) {} }
+                } catch (e) {}
                 try { bin.set_translation(0, 0, 0); } catch (e) {}
                 try { wrapper.set_layout_manager(new Clutter.FixedLayout()); } catch (e) {}
                 try { dlg.set_layout_manager(new Clutter.FixedLayout()); } catch (e) {}
                 try { dlg.set_position(0, 0); } catch (e) {}
                 try { dlg.set_size(pw, -1); } catch (e) {}
                 const doPos = () => {
+                    const st = this._uiState;
+                    const isIdle = (! (this._mode === 'ai') && st === 'idle-search') || (this._mode === 'ai' && st === 'ai-input');
+                    const curPy = isIdle ? pyIdle : pyTop;
+                    const curH = isIdle ? 80 : -1;
                     try { bin.set_translation(0, 0, 0); } catch (e) {}
-                    try { wrapper.set_position(px, py); } catch (e) {}
-                    try { wrapper.set_size(pw, -1); } catch (e) {}
+                    try { wrapper.set_position(px, curPy); } catch (e) {}
+                    try { wrapper.set_size(pw, curH); } catch (e) {}
                     try {
                         const content = this._overlay.contentLayout;
                         if (content) {
