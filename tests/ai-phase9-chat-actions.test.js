@@ -301,10 +301,13 @@ test('mode switch is a two-way door: header Search switch + safe AI->Search life
 test('layout: no expanded region, composer packs under the results panel', () => {
     assert.ok(APPLET_SRC.includes('no `expand: true`'), 'results region must not expand');
     assert.ok(APPLET_SRC.includes('resultsRegion.set_size(w, h)'), 'region sized to content');
-    // pane architecture: the conversation scroll is reparented INTO _aiPane while a
-    // conversation is active — the pane owns the surface, no CSS seam classes needed
-    assert.ok(APPLET_SRC.includes('ov._scroll.get_parent() !== pane'), 'scroll detach/reparent guarded');
-    assert.ok(APPLET_SRC.includes('_applyAiChatLayout'), 'AI chat layout application exists');
+    // REBUILD: the AI conversation owns a DEDICATED scroll surface packed inside the
+    // pane — no reparenting between regions (the search results scroll stays put), so
+    // mode/state changes cannot detach/re-insert actors or shift the layout.
+    assert.ok(APPLET_SRC.includes('_aiScroll'), 'dedicated AI conversation scroll exists');
+    assert.ok(APPLET_SRC.includes('aiResultsBox'), 'AI conversation content box exists');
+    assert.ok(APPLET_SRC.includes('this._aiPane.add(this._aiScroll'), 'AI scroll packed inside the pane');
+    assert.ok(!APPLET_SRC.includes('_applyAiChatLayout'), 'no legacy reparenting path remains');
 });
 
 test('edit/resend staging goes through conversationState (single source of truth)', () => {

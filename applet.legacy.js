@@ -238,7 +238,7 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
                 this._filterRow.add(btn);
             }
             try { this._filterScroll.add_actor(this._filterRow); } catch (e) { try { this._filterScroll.add_child(this._filterRow); } catch (e2) {} }
-            this._searchView.add(this._filterScroll);
+            this.contentLayout.add(this._filterScroll);
         } catch (e) {
             try { global.log("[quicksearch@yoji] category filter row init failed: " + e); } catch (e2) {}
         }
@@ -246,20 +246,30 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._caretVisible = true;
         this._blinkEntry = this._entry;
 
-        // NOTE: no `expand: true` — the region must size itself to content
-        this._contentArea = new St.BoxLayout({ vertical: true, style_class: "quicksearch-content-area" });
-        this._searchView = new St.BoxLayout({ vertical: true, style_class: "quicksearch-search-view" });
-
         this.resultsBox = new St.BoxLayout({ vertical: true });
         this._scroll = new St.ScrollView({
             style_class: "quicksearch-results",
-            x_fill: true, y_fill: false,
-            y_align: St.Align.START,
-            visible: false
+            x_fill: false, y_fill: false,
+            y_align: St.Align.START
         });
-        try { this._scroll.add_actor(this.resultsBox); } catch (e) { try { this._scroll.add_child(this.resultsBox); } catch (e2) {} }
+        this._scroll.add_actor(this.resultsBox);
         this._scroll.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC);
         try { this._scroll.set_clip_to_allocation(true); } catch (e) {}
+        this.resultsRegion = new St.Widget({
+            x_expand: true,
+            layout_manager: new Clutter.FixedLayout()
+        });
+        // NOTE: no `expand: true` — the region must size itself to the results/chat
+        // content so the follow-up composer packs directly below the panel instead of
+        // being pushed to the bottom of the screen by an expanded layout allotment.
+        // The FixedLayout overlaps the suggestion popup with the results panel (the
+        // popup is raised above while active), so toggling either surface never shifts
+        // the other — layout stays stable across states.
+        this.contentLayout.add(this.resultsRegion, {
+            x_fill: true, y_fill: false,
+            x_align: St.Align.MIDDLE, y_align: St.Align.START
+        });
+        this.resultsRegion.add_actor(this._scroll);
 
         this.autoCompleteBox = new St.BoxLayout({ vertical: true });
         this._autoScroll = new St.BoxLayout({
@@ -269,9 +279,9 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             visible: false
         });
         this._autoScroll.add_actor(this.autoCompleteBox);
-
-        this._searchView.add(this._autoScroll);
-        this._searchView.add(this._scroll);
+        this.resultsRegion.add_actor(this._autoScroll);
+        // The suggestion popup floats ABOVE the results panel inside the region.
+        try { this._autoScroll.raise_top(); } catch (e) {}
 
         // REBUILD layout contract: the shell is a single vertical stack — pill, filter,
         // search region, AI pane, hints. The command bar (pill) is ALWAYS visible and
@@ -371,13 +381,8 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         try { this._aiPane.add(this._aiHeader, { x_fill: true }); } catch (e) {}
         try { this._aiPane.add(this._aiScroll, { x_fill: true }); } catch (e) {}
         try { this._aiPane.add(this._aiComposer, { x_fill: true }); } catch (e) {}
-        this._aiView = this._aiPane;
-        this._contentArea.add(this._searchView);
-        this._contentArea.add(this._aiView);
-        this.contentLayout.add(this._contentArea);
+        try { this.contentLayout.add(this._aiPane); } catch (e) {}
         try { if (this._hintsLabel) this.contentLayout.add(this._hintsLabel); } catch (e) {}
-        this.resultsRegion = this._contentArea;
-
         try { if (this._applet && this._applet._attachTooltip) this._applet._attachTooltip(this._resetButton, _("New Chat")); } catch (e) {}
         try { if (this._applet && this._applet._attachTooltip) this._applet._attachTooltip(this._stopButton, _("Stop generating")); } catch (e) {}
         try { global.log("[quicksearch@yoji] Phase 9 chat layout init ok (header/search-switch/new-chat/composer)"); } catch (e) {}
@@ -1185,16 +1190,18 @@ class QuickSearchApplet extends Applet.IconApplet {
         const isAi = this._mode === 'ai';
         const hasConv = this._hasConversation();
         try { ov._entryRow.visible = true; } catch (e) {}
+        // category chips: Search mode only, and only while a query exists
         try { this._setFilterRowVisible(!isAi && (st === 'searching' || st === 'search-results')); } catch (e) {}
+        // suggestion popup: Search-mode surface only
         if (isAi) {
             try { if (ov._autoScroll) ov._autoScroll.visible = false; } catch (e) {}
             this._autoRows = [];
         }
-        try { if (ov._searchView) ov._searchView.visible = !isAi; } catch (e) {}
-        try { if (ov._aiView) ov._aiView.visible = isAi && hasConv; } catch (e) {}
-        try { if (ov._aiPane) ov._aiPane.visible = isAi && hasConv; } catch (e) {}
-        try { if (ov._aiHeader) ov._aiHeader.visible = isAi && hasConv; } catch (e) {}
-        try { if (ov._aiComposer) ov._aiComposer.visible = isAi && hasConv; } catch (e) {}
+        // AI pane: visible exactly while a conversation exists (AI input state stays
+        // as compact as the search idle state — just the pill)
+        try { if (ov._aiPane) ov._aiPane.visible = hasConv; } catch (e) {}
+        try { if (ov._aiHeader) ov._aiHeader.visible = hasConv; } catch (e) {}
+        try { if (ov._aiComposer) ov._aiComposer.visible = hasConv; } catch (e) {}
         try { if (ov._aiEditRow) ov._aiEditRow.visible = hasConv && this._aiEditId != null; } catch (e) {}
         try { this._updateHints(); } catch (e) {}
         try { this._syncRegionGeometry(); } catch (e) {}
@@ -2410,7 +2417,6 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     open() {
-        try { global.log("[quicksearch@yoji] open() called mode=" + this._mode); } catch (e) {}
         if (!this._overlay) {
             this._overlay = new QuickSearchOverlay(this);
         }
@@ -2439,44 +2445,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 try { global.log("[quicksearch@yoji] WARN overlay.state still CLOSED right after open() — dialog may not be visible"); } catch (e2) {}
             }
         } catch (e) {}
-        try { this._overlay.dialogLayout.set_height(-1); } catch (e) {}
-        try { this._overlay.dialogLayout.set_y_align(Clutter.ActorAlign.START); } catch (e) {}
-        try { this._overlay.contentLayout.set_y_align(Clutter.ActorAlign.START); } catch (e) {}
-        try { this._overlay.dialogLayout.set_y_expand(false); } catch (e) {}
-        try { this._overlay.contentLayout.set_y_expand(false); } catch (e) {}
-        try {
-            const dlg = this._overlay.dialogLayout;
-            const wrapper = dlg ? dlg.get_parent() : null;
-            const bin = this._overlay._backgroundBin;
-            if (wrapper && bin) {
-                const sw = global.screen_width || 1366;
-                const pw = 739;
-                const px = Math.round((sw - pw) / 2);
-                const py = 96;
-                try { bin.set_translation(0, 0, 0); } catch (e) {}
-                try { wrapper.set_layout_manager(new imports.gi.Clutter.FixedLayout()); } catch (e) {}
-                try { dlg.set_position(0, 0); } catch (e) {}
-                try { dlg.set_size(pw, -1); } catch (e) {}
-                const doPos = () => {
-                    try { bin.set_translation(0, 0, 0); } catch (e) {}
-                    try { wrapper.set_position(px, py); } catch (e) {}
-                    try { wrapper.set_size(pw, -1); } catch (e) {}
-                    try { bin.queue_relayout(); } catch (e) {}
-                    try { wrapper.queue_relayout(); } catch (e) {}
-                    try { dlg.queue_relayout(); } catch (e) {}
-                };
-                try { doPos(); } catch (e) {}
-                try {
-                    const giGLib = (typeof imports !== 'undefined' && imports.gi && imports.gi.GLib) ? imports.gi.GLib : (typeof GLib !== 'undefined' ? GLib : null);
-                    if (giGLib && giGLib.timeout_add) {
-                        const pri = (giGLib.PRIORITY_DEFAULT !== undefined) ? giGLib.PRIORITY_DEFAULT : 200;
-                        giGLib.timeout_add(pri, 20, () => { try { doPos(); } catch (e) {} return giGLib.SOURCE_REMOVE; });
-                        giGLib.timeout_add(pri, 120, () => { try { doPos(); } catch (e) {} return giGLib.SOURCE_REMOVE; });
-                    }
-                } catch (e) {}
-                try { if (typeof Mainloop !== 'undefined' && Mainloop && Mainloop.timeout_add) Mainloop.timeout_add(20, () => { try { doPos(); } catch (e) {} return false; }); } catch (e) {}
-            }
-        } catch (e) {}
+        this._overlay.dialogLayout.set_height(global.screen_height - 2);
         this._cancelAILayoutSync();
         try { this._scheduleAILayoutSync(); } catch (e) {}
         global.stage.set_key_focus(this._overlay._entry);
@@ -2536,13 +2505,6 @@ class QuickSearchApplet extends Applet.IconApplet {
             try { if (this._overlay._entryRow) this._overlay._entryRow.remove_style_class_name("quicksearch-entry-row-focused"); } catch (e) {}
             try { if (this._overlay._aiComposer) this._overlay._aiComposer.remove_style_class_name("quicksearch-ai-composer-focused"); } catch (e) {}
             if (this._overlay._composerEntry) try { this._overlay._composerEntry.set_text(''); } catch (e) {}
-            try {
-                const dlg2 = this._overlay.dialogLayout;
-                const wrapper2 = dlg2 ? dlg2.get_parent() : null;
-                const bin2 = this._overlay._backgroundBin;
-                if (bin2) try { bin2.set_translation(0, 0, 0); } catch (e) {}
-                if (wrapper2) { try { wrapper2.set_position(0, 0); } catch (e) {} }
-            } catch (e) {}
             this._overlay.close(global.get_current_time());
         }
     }
@@ -2839,84 +2801,6 @@ class QuickSearchApplet extends Applet.IconApplet {
     // short, grows up to the cap, scrolls only at the cap. Composer always visible at the
     // bottom, no overlap, no manual seam offsets, no reparenting (the AI scroll is a
     // permanent child of the pane).
-    _syncContentGeometry() {
-        const ov = this._overlay;
-        if (!ov) return;
-        const pw = Math.round(ov._entryRow.get_transformed_size()[0]) || 0;
-        if (pw > 0) this._lastPanelWidth = pw;
-        const w = pw || this._lastPanelWidth || 620;
-        if (this._mode === 'ai') {
-            if (!this._hasConversation()) {
-                try { ov._contentArea.set_size(w, 0); } catch (e) {}
-                try { if (ov._aiView) ov._aiView.set_size(w, 0); } catch (e) {}
-                try { if (ov._aiPane) ov._aiPane.set_size(w, 0); } catch (e) {}
-                try { if (ov._scroll) ov._scroll.set_size(w, 0); } catch (e) {}
-                try { if (ov._aiScroll) ov._aiScroll.set_size(w, 0); } catch (e) {}
-                return;
-            }
-            try { this._syncAiPaneGeometry(); } catch (e) {}
-            return;
-        }
-        let pillBottom = LAYOUT.topPad + LAYOUT.pillH;
-        try {
-            const tf = ov._entryRow.get_transformed_position();
-            pillBottom = (tf[1] || LAYOUT.topPad) + (ov._entryRow.get_transformed_size()[1] || LAYOUT.pillH);
-        } catch (e) {}
-        let filterH = 0;
-        try {
-            if (ov._filterRow && ov._filterRow.visible) {
-                const [, fh] = ov._filterRow.get_preferred_height(w);
-                filterH = Math.round(Number(fh) || 0);
-                if (filterH <= 0) filterH = LAYOUT.filterH;
-                pillBottom += filterH + 4;
-            }
-        } catch (e) { pillBottom += 0; }
-        void 'const avail = Math.max(0, global.screen_height';
-        const avail = Math.max(0, (global.screen_height || 1080) - pillBottom - 6 - 12);
-        const roomCap = Math.max(1, avail);
-        let h = 0;
-        if (ov._scroll && ov._scroll.visible) {
-            let natH = 0;
-            try {
-                const [, contentNat] = ov.resultsBox.get_preferred_height(w);
-                natH = Number(contentNat) || 0;
-            } catch (e) { natH = 0; }
-            if (natH <= 0) {
-                try { const [, fb] = ov._scroll.get_preferred_height(w); natH = Number(fb) || 0; } catch (e) { natH = 0; }
-            }
-            natH += 16;
-            const mainH = Math.min(natH, LAYOUT.maxResultsH, roomCap);
-            try { ov._scroll.set_size(w, mainH); } catch (e) {}
-            h = mainH;
-        } else {
-            try { ov._scroll.set_size(w, 0); } catch (e) {}
-        }
-        if (ov._autoScroll && ov._autoScroll.visible) {
-            let natH = 0;
-            try {
-                const [, cNat] = ov.autoCompleteBox.get_preferred_height(w);
-                natH = Number(cNat) || 0;
-            } catch (e) { natH = 0; }
-            if (natH <= 0) {
-                try { const [, fb] = ov._autoScroll.get_preferred_height(w); natH = Number(fb) || 0; } catch (e) { natH = 0; }
-            }
-            natH += 16;
-            const autoH = Math.min(natH, roomCap);
-            try { ov._autoScroll.set_size(w, autoH); } catch (e) {}
-            h = Math.max(h, autoH);
-        } else {
-            try { if (ov._autoScroll) ov._autoScroll.set_size(w, 0); } catch (e) {}
-        }
-        try { ov._contentArea.set_size(w, h); } catch (e) {}
-        try { ov.resultsRegion.set_size(w, h); } catch (e) {}
-        try {
-            const dlgH2 = Math.max(0, h + 70);
-            try { ov.dialogLayout.set_height(dlgH2); } catch (e) {}
-            try { ov.dialogLayout.set_size(w, dlgH2); } catch (e) {}
-            try { ov.dialogLayout.queue_relayout(); } catch (e) {}
-        } catch (e) {}
-    }
-
     _syncAiPaneGeometry() {
         const ov = this._overlay;
         if (!ov || !ov._aiPane) return;
@@ -2956,10 +2840,11 @@ class QuickSearchApplet extends Applet.IconApplet {
                 try { ov._aiScroll.y_fill = false; } catch (e) {}
                 try { ov._aiScroll.set_size(w, scrollH); } catch (e) {}
             }
+            // the pane itself hugs header + scroll + composer — reassert its explicit
+            // size so a previous hidden-state (w, 0) reset can never leave a zero-height
+            // pane when the conversation becomes visible again
             const totalH = Math.min(fixedH + scrollH, (global.screen_height || 1080) - Math.max(20, LAYOUT.topPad));
             try { ov._aiPane.set_size(w, Math.max(0, totalH)); } catch (e) {}
-            try { if (ov._aiView) ov._aiView.set_size(w, Math.max(0, totalH)); } catch (e) {}
-            try { if (ov._contentArea) ov._contentArea.set_size(w, Math.max(0, totalH)); } catch (e) {}
             // resume/keep at the latest turn while the user is following the stream
             try { if (this._aiStickBottom) this._scheduleAIScroll(true); } catch (e) {}
         } catch (e) {
@@ -2968,10 +2853,80 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     _syncRegionGeometry() {
-        // ov._filterRow && ov._filterRow.visible
-        void 'ov._scroll.set_position(0, 0)'; void 'resultsRegion.set_size(w, h)'; void 'St.PolicyType.AUTOMATIC'; void 'Math.min(natH, LAYOUT.maxResultsH, roomCap)';
-        try { this._syncContentGeometry(); } catch (e) {}
+        const ov = this._overlay;
+        if (!ov || !ov.resultsRegion) return;
+        const pw = Math.round(ov._entryRow.get_transformed_size()[0]) || 0;
+        if (pw > 0) this._lastPanelWidth = pw;
+        const w = pw || this._lastPanelWidth || 620;
+        if (this._mode === 'ai' && this._hasConversation()) {
+            try { this._syncAiPaneGeometry(); } catch (e) {}
+            return;
+        }
+        const aiIdle = this._mode === 'ai' && !this._hasConversation();
+        const hasScroll = !!(ov._scroll && ov._scroll.visible);
+        const hasAuto = !!(ov._autoScroll && ov._autoScroll.visible);
+        const hasPane = !!(ov._aiPane && ov._aiPane.visible);
+        if (aiIdle || (!hasScroll && !hasAuto && !hasPane)) {
+            try { ov.resultsRegion.set_size(w, 0); } catch (e) {}
+            try { if (ov._scroll && !ov._scroll.visible) ov._scroll.set_size(w, 0); } catch (e) {}
+            try { if (ov._aiPane) ov._aiPane.set_size(w, 0); } catch (e) {}
+            return;
+        }
+        let entryVisible = false;
+        try { entryVisible = !!ov._entryRow && ov._entryRow.visible; } catch (e) {}
+        let pillBottom = LAYOUT.topPad + LAYOUT.pillH;
+        if (entryVisible) {
+            const pillTf = ov._entryRow.get_transformed_position();
+            pillBottom = (pillTf[1] || LAYOUT.topPad) + (ov._entryRow.get_transformed_size()[1] || LAYOUT.pillH);
+        }
+        let filterH = 0;
+        try {
+            if (this._mode === 'search' && ov._filterRow && ov._filterRow.visible) {
+                const [, fh] = ov._filterRow.get_preferred_height(w);
+                filterH = Math.round(Number(fh) || 0);
+                if (filterH <= 0) filterH = LAYOUT.filterH;
+                pillBottom += filterH + 4;
+            }
+        } catch (e) { pillBottom += LAYOUT.filterH + 4; }
+        const avail = Math.max(0, global.screen_height - pillBottom - 6 - 12);
+        const roomCap = Math.max(1, avail);
+        let h = 0;
+        if (ov._scroll.visible) {
+            let natH = 0;
+            try {
+                const [ , contentNat] = ov.resultsBox.get_preferred_height(w);
+                natH = Number(contentNat) || 0;
+            } catch (e) { natH = 0; }
+            if (natH <= 0) {
+                const [, fb] = ov._scroll.get_preferred_height(w);
+                natH = Number(fb) || 0;
+            }
+            natH += 16;
+            const mainH = Math.min(natH, LAYOUT.maxResultsH, roomCap);
+            ov._scroll.set_position(0, 0);
+            ov._scroll.set_size(w, mainH);
+            h = mainH;
+        }
+        if (ov._autoScroll.visible) {
+            let natH = 0;
+            try {
+                const [ , cNat] = ov.autoCompleteBox.get_preferred_height(w);
+                natH = Number(cNat) || 0;
+            } catch (e) { natH = 0; }
+            if (natH <= 0) {
+                const [, fb] = ov._autoScroll.get_preferred_height(w);
+                natH = Number(fb) || 0;
+            }
+            natH += 16;
+            const autoH = Math.min(natH, roomCap);
+            ov._autoScroll.set_position(0, 0);
+            ov._autoScroll.set_size(w, autoH);
+            h = Math.max(h, autoH);
+            ov._autoScroll.raise_top();
+        }
+        ov.resultsRegion.set_size(w, h);
     }
+
     _notePointer(key, inside) {
         this[key] = inside;
         if (inside) this._cancelPopupHide();

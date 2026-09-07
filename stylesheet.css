@@ -13,12 +13,14 @@
     min-height: 0;
 }
 
+/* Surface + border matched to advance_ui.png: pill rgb(21,28,36) with a ~11%
+   light border; the input row is roomier (ref content block is ~78px tall). */
 .quicksearch-entry-row {
     spacing: 8px;
-    padding: 8px 10px 8px 14px;
+    padding: 10px 12px 10px 16px;
     margin-bottom: 10px;
-    background-color: rgba(30, 34, 43, 0.97);
-    border: 1px solid rgba(255, 255, 255, 0.09);
+    background-color: rgba(21, 28, 36, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.11);
     border-radius: 24px;
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.40);
 }
@@ -39,8 +41,8 @@
 
 .quicksearch-results {
     padding: 10px 8px 10px 8px;
-    background-color: rgba(21, 24, 31, 0.98);
-    border: 1px solid rgba(255, 255, 255, 0.07);
+    background-color: rgba(19, 26, 32, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 18px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.38);
 }
@@ -67,18 +69,18 @@
 }
 
 .quicksearch-title {
-    color: rgba(255, 255, 255, 0.95);
+    color: rgba(255, 255, 255, 0.80);
     font-size: 11pt;
 }
 
 .quicksearch-desc {
-    color: rgba(255, 255, 255, 0.58);
+    color: rgba(255, 255, 255, 0.64);
     font-size: 9pt;
 }
 
 .quicksearch-context-menu {
-    background: rgba(21, 24, 31, 0.98);
-    border: 1px solid rgba(255, 255, 255, 0.07);
+    background: rgba(19, 26, 32, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 12px;
     box-shadow: 0 8px 26px rgba(0, 0, 0, 0.40);
     padding: 6px;
@@ -131,7 +133,7 @@
 .quicksearch-mode-button:hover .quicksearch-mode-icon,
 .quicksearch-mode-button:hover .quicksearch-mode-label { color: rgba(255, 255, 255, 0.95); }
 .quicksearch-mode-active {
-    background-color: rgba(43, 100, 255, 1.0);
+    background-color: rgba(25, 83, 169, 1.0);
     border: none;
 }
 .quicksearch-mode-active .quicksearch-mode-label,
@@ -157,7 +159,7 @@
 .quicksearch-sources-popover {
     padding: 8px;
     spacing: 6px;
-    background-color: rgba(30, 34, 43, 0.98);
+    background-color: rgba(21, 28, 36, 0.98);
     border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 12px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.50);
@@ -181,7 +183,7 @@
 }
 .quicksearch-sources-popover-title {
     font-size: 9pt;
-    color: rgba(120, 160, 235, 0.95);
+    color: rgba(76, 127, 195, 0.95);
 }
 .quicksearch-sources-popover-domain {
     font-size: 8pt;
@@ -240,9 +242,27 @@
     color: rgba(255, 255, 255, 0.92);
 }
 
+
+.quicksearch-content-area {
+    spacing: 0;
+    padding: 0;
+}
+
+.quicksearch-search-view {
+    spacing: 0;
+    padding: 0;
+}
+
+.quicksearch-autocomplete {
+    margin-top: 6px;
+}
+.quicksearch-autocomplete.quicksearch-results {
+    background-color: rgba(19, 26, 32, 0.98);
+}
+
 .quicksearch-ai-pane {
-    background-color: rgba(21, 24, 31, 0.98);
-    border: 1px solid rgba(255, 255, 255, 0.07);
+    background-color: rgba(19, 26, 32, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 18px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.38);
     padding: 10px;
@@ -264,12 +284,6 @@
     border-radius: 0;
     box-shadow: none;
     padding: 2px 2px;
-}
-
-.quicksearch-ai-hint {
-    padding: 2px 10px 3px 10px;
-    font-size: 8pt;
-    color: rgba(255, 255, 255, 0.34);
 }
 
 .quicksearch-ai-chat-header {
@@ -369,7 +383,7 @@
 .quicksearch-ai-composer-well {
     spacing: 8px;
     padding: 6px 6px 6px 12px;
-    background-color: rgba(30, 34, 43, 0.96);
+    background-color: rgba(21, 28, 36, 0.96);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 24px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.18);
@@ -394,7 +408,7 @@
     padding: 0;
     border-radius: 999px;
     border: none;
-    background-color: rgba(43, 100, 255, 1.0);
+    background-color: rgba(25, 83, 169, 1.0);
 }
 
 .quicksearch-ai-send-content { spacing: 0; }
@@ -409,7 +423,7 @@
 }
 
 .quicksearch-ai-send:hover {
-    background-color: rgba(60, 115, 255, 1.0);
+    background-color: rgba(35, 100, 195, 1.0);
 }
 
 .quicksearch-ai-send-disabled {
@@ -443,7 +457,7 @@
 }
 
 .quicksearch-search-icon {
-    color: rgba(255, 255, 255, 0.48);
+    color: rgba(255, 255, 255, 0.42);
 }
 .quicksearch-close-button {
     padding: 4px 10px;
@@ -462,18 +476,22 @@
     color: rgba(255, 255, 255, 0.95);
 }
 
+/* Ref (advance_ui.png) draws a 1px hairline (rgb 49,57,67 ~= white 10%) between
+   the search input row and the category chips — the chips sit on the same dark
+   surface below it. */
 .quicksearch-filter-scroll {
-    max-height: 44px;
+    max-height: 56px;
     background: none;
     border: none;
     padding: 0;
 }
 .quicksearch-filter-row {
     spacing: 8px;
-    padding: 0 6px 10px 6px;
+    padding: 10px 8px 10px 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.09);
 }
 .quicksearch-filter-chip {
-    padding: 6px 14px;
+    padding: 7px 16px;
     border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.06);
     background-color: rgba(255,255,255,0.03);
@@ -493,8 +511,8 @@
     color: rgba(255, 255, 255, 0.92);
 }
 .quicksearch-filter-chip-active {
-    background-color: rgba(43, 100, 255, 1.0);
-    border-color: rgba(43, 100, 255, 1.0);
+    background-color: rgba(25, 83, 169, 0.42);
+    border-color: rgba(25, 83, 169, 0.55);
 }
 .quicksearch-filter-chip-active .quicksearch-filter-chip-label,
 .quicksearch-filter-chip-active .quicksearch-filter-chip-icon {
@@ -502,19 +520,20 @@
 }
 
 .quicksearch-bestmatch-header {
-    color: rgba(120, 160, 235, 0.82);
+    color: rgba(76, 127, 195, 0.82);
+    letter-spacing: 0.25px;
 }
 .quicksearch-best-match {
-    background-color: rgba(43, 100, 255, 0.14);
-    border: 1px solid rgba(43, 100, 255, 0.22);
+    background-color: rgba(25, 83, 169, 0.30);
+    border: 1px solid rgba(25, 83, 169, 0.45);
     border-radius: 14px;
 }
 .quicksearch-best-match:hover {
-    background-color: rgba(43, 100, 255, 0.18);
+    background-color: rgba(25, 83, 169, 0.40);
 }
 .quicksearch-best-match-hint {
     font-size: 8pt;
-    color: rgba(120, 160, 235, 0.85);
+    color: rgba(76, 127, 195, 0.85);
 }
 
 .quicksearch-empty {
@@ -536,10 +555,18 @@
 }
 
 .quicksearch-entry-row-focused {
-    border-color: rgba(43, 100, 255, 0.40);
+    border-color: rgba(25, 83, 169, 0.45);
 }
+
+/* Ref (advance_ui.png): the command bar keeps the SAME neutral border and surface
+   in both modes — the mode signal is the blue active segment inside the pill, not a
+   tinted pill. Switching modes never shifts the pill or the panels below it. */
+.quicksearch-entry-row.quicksearch-mode-active {
+    border-color: rgba(255, 255, 255, 0.11);
+}
+
 .quicksearch-ai-composer-focused .quicksearch-ai-composer-well {
-    border-color: rgba(43, 100, 255, 0.32);
+    border-color: rgba(25, 83, 169, 0.35);
 }
 
 .quicksearch-ai-answer-heading {
@@ -547,7 +574,7 @@
     font-size: 8.5pt;
     font-weight: bold;
     letter-spacing: 0.3px;
-    color: rgba(86, 142, 255, 0.95);
+    color: rgba(76, 127, 195, 0.95);
 }
 
 .quicksearch-ai-loading {
@@ -610,11 +637,11 @@
     max-width: 200px;
 }
 .quicksearch-ai-source-card:hover {
-    background-color: rgba(43, 100, 255, 0.08);
-    border-color: rgba(43, 100, 255, 0.14);
+    background-color: rgba(25, 83, 169, 0.14);
+    border-color: rgba(25, 83, 169, 0.22);
 }
 .quicksearch-ai-source-card-row { spacing: 10px; }
-.quicksearch-ai-source-card-icon { color: rgba(86, 142, 255, 0.95); }
+.quicksearch-ai-source-card-icon { color: rgba(76, 127, 195, 0.95); }
 .quicksearch-ai-source-card-texts { spacing: 2px; }
 .quicksearch-ai-source-card-title {
     font-size: 9pt;
@@ -654,7 +681,7 @@
 }
 .quicksearch-ai-sources-viewmore-label {
     font-size: 8pt;
-    color: rgba(86, 142, 255, 0.95);
+    color: rgba(76, 127, 195, 0.95);
 }
 
 .quicksearch-ai-composer-plus {
@@ -662,7 +689,7 @@
 }
 
 .quicksearch-hints {
-    padding: 6px 10px 2px 10px;
+    padding: 8px 12px 2px 12px;
     font-size: 8pt;
     color: rgba(255, 255, 255, 0.40);
 }
