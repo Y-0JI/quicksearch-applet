@@ -1201,7 +1201,41 @@ class QuickSearchApplet extends Applet.IconApplet {
         const st = this._uiState;
         const isAi = this._mode === 'ai';
         const hasConv = this._hasConversation();
+        const idleCenter = (!isAi && st === 'idle-search') || (isAi && st === 'ai-input');
         try { ov._entryRow.visible = true; } catch (e) {}
+        try {
+            if (idleCenter) {
+                ov.contentLayout.add_style_class_name("quicksearch-content-idle");
+                ov.add_style_class_name("quicksearch-dialog-idle");
+            } else {
+                ov.contentLayout.remove_style_class_name("quicksearch-content-idle");
+                ov.remove_style_class_name("quicksearch-dialog-idle");
+            }
+        } catch (e) {}
+        try {
+            const targetY = idleCenter ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START;
+            if (ov.contentLayout) { ov.contentLayout.set_y_align(targetY); ov.contentLayout.set_y_expand(idleCenter); }
+            if (ov.dialogLayout) { ov.dialogLayout.set_y_align(targetY); ov.dialogLayout.set_y_expand(idleCenter); }
+            const wrapper = ov.dialogLayout ? ov.dialogLayout.get_parent() : null;
+            const bin = ov._backgroundBin;
+            if (wrapper && bin) {
+                const sh = global.screen_height || 1080;
+                const sw = global.screen_width || 1366;
+                const pw = 739;
+                if (idleCenter) {
+                    const wrapperH = 80;
+                    const py = Math.round((sh - wrapperH) / 2);
+                    const px = Math.round((sw - pw) / 2);
+                    try { wrapper.set_position(px, py); } catch (e) {}
+                    try { wrapper.set_size(pw, wrapperH); } catch (e) {}
+                } else {
+                    const px = Math.round((sw - pw) / 2);
+                    const py = 96;
+                    try { wrapper.set_position(px, py); } catch (e) {}
+                    try { wrapper.set_size(pw, -1); } catch (e) {}
+                }
+            }
+        } catch (e) {}
         try { this._setFilterRowVisible(!isAi && (st === 'searching' || st === 'search-results')); } catch (e) {}
         if (isAi) {
             try { if (ov._autoScroll) ov._autoScroll.visible = false; } catch (e) {}

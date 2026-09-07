@@ -12,6 +12,15 @@
     padding: 0;
     min-height: 0;
 }
+.quicksearch-content-idle {
+    padding: 0;
+}
+.quicksearch-dialog-idle {
+    padding: 0;
+}
+.quicksearch-dialog.quicksearch-dialog-idle {
+    padding: 0;
+}
 
 /* Surface + border matched to advance_ui.png: pill rgb(21,28,36) with a ~11%
    light border; the input row is roomier (ref content block is ~78px tall). */
