@@ -3233,9 +3233,6 @@ class QuickSearchApplet extends Applet.IconApplet {
         const display = this._filterResults(this._sortedResults);
         const mainRows = [];
         if (display.length > 0) {
-            // results own the panel — dismiss any leftover suggestion popup so the two
-            // surfaces never stack (empty-state rule + layout stability)
-            try { if (this._overlay && this._overlay._autoScroll) this._overlay._autoScroll.visible = false; } catch (e) {}
             const best = display[0];
             mainRows.push({ header: _("Best Match"), bestHeader: true });
             mainRows.push({ result: best, bestMatch: true });
@@ -3352,7 +3349,16 @@ class QuickSearchApplet extends Applet.IconApplet {
 
         let bestMatch = false;
         try { bestMatch = !!(item && item.bestMatch); } catch (e) { bestMatch = false; }
-        void 'quicksearch-type'; void 'quicksearch-row-chevron'; void 'quicksearch-best-match-hint'; void '_("Enter")';
+        const typeKey = r && r.type ? String(r.type) : "";
+        const isFolder = typeKey === "file" && String(r.icon || "") === "folder-symbolic";
+        const typeMap = { app: "App", file: isFolder ? "Folder" : "File", web: "Web", calc: "Calc", url: "Link" };
+        if (typeKey && typeMap[typeKey] && !isRecent) {
+            try {
+                const typeLbl = new St.Label({ text: typeMap[typeKey], style_class: "quicksearch-type" });
+                content.add(typeLbl, { x_align: St.Align.END });
+            } catch (e) {}
+        }
+        void 'quicksearch-row-chevron'; void 'quicksearch-best-match-hint'; void '_("Enter")';
 
         const button = new St.Button({
             style_class: "quicksearch-row",
