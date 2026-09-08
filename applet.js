@@ -2559,11 +2559,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._overlay._startCaretBlink();
         this._overlay.setText("");
         if (this._overlay._composerEntry) try { this._overlay._composerEntry.set_text(''); } catch (e) {}
-        this._syncModeUI();
         this._clearAIState();
         try { while (this._overlay.resultsBox.get_n_children() > 0) this._overlay.resultsBox.remove_child(this._overlay.resultsBox.get_child_at_index(0)); } catch (e) {}
-        // REBUILD: the AI conversation surface starts hidden on every open — it is only
-        // re-rendered from the preserved conversation when the user switches to AI mode
         try { while (this._overlay.aiResultsBox && this._overlay.aiResultsBox.get_n_children() > 0) this._overlay.aiResultsBox.remove_child(this._overlay.aiResultsBox.get_child_at_index(0)); } catch (e) {}
         try { if (this._overlay._aiScroll) this._overlay._aiScroll.visible = false; } catch (e) {}
         this._mainRows = [];
@@ -2571,7 +2568,12 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._rows = [];
         this._selIdx = -1;
         if (this._overlay._autoScroll) try { this._overlay._autoScroll.visible = false; } catch (e) {}
+        this._syncModeUI();
         this.renderResults([]);
+        try {
+            const giGLib2 = (typeof imports !== 'undefined' && imports.gi && imports.gi.GLib) ? imports.gi.GLib : null;
+            if (giGLib2 && giGLib2.idle_add) giGLib2.idle_add(giGLib2.PRIORITY_DEFAULT_IDLE || 200, () => { try { this._syncShell(); } catch (e2) {} return giGLib2.SOURCE_REMOVE; });
+        } catch (e) {}
     }
 
     close() {
