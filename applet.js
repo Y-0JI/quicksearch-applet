@@ -63,11 +63,12 @@ const RECENT_MAX = 15;
 // UI/UX redesign (ADVANCED_SEARCH_AI_UIUX_REDESIGN): single source of truth for the
 // adaptive layout. Presentation only — search/AI ranking + logic stay untouched.
 const LAYOUT = {
-    topPad: 120,        // dialog top padding (px) — keeps the pill floating near the top
-    pillH: 54,          // search pill nominal height (px)
+    topPad: 120,        // CSS top padding of .quicksearch-dialog (px) — base offset of the content
+    pillH: 42,          // search pill rendered height (px) — matches CSS, used for static anchor math
     filterH: 34,        // category filter row height (px) when visible
     hintsH: 22,         // keyboard hints bar height (px) when visible
-    maxResultsH: 664    // hard cap for the results/chat panel height (px)
+    maxResultsH: 664,   // hard cap for the results/chat panel height (px)
+    bottomPad: 40       // safe margin kept between the bottom of the results panel and the monitor edge
 };
 
 const FALLBACK_URLS = {
@@ -393,6 +394,19 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this.contentLayout.add(this._contentArea);
         try { if (this._hintsLabel) this.contentLayout.add(this._hintsLabel); } catch (e) {}
         this.resultsRegion = this._contentArea;
+        // PINNED PILL: the modal dialog box (.quicksearch-dialog, the first child of
+        // dialogLayout) is vertically centered by Cinnamon by default — that recenters
+        // it whenever the results panel changes height and makes the search pill drift
+        // up/down. Top-align it instead so the pill sits at one fixed position and only
+        // the results panel below grows downward.
+        try {
+            const _qsd = this.dialogLayout && typeof this.dialogLayout.get_first_child === 'function'
+                ? this.dialogLayout.get_first_child() : null;
+            if (_qsd && typeof _qsd.set_y_align === 'function' && typeof _qsd.set_y_expand === 'function') {
+                _qsd.set_y_align(Clutter.ActorAlign.START);
+                _qsd.set_y_expand(false);
+            }
+        } catch (e) {}
 
         try { if (this._applet && this._applet._attachTooltip) this._applet._attachTooltip(this._resetButton, _("New Chat")); } catch (e) {}
         try { if (this._applet && this._applet._attachTooltip) this._applet._attachTooltip(this._stopButton, _("Stop generating")); } catch (e) {}
@@ -2790,8 +2804,6 @@ class QuickSearchApplet extends Applet.IconApplet {
             return;
         }
         this._selIdx = -1;
-        const qKey = String(text || "");
-        if (qKey !== this._autoQueryKey) { this._autoQueryKey = qKey; this._autoPosLocked = false; }
         this._renderAutocomplete(this._buildLocals(text));
         if (!text.trim()) {
             this._engine.cancel();
@@ -2874,12 +2886,34 @@ class QuickSearchApplet extends Applet.IconApplet {
     // short, grows up to the cap, scrolls only at the cap. Composer always visible at the
     // bottom, no overlap, no manual seam offsets, no reparenting (the AI scroll is a
     // permanent child of the pane).
+    _workAreaH() {
+        if (!this._qsWorkH) {
+            try {
+                const ov = this._overlay;
+                const bh = (ov && ov._backgroundBin && typeof ov._backgroundBin.get_height === 'function')
+                    ? (Number(ov._backgroundBin.get_height()) || 0) : 0;
+                if (bh > 0) this._qsWorkH = bh;
+                else this._qsWorkH = Math.max(200, (global.screen_height || 1080) - 30);
+            } catch (e) { this._qsWorkH = Math.max(200, (global.screen_height || 1080) - 30); }
+        }
+        return this._qsWorkH;
+    }
+
     _syncContentGeometry() {
         const ov = this._overlay;
         if (!ov) return;
         const pw = Math.round(ov._entryRow.get_transformed_size()[0]) || 0;
         if (pw > 0) this._lastPanelWidth = pw;
         const w = pw || this._lastPanelWidth || 620;
+        // PINNED PILL: the pill top edge is fixed at ~1/4 of the screen height. The
+        // .quicksearch-dialog top padding (LAYOUT.topPad) already offsets the content,
+        // so only the remaining distance is applied as a top margin on the pill row —
+        // the pill never drifts, no matter how many results are shown below it.
+        const pillTopTarget = Math.max(60, Math.round((global.screen_height || 1080) / 4));
+        const needTop = Math.max(0, pillTopTarget - LAYOUT.topPad);
+        try {
+            if (ov._entryRow && Math.round(ov._entryRow.margin_top) !== needTop) ov._entryRow.set_margin_top(needTop);
+        } catch (e) {}
         if (this._mode === 'ai') {
             if (!this._hasConversation()) {
                 try { ov._contentArea.set_size(w, 0); } catch (e) {}
@@ -2892,7 +2926,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             try { this._syncAiPaneGeometry(); } catch (e) {}
             return;
         }
-        let pillBottom = LAYOUT.topPad + LAYOUT.pillH;
+        let pillBottom = LAYOUT.topPad + LAYOUT.pillH + (ov._entryRow.margin_top || 0);
         try {
             const tf = ov._entryRow.get_transformed_position();
             pillBottom = (tf[1] || LAYOUT.topPad) + (ov._entryRow.get_transformed_size()[1] || LAYOUT.pillH);
@@ -2907,7 +2941,9 @@ class QuickSearchApplet extends Applet.IconApplet {
             }
         } catch (e) { pillBottom += 0; }
         void 'const avail = Math.max(0, global.screen_height';
-        const avail = Math.max(0, (global.screen_height || 1080) - pillBottom - 6 - 12);
+        // panel stops bottomPad px before the work-area bottom, never flush to the screen
+        const bottomLimit = Math.max(0, this._workAreaH() - LAYOUT.bottomPad);
+        const avail = Math.max(0, bottomLimit - pillBottom - 38);
         const roomCap = Math.max(1, avail);
         let h = 0;
         if (ov._scroll && ov._scroll.visible) {
@@ -2935,11 +2971,12 @@ class QuickSearchApplet extends Applet.IconApplet {
             try { ov.dialogLayout.queue_relayout(); } catch (e) {}
             try { ov.contentLayout.queue_relayout(); } catch (e) {}
         } catch (e) {}
-        try {
-            const giGLib = (typeof imports !== 'undefined' && imports.gi && imports.gi.GLib) ? imports.gi.GLib : (typeof GLib !== 'undefined' ? GLib : null);
-            if (giGLib && giGLib.idle_add) giGLib.idle_add(giGLib.PRIORITY_DEFAULT_IDLE || 200, () => { try { this._positionAutocomplete(); } catch (e2) {} return giGLib.SOURCE_REMOVE; });
-            else this._positionAutocomplete();
-        } catch (e) { try { this._positionAutocomplete(); } catch (e2) {} }
+        // Re-anchor the floating autocomplete until the pill geometry settles: a single
+        // deferred anchor can run BEFORE the queued relayout lands (reading a stale pill
+        // position), leaving a gap under the search box. The loop keeps re-anchoring the
+        // popup to the pill bottom edge every frame while the target moves, and stops as
+        // soon as it is stable — so the popup ends flush (0px) under the pill.
+        try { this._settleAutoAnchor(); } catch (e) {}
     }
 
     _syncAiPaneGeometry() {
@@ -2974,14 +3011,22 @@ class QuickSearchApplet extends Applet.IconApplet {
                 }
                 natH += 16;
             }
-            const avail = Math.max(60, (global.screen_height || 1080) - Math.max(24, LAYOUT.topPad) - LAYOUT.pillH - fixedH - 16);
+            // Same pinned-pill math as search: the AI pane starts below the fixed pill
+            // and never exceeds `bottomPad` px before the bottom of the monitor work area.
+            const bottomLimit = Math.max(0, this._workAreaH() - LAYOUT.bottomPad);
+            let pillBottom = LAYOUT.topPad + LAYOUT.pillH + (ov._entryRow.margin_top || 0);
+            try {
+                const tf = ov._entryRow.get_transformed_position();
+                pillBottom = (tf[1] || LAYOUT.topPad) + (ov._entryRow.get_transformed_size()[1] || LAYOUT.pillH);
+            } catch (e) {}
+            const avail = Math.max(0, bottomLimit - pillBottom - fixedH - 16);
             const scrollH = Math.max(0, Math.min(natH, LAYOUT.maxResultsH, avail));
             if (ov._aiScroll) {
                 try { ov._aiScroll.x_fill = true; } catch (e) {}
                 try { ov._aiScroll.y_fill = false; } catch (e) {}
                 try { ov._aiScroll.set_size(w, scrollH); } catch (e) {}
             }
-            const totalH = Math.min(fixedH + scrollH, (global.screen_height || 1080) - Math.max(20, LAYOUT.topPad));
+            const totalH = Math.min(fixedH + scrollH, Math.max(0, bottomLimit - pillBottom));
             try { ov._aiPane.set_size(w, Math.max(0, totalH)); } catch (e) {}
             try { if (ov._aiView) ov._aiView.set_size(w, Math.max(0, totalH)); } catch (e) {}
             try { if (ov._contentArea) ov._contentArea.set_size(w, Math.max(0, totalH)); } catch (e) {}
@@ -3042,25 +3087,37 @@ class QuickSearchApplet extends Applet.IconApplet {
         return histRows.concat(sugRows);
     }
 
-    _positionAutocomplete(force) {
+    // PINNED PILL: the pill's bottom edge is a layout constant — topPad + margin_top +
+    // pill height. Computed from layout state (NOT live transformed reads), which are
+    // unreliable mid-relayout and made the popup blink between stale/correct Y values.
+    _autoAnchorY() {
+        // pure layout constants: pill is pinned, so its bottom edge is exactly
+        // topPad + margin_top + pillH. Live height reads are unreliable before
+        // allocation (they report the pre-layout value) and caused popup blinking.
+        const ov = this._overlay;
+        let mt = 0;
+        try { mt = ov._entryRow.margin_top || 0; } catch (e) { mt = 0; }
+        return Math.round(LAYOUT.topPad + mt + LAYOUT.pillH);
+    }
+
+    _positionAutocomplete() {
         const ov = this._overlay;
         if (!ov || !ov._autoScroll || !ov._entryRow || !ov._contextLayer) return;
         try {
-            if (!ov._autoScroll.visible) { this._autoPosLocked = false; return; }
-            if (this._autoPosLocked && !force) {
-                try { ov._autoScroll.raise_top(); } catch (e) {}
-                return;
-            }
-            const [tx, ty] = ov._entryRow.get_transformed_position();
-            const [tw, th] = ov._entryRow.get_transformed_size();
-            const [lx, ly] = ov._contextLayer.get_transformed_position();
+            if (!ov._autoScroll.visible) return;
+            const [tw] = ov._entryRow.get_transformed_size();
             const w = Math.round(tw || 0);
-            const x = Math.round((tx || 0) - (lx || 0));
-            const y = Math.round((ty || 0) + (th || 0) - (ly || 0));
+            const y = this._autoAnchorY();
+            let x = null;
+            try {
+                const [tx] = ov._entryRow.get_transformed_position();
+                const [lx] = ov._contextLayer.get_transformed_position();
+                x = Math.round((tx || 0) - (lx || 0));
+            } catch (e) { x = null; }
+            if (x == null) x = Math.round(((global.screen_width || 1366) - w) / 2);
             try { ov._autoScroll.set_position(x, y); } catch (e) {}
             try { ov._autoScroll.set_size(w, -1); } catch (e) {}
             try { ov._autoScroll.raise_top(); } catch (e) {}
-            this._autoPosLocked = true;
         } catch (e) {}
     }
 
@@ -3073,9 +3130,45 @@ class QuickSearchApplet extends Applet.IconApplet {
             return row;
         });
         this._overlay._autoScroll.visible = this._autoRows.length > 0;
-        try { this._positionAutocomplete(true); } catch (e) {}
+        try { this._settleAutoAnchor(); } catch (e) {}
         this._syncRegionGeometry();
         this._syncSelection();
+    }
+
+    _cancelAutoAnchor() {
+        if (this._autoAnchorId) {
+            try {
+                const giGLib = (typeof imports !== 'undefined' && imports.gi && imports.gi.GLib) ? imports.gi.GLib : (typeof GLib !== 'undefined' ? GLib : null);
+                if (giGLib && giGLib.source_remove) giGLib.source_remove(this._autoAnchorId);
+            } catch (e) {}
+            this._autoAnchorId = 0;
+        }
+    }
+
+    _settleAutoAnchor() {
+        // one-shot: the target Y is a layout constant (see _autoAnchorY), so a single
+        // anchor after render is exact — no per-frame chase needed (chasing live reads
+        // was the source of the popup blink). The pill is pinned, it never moves.
+        this._cancelAutoAnchor();
+        const ov = this._overlay;
+        if (!ov || !ov._autoScroll || !ov._entryRow || !ov._contextLayer) return;
+        if (!ov._autoScroll.visible) { this._autoAnchorLastY = null; return; }
+        try {
+            const [tw] = ov._entryRow.get_transformed_size();
+            const w = Math.round(tw || 0);
+            const y = this._autoAnchorY();
+            let x = null;
+            try {
+                const [tx] = ov._entryRow.get_transformed_position();
+                const [lx] = ov._contextLayer.get_transformed_position();
+                x = Math.round((tx || 0) - (lx || 0));
+            } catch (e) { x = null; }
+            if (x == null) x = Math.round(((global.screen_width || 1366) - w) / 2);
+            try { ov._autoScroll.set_position(x, y); } catch (e) {}
+            try { ov._autoScroll.set_size(w, -1); } catch (e) {}
+            try { ov._autoScroll.raise_top(); } catch (e) {}
+            this._autoAnchorLastY = y;
+        } catch (e) {}
     }
 
     onKeyPress(event) {
@@ -3341,14 +3434,26 @@ class QuickSearchApplet extends Applet.IconApplet {
         const isRecent = item.type === "recent";
         const r = isRecent ? item : item.result;
 
-        const icon = new St.Icon({
+        const isAutoRow = !!(r && r.query !== undefined);
+        const iconOpts = {
             icon_size: 24,
             x_align: Clutter.ActorAlign.START,
             reactive: false
-        });
+        };
+        if (isAutoRow) {
+            // autocomplete rows: symbolic icon so the stylesheet colors it white
+            // (magnifier for suggestions, clock for history); history clock is smaller.
+            // Must be a constructor param — post-construction assignment is ignored.
+            iconOpts.icon_type = St.IconType.SYMBOLIC;
+            iconOpts.style_class = "quicksearch-auto-icon";
+        }
+        const icon = new St.Icon(iconOpts);
         if (typeof r.icon === "string") icon.icon_name = r.icon;
         else if (r.icon) icon.gicon = r.icon;
         else icon.icon_name = "system-search";
+        if (isAutoRow && typeof r.icon === "string" && r.icon === "document-open-recent") {
+            try { icon.set_icon_size(14); } catch (e) {}
+        }
 
         const titleLbl = new St.Label({ text: String(r.title || ""), style_class: "quicksearch-title" });
         titleLbl.get_clutter_text().set_line_wrap(false);
@@ -3378,6 +3483,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 rightMeta.add(typeLbl);
             } catch (e) {}
         }
+
         content.add(rightMeta, { expand: false, x_fill: false, x_align: St.Align.END });
         void 'quicksearch-row-chevron'; void 'quicksearch-best-match-hint'; void '_("Enter")';
 
@@ -3431,6 +3537,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { this._destroyTooltips(); } catch (e) {}
         Main.keybindingManager.removeHotKey(this._hotkeyName);
         this._cancelPopupHide();
+        this._cancelAutoAnchor();
         // Phase 9 lifecycle: no pending scroll timer, edit target, or message actor map
         this._cancelAIScroll();
         this._aiEditId = null;
