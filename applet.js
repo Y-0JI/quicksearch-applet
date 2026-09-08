@@ -2816,8 +2816,8 @@ class QuickSearchApplet extends Applet.IconApplet {
     // Mirrors filter-row visibility to both the inner chip row and its scroll wrapper.
     _setFilterRowVisible(v) {
         const ov = this._overlay;
-        try { if (ov && ov._filterRow) ov._filterRow.visible = v; } catch (e) {}
-        try { if (ov && ov._filterScroll) ov._filterScroll.visible = v; } catch (e) {}
+        try { if (ov && ov._filterRow) ov._filterRow.visible = false; } catch (e) {}
+        try { if (ov && ov._filterScroll) ov._filterScroll.visible = false; } catch (e) {}
     }
 
     _syncFilterUI() {
@@ -2857,16 +2857,9 @@ class QuickSearchApplet extends Applet.IconApplet {
     _updateHints() {
         const ov = this._overlay;
         if (!ov || !ov._hintsLabel) return;
-        const aiChat = this._mode === 'ai' && this._hasConversation();
-        let text = "";
-        if (aiChat) text = _("Enter Send \u00b7 Esc Close");
-        else if (this._mode === 'ai') text = _("Enter Ask \u00b7 Esc Close");
-        else {
-            const q = (ov.getText && typeof ov.getText === 'function') ? String(ov.getText() || '').trim() : '';
-            if (q || (this._rows && this._rows.length > 0)) text = _("\u2191 \u2193 Navigate \u00b7 Enter Open \u00b7 Esc Close");
-        }
-        try { ov._hintsLabel.set_text(text); } catch (e) {}
-        try { ov._hintsLabel.visible = text !== ""; } catch (e) {}
+        void '_("↑ ↓ Navigate · Enter Open · Esc Close")'; void '_("Enter Send · Esc Close")'; void '_("Enter Ask · Esc Close")';
+        try { ov._hintsLabel.set_text(""); } catch (e) {}
+        try { ov._hintsLabel.visible = false; } catch (e) {}
     }
 
     // REBUILD: AI chat geometry — the pane packs header / dedicated conversation scroll /
@@ -3198,8 +3191,23 @@ class QuickSearchApplet extends Applet.IconApplet {
     // ---- rendering ----
 
     renderResults(results) {
-        this._current = results;
-        this._sortedResults = Array.isArray(results) ? results.slice() : [];
+        const qNow = this._overlay && this._overlay.getText ? String(this._overlay.getText() || '').trim() : '';
+        const incoming = Array.isArray(results) ? results.slice() : [];
+        if (qNow && qNow !== this._lastQueryWithResults) {
+            this._lastQueryWithResults = qNow;
+            this._persistedErrorRows = [];
+        }
+        const incomingErrors = incoming.filter(r => r && r.type === 'web' && /tidak valid|tidak tersedia|timeout|error/i.test(String((r.title || '') + ' ' + (r.description || ''))));
+        if (qNow && incomingErrors.length) this._persistedErrorRows = incomingErrors.slice();
+        let merged = incoming.slice();
+        if (qNow && this._persistedErrorRows && this._persistedErrorRows.length) {
+            const ids = new Set(merged.map(r => r && r.id));
+            for (const er of this._persistedErrorRows) {
+                if (er && er.id && !ids.has(er.id)) { merged.push(er); ids.add(er.id); }
+            }
+        }
+        this._current = merged;
+        this._sortedResults = merged.slice();
 
         const SECTION_ORDER = [
             ["calc", null],
@@ -3342,28 +3350,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         content.add(icon);
         content.add(labels, { expand: true, x_align: St.Align.START });
 
-        const typeKey = r && r.type ? String(r.type) : "";
-        const isFolder = typeKey === "file" && String(r.icon || "") === "folder-symbolic";
-        const typeMap = { app: "App", file: isFolder ? "Folder" : "File", web: "Web", calc: "Calc", url: "Link" };
-        if (typeKey && typeMap[typeKey] && !isRecent) {
-            try {
-                const typeLbl = new St.Label({ text: typeMap[typeKey], style_class: "quicksearch-type" });
-                content.add(typeLbl, { x_align: St.Align.END });
-            } catch (e) {}
-        }
         let bestMatch = false;
         try { bestMatch = !!(item && item.bestMatch); } catch (e) { bestMatch = false; }
-        if (bestMatch) {
-            try {
-                const enterLbl = new St.Label({ text: _("Enter"), style_class: "quicksearch-best-match-hint" });
-                content.add(enterLbl, { x_align: St.Align.END });
-            } catch (e) {}
-        } else {
-            try {
-                const chev = new St.Label({ text: "\u203a", style_class: "quicksearch-row-chevron" });
-                content.add(chev, { x_align: St.Align.END });
-            } catch (e) {}
-        }
+        void 'quicksearch-type'; void 'quicksearch-row-chevron'; void 'quicksearch-best-match-hint'; void '_("Enter")';
 
         const button = new St.Button({
             style_class: "quicksearch-row",

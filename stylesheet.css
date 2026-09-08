@@ -28,19 +28,20 @@
 /* Surface + border matched to advance_ui.png: pill rgb(21,28,36) with a ~11%
    light border; the input row is roomier (ref content block is ~78px tall). */
 .quicksearch-entry-row {
-    spacing: 8px;
-    padding: 8px 10px 8px 10px;
-    margin-bottom: 10px;
+    spacing: 6px;
+    padding: 6px 8px 6px 8px;
+    margin-bottom: 6px;
     background-color: rgba(22, 28, 36, 0.98);
     border: 1px solid rgba(255, 255, 255, 0.10);
-    border-radius: 22px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38);
+    border-radius: 16px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.36);
+    max-width: 560px;
 }
 
 .quicksearch-entry {
-    padding: 7px 8px;
-    font-size: 11pt;
-    width: 380px;
+    padding: 5px 6px;
+    font-size: 10pt;
+    width: 280px;
     color: rgba(255, 255, 255, 0.95);
     background-color: rgba(0, 0, 0, 0);
     border: none;
@@ -52,25 +53,26 @@
 }
 
 .quicksearch-results {
-    padding: 8px 6px 8px 6px;
+    padding: 6px 5px 6px 5px;
     background-color: rgba(19, 26, 32, 0.98);
     border: 1px solid rgba(255, 255, 255, 0.09);
-    border-radius: 16px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
+    border-radius: 12px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.34);
+    max-width: 560px;
 }
 
 .quicksearch-section-header {
-    color: rgba(255, 255, 255, 0.32);
-    font-size: 7.5pt;
+    color: rgba(255, 255, 255, 0.30);
+    font-size: 7pt;
     font-weight: 600;
     letter-spacing: 0.4px;
     text-transform: uppercase;
-    padding: 12px 12px 4px 12px;
+    padding: 8px 10px 2px 10px;
 }
 
 .quicksearch-row {
-    padding: 7px 10px;
-    border-radius: 10px;
+    padding: 5px 8px;
+    border-radius: 8px;
     border: 1px solid transparent;
 }
 
@@ -154,7 +156,7 @@
     background-color: rgba(0, 0, 0, 0.20);
     border: 1px solid rgba(255, 255, 255, 0.05);
 }
-.quicksearch-mode-button { padding: 5px 12px; border-radius: 999px; border: none; background: none; }
+.quicksearch-mode-button { padding: 4px 10px; border-radius: 999px; border: none; background: none; }
 .quicksearch-mode-content { spacing: 5px; }
 .quicksearch-mode-icon { color: rgba(226, 231, 240, 0.68); }
 .quicksearch-mode-label { font-size: 8.5pt; font-weight: 600; color: rgba(226, 231, 240, 0.74); }
@@ -505,7 +507,7 @@
     color: rgba(255, 255, 255, 0.95);
 }
 .quicksearch-search-button {
-    padding: 6px 14px;
+    padding: 4px 10px;
     border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     background-color: rgba(255, 255, 255, 0.08);
@@ -573,9 +575,9 @@
     text-transform: uppercase;
 }
 .quicksearch-best-match {
-    background-color: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 10px;
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 8px;
 }
 .quicksearch-best-match:hover {
     background-color: rgba(255, 255, 255, 0.09);
