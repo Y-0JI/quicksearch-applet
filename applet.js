@@ -2924,7 +2924,6 @@ class QuickSearchApplet extends Applet.IconApplet {
         } else {
             try { ov._scroll.set_size(w, 0); } catch (e) {}
         }
-        try { this._positionAutocomplete(); } catch (e) {}
         try { ov._contentArea.set_size(w, h); } catch (e) {}
         try { ov.resultsRegion.set_size(w, h); } catch (e) {}
         try {
@@ -2932,7 +2931,13 @@ class QuickSearchApplet extends Applet.IconApplet {
             try { ov.dialogLayout.set_height(dlgH2); } catch (e) {}
             try { ov.dialogLayout.set_size(w, dlgH2); } catch (e) {}
             try { ov.dialogLayout.queue_relayout(); } catch (e) {}
+            try { ov.contentLayout.queue_relayout(); } catch (e) {}
         } catch (e) {}
+        try {
+            const giGLib = (typeof imports !== 'undefined' && imports.gi && imports.gi.GLib) ? imports.gi.GLib : (typeof GLib !== 'undefined' ? GLib : null);
+            if (giGLib && giGLib.idle_add) giGLib.idle_add(giGLib.PRIORITY_DEFAULT_IDLE || 200, () => { try { this._positionAutocomplete(); } catch (e2) {} return giGLib.SOURCE_REMOVE; });
+            else this._positionAutocomplete();
+        } catch (e) { try { this._positionAutocomplete(); } catch (e2) {} }
     }
 
     _syncAiPaneGeometry() {
@@ -3037,19 +3042,15 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     _positionAutocomplete() {
         const ov = this._overlay;
-        if (!ov || !ov._autoScroll || !ov._entryRow) return;
+        if (!ov || !ov._autoScroll || !ov._entryRow || !ov._contextLayer) return;
         try {
             if (!ov._autoScroll.visible) return;
             const [tx, ty] = ov._entryRow.get_transformed_position();
             const [tw, th] = ov._entryRow.get_transformed_size();
-            let lx = 0, ly = 0;
-            try {
-                const L = ov._contextLayer;
-                if (L && L.get_parent()) { const p = L.get_transformed_position(); lx = p[0] || 0; ly = p[1] || 0; }
-            } catch (e) {}
+            const [lx, ly] = ov._contextLayer.get_transformed_position();
             const w = Math.round(tw || 0);
-            const x = Math.round((tx || 0) - lx);
-            const y = Math.round((ty || 0) + (th || 0) - ly);
+            const x = Math.round((tx || 0) - (lx || 0));
+            const y = Math.round((ty || 0) + (th || 0) - (ly || 0));
             try { ov._autoScroll.set_position(x, y); } catch (e) {}
             try { ov._autoScroll.set_size(w, -1); } catch (e) {}
             try { ov._autoScroll.raise_top(); } catch (e) {}
