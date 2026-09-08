@@ -3040,16 +3040,42 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!ov || !ov._autoScroll || !ov._entryRow) return;
         try {
             if (!ov._autoScroll.visible) return;
-            const [ex, ey] = ov._entryRow.get_transformed_position();
-            const [ew, eh] = ov._entryRow.get_transformed_size();
-            let lx = 0, ly = 0;
+            const parent = ov._entryRow.get_parent ? ov._entryRow.get_parent() : null;
+            let ex = 0, ey = 0, ew = 0, eh = 0;
             try {
-                const L = ov._contextLayer;
-                if (L && L.get_parent()) { const p = L.get_transformed_position(); lx = p[0] || 0; ly = p[1] || 0; }
+                if (parent && parent.get_allocation_box) {
+                    const pb = parent.get_allocation_box();
+                    const eb = ov._entryRow.get_allocation_box ? ov._entryRow.get_allocation_box() : null;
+                    if (eb) { ex = eb.x1 - pb.x1; ey = eb.y1 - pb.y1; ew = eb.x2 - eb.x1; eh = eb.y2 - eb.y1; }
+                }
             } catch (e) {}
+            if (!ew) {
+                try {
+                    const [tx, ty] = ov._entryRow.get_transformed_position();
+                    const [tw, th] = ov._entryRow.get_transformed_size();
+                    let lx = 0, ly = 0;
+                    try {
+                        const L = ov._contextLayer;
+                        if (L && L.get_parent()) { const p = L.get_transformed_position(); lx = p[0] || 0; ly = p[1] || 0; }
+                    } catch (e2) {}
+                    ex = (tx || 0) - lx; ey = (ty || 0) - ly; ew = tw || 0; eh = th || 0;
+                } catch (e2) {}
+            } else {
+                try {
+                    const L = ov._contextLayer;
+                    const LP = L && L.get_parent ? L.get_parent() : null;
+                    if (L && LP && parent && LP === parent) { ex = ex; ey = ey; }
+                    else if (L && parent) {
+                        const [tpx, tpy] = parent.get_transformed_position();
+                        const [tlx, tly] = L.get_transformed_position();
+                        ex = Math.round(ex + (tpx || 0) - (tlx || 0));
+                        ey = Math.round(ey + (tpy || 0) - (tly || 0));
+                    }
+                } catch (e2) {}
+            }
             const w = Math.round(ew || 0);
-            const x = Math.round((ex || 0) - lx);
-            const y = Math.round((ey || 0) + (eh || 0) + 1 - ly);
+            const x = Math.round(ex || 0);
+            const y = Math.round((ey || 0) + (eh || 0));
             try { ov._autoScroll.set_position(x, y); } catch (e) {}
             try { ov._autoScroll.set_size(w, -1); } catch (e) {}
             try { ov._autoScroll.raise_top(); } catch (e) {}
