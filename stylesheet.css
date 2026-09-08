@@ -3,9 +3,12 @@
     background: none;
     border: none;
     border-radius: 0;
-    padding: 120px 0 0 0;
+    padding: 0;
     box-shadow: none;
     color: #f2f3f5;
+}
+.quicksearch-dialog .dialog {
+    padding: 0;
 }
 
 .quicksearch-content {

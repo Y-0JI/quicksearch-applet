@@ -1213,22 +1213,22 @@ class QuickSearchApplet extends Applet.IconApplet {
             }
         } catch (e) {}
         try {
-            const targetY = idleCenter ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START;
-            if (ov.contentLayout) { ov.contentLayout.set_y_align(targetY); ov.contentLayout.set_y_expand(idleCenter); }
-            if (ov.dialogLayout) { ov.dialogLayout.set_y_align(targetY); ov.dialogLayout.set_y_expand(idleCenter); }
-            const wrapper = ov.dialogLayout ? ov.dialogLayout.get_parent() : null;
-            const bin = ov._backgroundBin;
-            if (wrapper && bin) {
-                const sw = global.screen_width || 1366;
-                const sh = global.screen_height || 1080;
-                const pw = 739;
-                const px = Math.round((sw - pw) / 2);
-                const py = idleCenter ? Math.round(sh / 2 - 80) : 96;
-                const h = idleCenter ? 160 : -1;
-                try { wrapper.set_position(px, py); } catch (e) {}
-                try { wrapper.set_size(pw, h); } catch (e) {}
-                try { ov.dialogLayout.set_height(h); } catch (e) {}
-            }
+            const sh = global.screen_height || 1080;
+            const sw = global.screen_width || 1366;
+            const pw = 739;
+            const px = Math.round((sw - pw) / 2);
+            const py = idleCenter ? Math.round(sh / 2 - 40) : 96;
+            const h = idleCenter ? 100 : -1;
+            if (ov.dialogLayout) { try { ov.dialogLayout.set_height(h); } catch (e) {} }
+            if (ov.contentLayout) { try { ov.contentLayout.set_y_align(idleCenter ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); } catch (e) {} try { ov.contentLayout.set_y_expand(idleCenter); } catch (e) {} }
+            try {
+                const wrapper = ov.dialogLayout ? ov.dialogLayout.get_parent() : null;
+                const bin = ov._backgroundBin;
+                if (wrapper && bin) {
+                    try { wrapper.set_position(px, py); } catch (e) {}
+                    try { wrapper.set_size(pw, h); } catch (e) {}
+                }
+            } catch (e) {}
         } catch (e) {}
         try { this._setFilterRowVisible(!isAi && (st === 'searching' || st === 'search-results')); } catch (e) {}
         if (isAi) {
@@ -2497,10 +2497,10 @@ class QuickSearchApplet extends Applet.IconApplet {
                     const isIdle = (! (this._mode === 'ai') && st === 'idle-search') || (this._mode === 'ai' && st === 'ai-input');
                     const px = Math.round((sw - pw) / 2);
                     const sH = global.screen_height || sh;
-                    const pyIdle = Math.round(sH / 2 - 60);
+                    const pyIdle = Math.round(sH / 2 - 40);
                     const pyTop = 96;
                     const curPy = isIdle ? pyIdle : pyTop;
-                    const curH = isIdle ? 160 : -1;
+                    const curH = isIdle ? 100 : -1;
                     try { this._overlay.dialogLayout.set_height(curH); } catch (e) {}
                     try { this._overlay.dialogLayout.set_y_align(isIdle ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); } catch (e) {}
                     try { this._overlay.contentLayout.set_y_align(isIdle ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); } catch (e) {}
