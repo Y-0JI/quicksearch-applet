@@ -19,10 +19,10 @@
     padding: 0;
 }
 .quicksearch-dialog-idle {
-    padding: 0;
+    padding: 120px 0 0 0;
 }
 .quicksearch-dialog.quicksearch-dialog-idle {
-    padding: 0;
+    padding: 120px 0 0 0;
 }
 
 /* Surface + border matched to advance_ui.png: pill rgb(21,28,36) with a ~11%

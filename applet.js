@@ -1213,27 +1213,19 @@ class QuickSearchApplet extends Applet.IconApplet {
             }
         } catch (e) {}
         try {
-            const bin = ov._backgroundBin;
-            let bh = global.screen_height || 1080;
-            try {
-                const box = bin.get_allocation_box ? bin.get_allocation_box() : null;
-                if (box) bh = Math.round((box.y2 - box.y1) || bh);
-            } catch (e2) {}
-            const sw = global.screen_width || 1366;
-            const pw = 739;
-            const px = Math.round((sw - pw) / 2);
-            const pillH = 56;
-            const py = idleCenter ? Math.round((bh - pillH) / 2) : 96;
-            const h = idleCenter ? 100 : -1;
-            if (ov.dialogLayout) { try { ov.dialogLayout.set_height(h); } catch (e) {} }
-            if (ov.contentLayout) { try { ov.contentLayout.set_y_align(idleCenter ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); } catch (e) {} try { ov.contentLayout.set_y_expand(idleCenter); } catch (e) {} }
-            try {
-                const wrapper = ov.dialogLayout ? ov.dialogLayout.get_parent() : null;
-                if (wrapper && bin) {
-                    try { wrapper.set_position(px, py); } catch (e) {}
-                    try { wrapper.set_size(pw, h); } catch (e) {}
-                }
-            } catch (e3) {}
+            if (ov.dialogLayout) { try { ov.dialogLayout.set_height(-1); } catch (e) {} }
+            if (ov.contentLayout) {
+                try { ov.contentLayout.set_y_align(idleCenter ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); } catch (e) {}
+                try { ov.contentLayout.set_y_expand(true); } catch (e) {}
+            }
+            if (ov._entryRow) {
+                try { ov._entryRow.set_x_align(Clutter.ActorAlign.CENTER); } catch (e) {}
+                try { ov._entryRow.set_y_align(idleCenter ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); } catch (e) {}
+                try { ov._entryRow.set_y_expand(idleCenter); } catch (e) {}
+            }
+            if (ov._contentArea) {
+                try { ov._contentArea.set_y_expand(!idleCenter); } catch (e) {}
+            }
         } catch (e) {}
         try { this._setFilterRowVisible(!isAi && (st === 'searching' || st === 'search-results')); } catch (e) {}
         if (isAi) {
@@ -2491,51 +2483,20 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) {}
         try {
             const dlg = this._overlay.dialogLayout;
-            const wrapper = dlg ? dlg.get_parent() : null;
             const bin = this._overlay._backgroundBin;
-            if (wrapper && bin) {
-                const sw = global.screen_width || 1366;
-                const pw = 739;
-                const sh = global.screen_height || 1080;
+            if (dlg && bin) {
                 const doPos = () => {
                     const st = this._uiState;
                     const isIdle = (! (this._mode === 'ai') && st === 'idle-search') || (this._mode === 'ai' && st === 'ai-input');
-                    const px = Math.round((sw - pw) / 2);
-                    let bh2 = global.screen_height || sh;
-                    try {
-                        const box2 = bin.get_allocation_box ? bin.get_allocation_box() : null;
-                        if (box2) bh2 = Math.round((box2.y2 - box2.y1) || bh2);
-                    } catch (e2) {}
-                    const pyIdle = Math.round((bh2 - 56) / 2);
-                    const pyTop = 96;
-                    const curPy = isIdle ? pyIdle : pyTop;
-                    const curH = isIdle ? 100 : -1;
-                    try { this._overlay.dialogLayout.set_height(curH); } catch (e) {}
-                    try { this._overlay.dialogLayout.set_y_align(isIdle ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); } catch (e) {}
-                    try { this._overlay.contentLayout.set_y_align(isIdle ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); } catch (e) {}
-                    try { this._overlay.dialogLayout.set_y_expand(isIdle); } catch (e) {}
-                    try { this._overlay.contentLayout.set_y_expand(isIdle); } catch (e) {}
+                    try { this._overlay.dialogLayout.set_height(-1); } catch (e) {}
                     try {
                         if (isIdle) { this._overlay.contentLayout.add_style_class_name("quicksearch-content-idle"); this._overlay.add_style_class_name("quicksearch-dialog-idle"); }
                         else { try { this._overlay.contentLayout.remove_style_class_name("quicksearch-content-idle"); } catch (e2) {} try { this._overlay.remove_style_class_name("quicksearch-dialog-idle"); } catch (e2) {} }
                     } catch (e) {}
-                    try { bin.set_translation(0, 0, 0); } catch (e) {}
-                    try { wrapper.set_layout_manager(new Clutter.FixedLayout()); } catch (e) {}
-                    try { dlg.set_layout_manager(new Clutter.FixedLayout()); } catch (e) {}
-                    try { dlg.set_position(0, 0); } catch (e) {}
-                    try { dlg.set_size(pw, -1); } catch (e) {}
-                    try { bin.set_translation(0, 0, 0); } catch (e) {}
-                    try { wrapper.set_position(px, curPy); } catch (e) {}
-                    try { wrapper.set_size(pw, curH); } catch (e) {}
-                    try {
-                        const content = this._overlay.contentLayout;
-                        if (content) {
-                            try { content.set_position(0, 0); } catch (e) {}
-                            try { content.set_size(pw, -1); } catch (e) {}
-                        }
-                    } catch (e) {}
+                    try { this._overlay.contentLayout.set_y_align(isIdle ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); } catch (e) {}
+                    try { this._overlay.contentLayout.set_y_expand(true); } catch (e) {}
+                    try { if (this._overlay._entryRow) { this._overlay._entryRow.set_x_align(Clutter.ActorAlign.CENTER); this._overlay._entryRow.set_y_align(isIdle ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); this._overlay._entryRow.set_y_expand(isIdle); } } catch (e) {}
                     try { bin.queue_relayout(); } catch (e) {}
-                    try { wrapper.queue_relayout(); } catch (e) {}
                     try { dlg.queue_relayout(); } catch (e) {}
                     try { if (this._overlay.contentLayout) this._overlay.contentLayout.queue_relayout(); } catch (e) {}
                 };
