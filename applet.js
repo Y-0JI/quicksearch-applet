@@ -3049,7 +3049,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             } catch (e) {}
             const w = Math.round(ew || 0);
             const x = Math.round((ex || 0) - lx);
-            const y = Math.round((ey || 0) + (eh || 0) + 6 - ly);
+            const y = Math.round((ey || 0) + (eh || 0) + 1 - ly);
             try { ov._autoScroll.set_position(x, y); } catch (e) {}
             try { ov._autoScroll.set_size(w, -1); } catch (e) {}
             try { ov._autoScroll.raise_top(); } catch (e) {}
@@ -3375,7 +3375,9 @@ class QuickSearchApplet extends Applet.IconApplet {
 
         const button = new St.Button({
             style_class: "quicksearch-row",
-            x_align: St.Align.START,
+            x_align: St.Align.MIDDLE,
+            x_expand: true,
+            x_fill: true,
             child: content
         });
         if (bestMatch) {
