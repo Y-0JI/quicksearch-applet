@@ -1213,22 +1213,27 @@ class QuickSearchApplet extends Applet.IconApplet {
             }
         } catch (e) {}
         try {
-            const sh = global.screen_height || 1080;
+            const bin = ov._backgroundBin;
+            let bh = global.screen_height || 1080;
+            try {
+                const box = bin.get_allocation_box ? bin.get_allocation_box() : null;
+                if (box) bh = Math.round((box.y2 - box.y1) || bh);
+            } catch (e2) {}
             const sw = global.screen_width || 1366;
             const pw = 739;
             const px = Math.round((sw - pw) / 2);
-            const py = idleCenter ? Math.round(sh / 2 - 40) : 96;
+            const pillH = 56;
+            const py = idleCenter ? Math.round((bh - pillH) / 2) : 96;
             const h = idleCenter ? 100 : -1;
             if (ov.dialogLayout) { try { ov.dialogLayout.set_height(h); } catch (e) {} }
             if (ov.contentLayout) { try { ov.contentLayout.set_y_align(idleCenter ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START); } catch (e) {} try { ov.contentLayout.set_y_expand(idleCenter); } catch (e) {} }
             try {
                 const wrapper = ov.dialogLayout ? ov.dialogLayout.get_parent() : null;
-                const bin = ov._backgroundBin;
                 if (wrapper && bin) {
                     try { wrapper.set_position(px, py); } catch (e) {}
                     try { wrapper.set_size(pw, h); } catch (e) {}
                 }
-            } catch (e) {}
+            } catch (e3) {}
         } catch (e) {}
         try { this._setFilterRowVisible(!isAi && (st === 'searching' || st === 'search-results')); } catch (e) {}
         if (isAi) {
@@ -2496,8 +2501,12 @@ class QuickSearchApplet extends Applet.IconApplet {
                     const st = this._uiState;
                     const isIdle = (! (this._mode === 'ai') && st === 'idle-search') || (this._mode === 'ai' && st === 'ai-input');
                     const px = Math.round((sw - pw) / 2);
-                    const sH = global.screen_height || sh;
-                    const pyIdle = Math.round(sH / 2 - 40);
+                    let bh2 = global.screen_height || sh;
+                    try {
+                        const box2 = bin.get_allocation_box ? bin.get_allocation_box() : null;
+                        if (box2) bh2 = Math.round((box2.y2 - box2.y1) || bh2);
+                    } catch (e2) {}
+                    const pyIdle = Math.round((bh2 - 56) / 2);
                     const pyTop = 96;
                     const curPy = isIdle ? pyIdle : pyTop;
                     const curH = isIdle ? 100 : -1;
