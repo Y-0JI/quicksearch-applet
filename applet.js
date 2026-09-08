@@ -2790,6 +2790,8 @@ class QuickSearchApplet extends Applet.IconApplet {
             return;
         }
         this._selIdx = -1;
+        const qKey = String(text || "");
+        if (qKey !== this._autoQueryKey) { this._autoQueryKey = qKey; this._autoPosLocked = false; }
         this._renderAutocomplete(this._buildLocals(text));
         if (!text.trim()) {
             this._engine.cancel();
@@ -3040,11 +3042,15 @@ class QuickSearchApplet extends Applet.IconApplet {
         return histRows.concat(sugRows);
     }
 
-    _positionAutocomplete() {
+    _positionAutocomplete(force) {
         const ov = this._overlay;
         if (!ov || !ov._autoScroll || !ov._entryRow || !ov._contextLayer) return;
         try {
-            if (!ov._autoScroll.visible) return;
+            if (!ov._autoScroll.visible) { this._autoPosLocked = false; return; }
+            if (this._autoPosLocked && !force) {
+                try { ov._autoScroll.raise_top(); } catch (e) {}
+                return;
+            }
             const [tx, ty] = ov._entryRow.get_transformed_position();
             const [tw, th] = ov._entryRow.get_transformed_size();
             const [lx, ly] = ov._contextLayer.get_transformed_position();
@@ -3054,6 +3060,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             try { ov._autoScroll.set_position(x, y); } catch (e) {}
             try { ov._autoScroll.set_size(w, -1); } catch (e) {}
             try { ov._autoScroll.raise_top(); } catch (e) {}
+            this._autoPosLocked = true;
         } catch (e) {}
     }
 
@@ -3066,6 +3073,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             return row;
         });
         this._overlay._autoScroll.visible = this._autoRows.length > 0;
+        try { this._positionAutocomplete(true); } catch (e) {}
         this._syncRegionGeometry();
         this._syncSelection();
     }
