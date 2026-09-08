@@ -288,7 +288,7 @@
 }
 
 .quicksearch-autocomplete {
-    margin-top: 6px;
+    margin-top: 0;
 }
 .quicksearch-autocomplete.quicksearch-results {
     background-color: rgba(19, 26, 32, 0.98);

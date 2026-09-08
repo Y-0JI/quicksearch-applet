@@ -3066,7 +3066,6 @@ class QuickSearchApplet extends Applet.IconApplet {
             return row;
         });
         this._overlay._autoScroll.visible = this._autoRows.length > 0;
-        try { this._positionAutocomplete(); } catch (e) {}
         this._syncRegionGeometry();
         this._syncSelection();
     }
