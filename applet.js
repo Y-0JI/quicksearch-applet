@@ -283,7 +283,6 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         } catch (e) {
             try { global.log("[quicksearch@yoji] category filter row init failed: " + e); } catch (e2) {}
         }
-        this._searchView.add(this._autoScroll);
         this._searchView.add(this._scroll);
 
         this._caretBlinkId = 0;
@@ -462,6 +461,11 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
                 this._contextLayer.raise_top();
             }
         } catch (e) {}
+        try {
+            if (this._autoScroll.get_parent()) this._autoScroll.get_parent().remove_child(this._autoScroll);
+        } catch (e) {}
+        try { this._contextLayer.add_actor(this._autoScroll); } catch (e) { try { this._contextLayer.add_child(this._autoScroll); } catch (e2) {} }
+        try { this._autoScroll.raise_top(); } catch (e) {}
 
         this._entryRow.reactive = true;
         this._autoScroll.reactive = true;
@@ -2920,22 +2924,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         } else {
             try { ov._scroll.set_size(w, 0); } catch (e) {}
         }
-        if (ov._autoScroll && ov._autoScroll.visible) {
-            let natH = 0;
-            try {
-                const [, cNat] = ov.autoCompleteBox.get_preferred_height(w);
-                natH = Number(cNat) || 0;
-            } catch (e) { natH = 0; }
-            if (natH <= 0) {
-                try { const [, fb] = ov._autoScroll.get_preferred_height(w); natH = Number(fb) || 0; } catch (e) { natH = 0; }
-            }
-            natH += 16;
-            const autoH = Math.min(natH, roomCap);
-            try { ov._autoScroll.set_size(w, autoH); } catch (e) {}
-            h = Math.max(h, autoH);
-        } else {
-            try { if (ov._autoScroll) ov._autoScroll.set_size(w, 0); } catch (e) {}
-        }
+        try { this._positionAutocomplete(); } catch (e) {}
         try { ov._contentArea.set_size(w, h); } catch (e) {}
         try { ov.resultsRegion.set_size(w, h); } catch (e) {}
         try {
@@ -3046,6 +3035,27 @@ class QuickSearchApplet extends Applet.IconApplet {
         return histRows.concat(sugRows);
     }
 
+    _positionAutocomplete() {
+        const ov = this._overlay;
+        if (!ov || !ov._autoScroll || !ov._entryRow) return;
+        try {
+            if (!ov._autoScroll.visible) return;
+            const [ex, ey] = ov._entryRow.get_transformed_position();
+            const [ew, eh] = ov._entryRow.get_transformed_size();
+            let lx = 0, ly = 0;
+            try {
+                const L = ov._contextLayer;
+                if (L && L.get_parent()) { const p = L.get_transformed_position(); lx = p[0] || 0; ly = p[1] || 0; }
+            } catch (e) {}
+            const w = Math.round(ew || 0);
+            const x = Math.round((ex || 0) - lx);
+            const y = Math.round((ey || 0) + (eh || 0) + 6 - ly);
+            try { ov._autoScroll.set_position(x, y); } catch (e) {}
+            try { ov._autoScroll.set_size(w, -1); } catch (e) {}
+            try { ov._autoScroll.raise_top(); } catch (e) {}
+        } catch (e) {}
+    }
+
     _renderAutocomplete(locals) {
         const box = this._overlay.autoCompleteBox;
         while (box.get_n_children() > 0) box.remove_child(box.get_child_at_index(0));
@@ -3055,6 +3065,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             return row;
         });
         this._overlay._autoScroll.visible = this._autoRows.length > 0;
+        try { this._positionAutocomplete(); } catch (e) {}
         this._syncRegionGeometry();
         this._syncSelection();
     }
@@ -3352,12 +3363,14 @@ class QuickSearchApplet extends Applet.IconApplet {
         const typeKey = r && r.type ? String(r.type) : "";
         const isFolder = typeKey === "file" && String(r.icon || "") === "folder-symbolic";
         const typeMap = { app: "App", file: isFolder ? "Folder" : "File", web: "Web", calc: "Calc", url: "Link" };
+        const rightMeta = new St.BoxLayout({ vertical: false, style_class: "quicksearch-right-meta", x_expand: false, x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.CENTER });
         if (typeKey && typeMap[typeKey] && !isRecent) {
             try {
                 const typeLbl = new St.Label({ text: typeMap[typeKey], style_class: "quicksearch-type" });
-                content.add(typeLbl, { x_align: St.Align.END });
+                rightMeta.add(typeLbl);
             } catch (e) {}
         }
+        content.add(rightMeta, { expand: false, x_fill: false, x_align: St.Align.END });
         void 'quicksearch-row-chevron'; void 'quicksearch-best-match-hint'; void '_("Enter")';
 
         const button = new St.Button({
