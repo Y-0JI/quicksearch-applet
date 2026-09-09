@@ -25,32 +25,54 @@ test('preferensi true', () => {
 });
 
 test('normal queries no accidental match', () => {
-    for (const t of ['Firefox Web Browser', 'Text Editor', 'Terminal', 'Files']) {
-        assert.equal(isSettingsApp({ type: 'app', title: t, description: 'x', appId: 'x.desktop', categories: 'GNOME;GTK;Utility;' }), false, t);
+    const normals = [
+        ['firefox.desktop', 'Firefox Web Browser', 'firefox %u', 'GNOME;GTK;Network;WebBrowser;'],
+        ['org.gnome.Terminal.desktop', 'Terminal', 'gnome-terminal', 'GNOME;GTK;System;TerminalEmulator;'],
+        ['nemo.desktop', 'Files', 'nemo %U', 'GNOME;GTK;Utility;Core;'],
+        ['org.gnome.Calculator.desktop', 'Calculator', 'gnome-calculator', 'GNOME;GTK;Utility;Calculator;'],
+        ['xed.desktop', 'Text Editor', 'xed', 'GNOME;GTK;Utility;TextEditor;'],
+    ];
+    for (const [id, t, ex, cats] of normals) {
+        assert.equal(isSettingsApp({ type: 'app', title: t, description: 'x', appId: id, execLine: ex, categories: cats }), false, t);
     }
     assert.equal(isSettingsApp(null), false);
     assert.equal(isSettingsApp({}), false);
 });
 
-test('cinnamon settings modules classified via appId/categories', () => {
+test('third-party generic Categories=Settings stays App (not discovered)', () => {
+    assert.equal(isSettingsApp({ type: 'app', title: 'Cool Tweaks', description: 'tweak stuff', appId: 'cool-tweaks.desktop', execLine: 'cool-tweaks', categories: 'GNOME;GTK;Settings;' }), false);
+    assert.equal(isSettingsApp({ type: 'file', title: 'settings.txt', path: '/a', categories: 'Settings;' }), false);
+});
+
+test('utility with Settings marker stays App (Disks guard)', () => {
+    assert.equal(isSettingsApp({ type: 'app', title: 'Disks', description: 'Manage Drives', appId: 'org.gnome.DiskUtility.desktop', execLine: 'gnome-disks', categories: 'GNOME;GTK;Utility;X-GNOME-Utilities;Settings;HardwareSettings;' }), false);
+});
+
+test('cinnamon settings modules classified via runtime desktop-entry signals', () => {
     const mods = [
-        ['cinnamon-settings.desktop', 'System Settings', 'Settings;'],
-        ['blueman-manager.desktop', 'Bluetooth Manager', 'GTK;GNOME;Settings;HardwareSettings;'],
-        ['cinnamon-display-panel.desktop', 'Display', 'GTK;Settings;HardwareSettings;X-Cinnamon-Settings-Panel;'],
-        ['cinnamon-network-panel.desktop', 'Network', 'GTK;Settings;HardwareSettings;X-Cinnamon-Settings-Panel;'],
-        ['cinnamon-settings-sound.desktop', 'Sound', 'Settings;'],
-        ['cinnamon-settings-keyboard.desktop', 'Keyboard', 'Settings;'],
-        ['cinnamon-settings-mouse.desktop', 'Mouse and Touchpad', 'Settings;'],
-        ['cinnamon-settings-power.desktop', 'Power Management', 'Settings;'],
-        ['cinnamon-settings-users.desktop', 'Users and Groups', 'System;Settings;'],
-        ['cinnamon-settings-calendar.desktop', 'Date & Time', 'Settings;'],
-        ['cinnamon-settings-privacy.desktop', 'Privacy', 'Settings;'],
-        ['cinnamon-settings-panel.desktop', 'Panel', 'Settings;'],
-        ['gufw.desktop', 'Firewall Configuration', 'GNOME;GTK;Settings;Security;X-GNOME-Settings-Panel;X-GNOME-SystemSettings;'],
+        ['cinnamon-settings.desktop', 'System Settings', 'env WEBKIT_DISABLE_COMPOSITING_MODE=1 cinnamon-settings', '', '', 'Settings;'],
+        ['cinnamon-display-panel.desktop', 'Display', 'cinnamon-settings display', 'display', '', 'GTK;Settings;HardwareSettings;X-Cinnamon-Settings-Panel;'],
+        ['cinnamon-network-panel.desktop', 'Network', 'cinnamon-settings network', 'network', '', 'GTK;Settings;HardwareSettings;X-Cinnamon-Settings-Panel;'],
+        ['cinnamon-settings-sound.desktop', 'Sound', 'cinnamon-settings sound', '', '', 'Settings;'],
+        ['cinnamon-settings-keyboard.desktop', 'Keyboard', 'cinnamon-settings keyboard', '', '', 'Settings;'],
+        ['cinnamon-settings-mouse.desktop', 'Mouse and Touchpad', 'cinnamon-settings mouse', '', '', 'Settings;'],
+        ['cinnamon-settings-power.desktop', 'Power Management', 'cinnamon-settings power', '', '', 'Settings;'],
+        ['cinnamon-settings-users.desktop', 'Users and Groups', 'cinnamon-settings-users', '', '', 'System;Settings;'],
+        ['cinnamon-settings-calendar.desktop', 'Date & Time', 'cinnamon-settings calendar', '', '', 'Settings;'],
+        ['cinnamon-settings-privacy.desktop', 'Privacy', 'cinnamon-settings privacy', '', '', 'Settings;'],
+        ['cinnamon-settings-panel.desktop', 'Panel', 'cinnamon-settings panel', '', '', 'Settings;'],
+        ['gufw.desktop', 'Firewall Configuration', 'gufw', 'gufw', '1', 'GNOME;GTK;Settings;Security;X-GNOME-Settings-Panel;X-GNOME-SystemSettings;'],
+        ['blueman-manager.desktop', 'Bluetooth Manager', 'blueman-manager', '', '', 'GTK;GNOME;Settings;HardwareSettings;'],
     ];
-    for (const [id, title, cats] of mods) {
-        assert.equal(isSettingsApp({ type: 'app', title, description: 'x', appId: id, categories: cats }), true, title);
+    for (const [id, title, ex, sp, gs, cats] of mods) {
+        assert.equal(isSettingsApp({ type: 'app', title, description: 'x', appId: id, execLine: ex, settingsPanel: sp, gnomePanel: gs, gnomeSystem: gs, categories: cats }), true, title);
     }
+});
+
+test('classification follows discovered membership, not hardcoded names', () => {
+    const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../utils.js'), 'utf8');
+    const fn = src.slice(src.indexOf('function isSettingsApp'));
+    assert.ok(!fn.includes('blueman') && !fn.includes('gufw') && !fn.includes('Bluetooth Manager') && !fn.includes('Firewall Configuration'), 'no module names in classifier');
 });
 
 test('settings section badge uses localized Settings, normal app stays App', () => {

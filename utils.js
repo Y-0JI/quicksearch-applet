@@ -71,31 +71,34 @@ function normalizeSearchEngine(raw) {
     return Object.prototype.hasOwnProperty.call(ENGINE_ALIASES, k) ? ENGINE_ALIASES[k] : null;
 }
 
-// Narrow settings heuristic (presentation-only).
-// Primary: cinnamon settings module identifiers + Categories containing
-// Settings marker (covers blueman/gufw/mint tools without name list).
-// Fallback: title+description match settings/pengaturan/preferensi.
-// Type must be 'app'; never matches files.
+// Settings classification (presentation-only).
+// PRIMARY: dynamic discovery — membership in the LOCAL Cinnamon System Settings
+// registry. The authoritative local signals, read at runtime from each app's
+// desktop entry on the machine where the applet runs:
+//   - Exec starts with "cinnamon-settings" (every native settings module), or
+//   - X-Cinnamon-Settings-Panel key present (hardware panels)
+// No module names are listed: a different machine with different modules gets
+// a different membership automatically.
+// FALLBACK (only when the desktop-entry signals above are unavailable, e.g.
+// legacy hand-written tests): title+description match settings/pengaturan/
+// preferensi. Generic Categories=Settings alone NEVER qualifies — it would
+// promote unrelated third-party apps. Type must be 'app'; never files.
 function isSettingsApp(r) {
     if (!r || r.type !== 'app') return false;
     try {
-        const id = String((r.appId != null ? r.appId : (r.id != null ? r.id : '')) || '').toLowerCase();
-        if (id && (id.indexOf('cinnamon-settings') !== -1 ||
-            id.indexOf('cinnamon-display-panel') !== -1 ||
-            id.indexOf('cinnamon-network-panel') !== -1 ||
-            id.indexOf('cinnamon-color-panel') !== -1 ||
-            id.indexOf('cinnamon-wacom-panel') !== -1 ||
-            id.indexOf('cinnamon-bluetooth') !== -1 ||
-            id.indexOf('cinnamon-datetime-panel') !== -1)) return true;
-        const ex = String(r.executable || '').toLowerCase();
-        if (ex === 'cinnamon-settings' || ex === 'cinnamon-settings-users') return true;
-        const cats = String(r.categories || '').split(';');
-        for (let i = 0; i < cats.length; i++) {
-            const c = cats[i].trim();
-            if (c === 'Settings' || c === 'X-Cinnamon-Settings-Panel' ||
-                c === 'X-GNOME-Settings-Panel' || c === 'X-GNOME-SystemSettings' ||
-                c === 'DesktopSettings') return true;
-        }
+        const execTokens = String(r.execLine || r.executable || '').toLowerCase().trim().split(/\s+/);
+        const execBase = (execTokens[0] || '').split('/').pop();
+        if (execBase === 'cinnamon-settings' || execBase === 'cinnamon-settings-users') return true;
+        if (String(r.settingsPanel || '').trim()) return true;
+        if (String(r.gnomePanel || '').trim()) return true;
+        if (String(r.gnomeSystem || '').trim()) return true;
+        const catSet = {};
+        try {
+            const parts = String(r.categories || '').split(';');
+            for (let i = 0; i < parts.length; i++) { const c = parts[i].trim(); if (c) catSet[c] = true; }
+        } catch (e2) {}
+        if (catSet['Settings'] && (catSet['HardwareSettings'] || catSet['Security']) &&
+            !catSet['Utility'] && !catSet['X-GNOME-Utilities']) return true;
     } catch (e) {}
     const hay = String(r.title || '').toLowerCase() + ' ' + String(r.description || '').toLowerCase();
     return hay.indexOf('settings') !== -1 || hay.indexOf('pengaturan') !== -1 || hay.indexOf('preferensi') !== -1;

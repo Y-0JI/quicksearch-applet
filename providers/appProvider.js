@@ -41,6 +41,11 @@ function createAppProvider(helpers) {
                 keywords: info ? (info.get_keywords() || []) : [],
                 executable: info ? String(info.get_executable() || '').toLowerCase() : '',
                 categories: (() => { try { return info && info.get_string ? String(info.get_string("Categories") || '') : ''; } catch (e) { return ''; } })(),
+                execLine: (() => { try { return info && info.get_string ? String(info.get_string("Exec") || '') : ''; } catch (e) { return ''; } })(),
+                onlyShowIn: (() => { try { return info && info.get_string ? String(info.get_string("OnlyShowIn") || '') : ''; } catch (e) { return ''; } })(),
+                settingsPanel: (() => { try { return info && info.get_string ? String(info.get_string("X-Cinnamon-Settings-Panel") || '') : ''; } catch (e) { return ''; } })(),
+                gnomePanel: (() => { try { return info && info.get_string ? String(info.get_string("X-GNOME-Settings-Panel") || '') : ''; } catch (e) { return ''; } })(),
+                gnomeSystem: (() => { try { return info && info.get_string ? String(info.get_string("X-GNOME-SystemSettings") || '') : ''; } catch (e) { return ''; } })(),
                 gicon: info ? info.get_icon() : null
             });
         }
@@ -85,6 +90,11 @@ function createAppProvider(helpers) {
                     icon: e.gicon,
                     appId: e.appId,
                     categories: e.categories,
+                    execLine: e.execLine,
+                    onlyShowIn: e.onlyShowIn,
+                    settingsPanel: e.settingsPanel,
+                    gnomePanel: e.gnomePanel,
+                    gnomeSystem: e.gnomeSystem,
                     score: scoreResult(quality),
                     action: () => {
                         try {
