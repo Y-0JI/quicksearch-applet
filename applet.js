@@ -77,6 +77,18 @@ const FALLBACK_URLS = {
     bing: q => 'https://www.bing.com/search?q=' + encodeURIComponent(q)
 };
 
+// Engine-aware browser fallback: never DDG when another engine is active.
+// SearXNG opens the HTML search page (API json is fetch-only, never a page).
+function fallbackUrlForEngine(engine, searxngUrl, q) {
+    const query = encodeURIComponent(q);
+    if (engine === 'searxng') {
+        const base = String(searxngUrl || 'http://127.0.0.1:8080').replace(/\/+$/, '');
+        return base + '/search?q=' + query + '&format=html';
+    }
+    const fn = FALLBACK_URLS[engine] || FALLBACK_URLS.ddgo;
+    return fn(q);
+}
+
 const QuickSearchOverlay = GObject.registerClass(
 class QuickSearchOverlay extends ModalDialog.ModalDialog {
     constructor(applet) {
@@ -1009,7 +1021,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             appProvider: appProviderMod.createAppProvider(helperDeps),
             fileProvider: this.enable_files ? fileProviderMod.createFileProvider(helperDeps) : null,
             webProvider: this.enable_web ? webProviderMod.createWebProvider(Object.assign({}, helperDeps, {
-                fallbackUrlFor: FALLBACK_URLS[engineChoice] || FALLBACK_URLS.ddgo,
+                fallbackUrlFor: (q) => fallbackUrlForEngine(engineChoice, this.searxng_url, q),
                 useInstantAnswers: engineChoice === "ddgo",
                 engine: engineChoice,
                 googleApiKey: this.web_search_api_key || '',

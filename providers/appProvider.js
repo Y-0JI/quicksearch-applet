@@ -25,13 +25,18 @@ function createAppProvider(helpers) {
     let settingsApps = null;
     let installedChangedId = 0;
 
+    // Exec may carry env prefixes ("env VAR=x cmd", "VAR=x cmd") or absolute
+    // paths ("/usr/bin/cmd args"). Only the real launcher binary counts —
+    // exactly "cinnamon-settings" or "cinnamon-settings-users". No module
+    // names are matched here.
     function _execBase(execLine) {
         try {
-            const toks = String(execLine || '').toLowerCase().trim().split(/\s+/);
+            const toks = String(execLine || '').trim().split(/\s+/);
             for (let i = 0; i < toks.length; i++) {
-                const base = (toks[i] || '').split('/').pop();
-                if (base) return base;
-                if (toks[i] && toks[i].indexOf('=') === -1) { const b = String(toks[i]).split('/').pop(); if (b) return b; }
+                const tok = toks[i] || '';
+                if (!tok || tok === 'env') continue;
+                if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tok)) continue;
+                return tok.toLowerCase().split('/').pop();
             }
         } catch (e) {}
         return '';

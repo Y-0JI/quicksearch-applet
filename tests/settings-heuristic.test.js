@@ -69,7 +69,11 @@ test('provider discovery: panel/exec entries join, third-party excluded, refresh
     const entries = {
         'display.desktop': { Exec: 'cinnamon-settings display', 'X-Cinnamon-Settings-Panel': 'display' },
         'sound.desktop': { Exec: 'cinnamon-settings sound' },
+        'sys-settings.desktop': { Exec: 'env WEBKIT_DISABLE_COMPOSITING_MODE=1 cinnamon-settings' },
+        'users.desktop': { Exec: '/usr/bin/cinnamon-settings-users' },
+        'network.desktop': { Exec: 'env FOO=bar cinnamon-settings network' },
         'firefox.desktop': { Exec: 'firefox %u' },
+        'env-app.desktop': { Exec: 'env some-app' },
         'cool-tweaks.desktop': { Exec: 'cool-tweaks', Categories: 'GNOME;GTK;Settings;' },
         'gufw.desktop': { Exec: 'gufw' },
     };
@@ -105,7 +109,11 @@ test('provider discovery: panel/exec entries join, third-party excluded, refresh
     const set = prov.getSettingsApps();
     assert.ok(set.has('display.desktop'), 'display discovered');
     assert.ok(set.has('sound.desktop'), 'sound discovered');
+    assert.ok(set.has('sys-settings.desktop'), 'env-prefixed cinnamon-settings discovered');
+    assert.ok(set.has('users.desktop'), 'absolute-path cinnamon-settings-users discovered');
+    assert.ok(set.has('network.desktop'), 'VAR=value-prefixed module discovered');
     assert.ok(!set.has('firefox.desktop'), 'firefox excluded');
+    assert.ok(!set.has('env-app.desktop'), 'env third-party excluded');
     assert.ok(!set.has('cool-tweaks.desktop'), 'third-party Settings excluded');
     assert.ok(!set.has('gufw.desktop'), 'gnome-only marker excluded');
     assert.ok(typeof changeCb === 'function', 'installed-changed hooked');
