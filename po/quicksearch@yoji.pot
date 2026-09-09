@@ -42,6 +42,10 @@ msgid "SETTINGS"
 msgstr ""
 
 #: applet.js
+msgid "Settings"
+msgstr ""
+
+#: applet.js
 msgid "Recent"
 msgstr ""
 

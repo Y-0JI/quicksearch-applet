@@ -32,6 +32,9 @@ msgstr "WEB"
 msgid "SETTINGS"
 msgstr "PENGATURAN"
 
+msgid "Settings"
+msgstr "Pengaturan"
+
 msgid "Recent"
 msgstr "Terbaru"
 

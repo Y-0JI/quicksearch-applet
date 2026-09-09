@@ -40,6 +40,7 @@ function createAppProvider(helpers) {
                 description: app.get_description() || '',
                 keywords: info ? (info.get_keywords() || []) : [],
                 executable: info ? String(info.get_executable() || '').toLowerCase() : '',
+                categories: (() => { try { return info && info.get_string ? String(info.get_string("Categories") || '') : ''; } catch (e) { return ''; } })(),
                 gicon: info ? info.get_icon() : null
             });
         }
@@ -83,6 +84,7 @@ function createAppProvider(helpers) {
                     description: e.description,
                     icon: e.gicon,
                     appId: e.appId,
+                    categories: e.categories,
                     score: scoreResult(quality),
                     action: () => {
                         try {

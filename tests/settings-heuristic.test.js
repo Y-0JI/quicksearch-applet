@@ -25,11 +25,38 @@ test('preferensi true', () => {
 });
 
 test('normal queries no accidental match', () => {
-    for (const t of ['Firefox Web Browser', 'Firewall Configuration', 'Text Editor', 'Terminal', 'Files']) {
-        assert.equal(isSettingsApp({ type: 'app', title: t, description: 'x' }), false, t);
+    for (const t of ['Firefox Web Browser', 'Text Editor', 'Terminal', 'Files']) {
+        assert.equal(isSettingsApp({ type: 'app', title: t, description: 'x', appId: 'x.desktop', categories: 'GNOME;GTK;Utility;' }), false, t);
     }
     assert.equal(isSettingsApp(null), false);
     assert.equal(isSettingsApp({}), false);
+});
+
+test('cinnamon settings modules classified via appId/categories', () => {
+    const mods = [
+        ['cinnamon-settings.desktop', 'System Settings', 'Settings;'],
+        ['blueman-manager.desktop', 'Bluetooth Manager', 'GTK;GNOME;Settings;HardwareSettings;'],
+        ['cinnamon-display-panel.desktop', 'Display', 'GTK;Settings;HardwareSettings;X-Cinnamon-Settings-Panel;'],
+        ['cinnamon-network-panel.desktop', 'Network', 'GTK;Settings;HardwareSettings;X-Cinnamon-Settings-Panel;'],
+        ['cinnamon-settings-sound.desktop', 'Sound', 'Settings;'],
+        ['cinnamon-settings-keyboard.desktop', 'Keyboard', 'Settings;'],
+        ['cinnamon-settings-mouse.desktop', 'Mouse and Touchpad', 'Settings;'],
+        ['cinnamon-settings-power.desktop', 'Power Management', 'Settings;'],
+        ['cinnamon-settings-users.desktop', 'Users and Groups', 'System;Settings;'],
+        ['cinnamon-settings-calendar.desktop', 'Date & Time', 'Settings;'],
+        ['cinnamon-settings-privacy.desktop', 'Privacy', 'Settings;'],
+        ['cinnamon-settings-panel.desktop', 'Panel', 'Settings;'],
+        ['gufw.desktop', 'Firewall Configuration', 'GNOME;GTK;Settings;Security;X-GNOME-Settings-Panel;X-GNOME-SystemSettings;'],
+    ];
+    for (const [id, title, cats] of mods) {
+        assert.equal(isSettingsApp({ type: 'app', title, description: 'x', appId: id, categories: cats }), true, title);
+    }
+});
+
+test('settings section badge uses localized Settings, normal app stays App', () => {
+    const src = fs.readFileSync(path.join(__dirname, '../applet.js'), 'utf8');
+    assert.ok(src.includes('isSettingsRow ? _("Settings") : "App"'), 'badge branch exists');
+    assert.ok(src.includes("typeKey === 'app' && !!utilsMod.isSettingsApp(r)"), 'badge gated on app type');
 });
 
 test('production wiring: applet uses utilsMod.isSettingsApp + settings category', () => {

@@ -31,6 +31,9 @@ msgstr "WEB"
 msgid "SETTINGS"
 msgstr "SETTINGS"
 
+msgid "Settings"
+msgstr "Settings"
+
 msgid "Recent"
 msgstr "Recent"
 

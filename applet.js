@@ -3492,7 +3492,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { bestMatch = !!(item && item.bestMatch); } catch (e) { bestMatch = false; }
         const typeKey = r && r.type ? String(r.type) : "";
         const isFolder = typeKey === "file" && String(r.icon || "") === "folder-symbolic";
-        const typeMap = { app: "App", file: isFolder ? "Folder" : "File", web: "Web", calc: "Calc", url: "Link" };
+        let isSettingsRow = false;
+        try { isSettingsRow = typeKey === 'app' && !!utilsMod.isSettingsApp(r); } catch (e) { isSettingsRow = false; }
+        const typeMap = { app: isSettingsRow ? _("Settings") : "App", file: isFolder ? "Folder" : "File", web: "Web", calc: "Calc", url: "Link" };
         const rightMeta = new St.BoxLayout({ vertical: false, style_class: "quicksearch-right-meta", x_expand: false, x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.CENTER });
         if (typeKey && typeMap[typeKey] && !isRecent) {
             try {

@@ -48,6 +48,7 @@ function makeResult(fields) {
     if (fields.url !== undefined) r.url = fields.url;
     if (fields.path !== undefined) r.path = fields.path;
     if (fields.appId !== undefined) r.appId = fields.appId;
+    if (fields.categories !== undefined) r.categories = String(fields.categories || '');
     if (fields.value !== undefined) r.value = fields.value;
     r.id = _stableId(r);
     return r;

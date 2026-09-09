@@ -71,10 +71,32 @@ function normalizeSearchEngine(raw) {
     return Object.prototype.hasOwnProperty.call(ENGINE_ALIASES, k) ? ENGINE_ALIASES[k] : null;
 }
 
-// Narrow settings heuristic (presentation-only): title+description match.
-// Type must be 'app'; keywords/executable deliberately excluded (PATCH 1).
+// Narrow settings heuristic (presentation-only).
+// Primary: cinnamon settings module identifiers + Categories containing
+// Settings marker (covers blueman/gufw/mint tools without name list).
+// Fallback: title+description match settings/pengaturan/preferensi.
+// Type must be 'app'; never matches files.
 function isSettingsApp(r) {
     if (!r || r.type !== 'app') return false;
+    try {
+        const id = String((r.appId != null ? r.appId : (r.id != null ? r.id : '')) || '').toLowerCase();
+        if (id && (id.indexOf('cinnamon-settings') !== -1 ||
+            id.indexOf('cinnamon-display-panel') !== -1 ||
+            id.indexOf('cinnamon-network-panel') !== -1 ||
+            id.indexOf('cinnamon-color-panel') !== -1 ||
+            id.indexOf('cinnamon-wacom-panel') !== -1 ||
+            id.indexOf('cinnamon-bluetooth') !== -1 ||
+            id.indexOf('cinnamon-datetime-panel') !== -1)) return true;
+        const ex = String(r.executable || '').toLowerCase();
+        if (ex === 'cinnamon-settings' || ex === 'cinnamon-settings-users') return true;
+        const cats = String(r.categories || '').split(';');
+        for (let i = 0; i < cats.length; i++) {
+            const c = cats[i].trim();
+            if (c === 'Settings' || c === 'X-Cinnamon-Settings-Panel' ||
+                c === 'X-GNOME-Settings-Panel' || c === 'X-GNOME-SystemSettings' ||
+                c === 'DesktopSettings') return true;
+        }
+    } catch (e) {}
     const hay = String(r.title || '').toLowerCase() + ' ' + String(r.description || '').toLowerCase();
     return hay.indexOf('settings') !== -1 || hay.indexOf('pengaturan') !== -1 || hay.indexOf('preferensi') !== -1;
 }
