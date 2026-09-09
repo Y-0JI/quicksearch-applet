@@ -266,12 +266,13 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
                 visible: false
             });
             try { this._filterScroll.set_policy(St.PolicyType.AUTOMATIC, St.PolicyType.NEVER); } catch (e) {}
-            const _catIcon = { all: "view-grid-symbolic", app: "application-x-executable-symbolic", file: "text-x-generic-symbolic", folder: "folder-symbolic", web: "web-browser-symbolic" };
+            const _catIcon = { all: "view-grid-symbolic", app: "application-x-executable-symbolic", file: "text-x-generic-symbolic", folder: "folder-symbolic", settings: "preferences-system-symbolic", web: "web-browser-symbolic" };
             const _categories = [
                 ["all", _("All")],
                 ["app", _("Apps")],
                 ["file", _("Files")],
                 ["folder", _("Folders")],
+                ["settings", _("SETTINGS")],
                 ["web", _("Web")]
             ];
             for (let ci = 0; ci < _categories.length; ci++) {
@@ -2859,10 +2860,12 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     // Mirrors filter-row visibility to both the inner chip row and its scroll wrapper.
+    // Hidden state takes zero space (empty-state rule); idle/AI call with false.
     _setFilterRowVisible(v) {
         const ov = this._overlay;
-        try { if (ov && ov._filterRow) ov._filterRow.visible = false; } catch (e) {}
-        try { if (ov && ov._filterScroll) ov._filterScroll.visible = false; } catch (e) {}
+        const show = !!v;
+        try { if (ov && ov._filterRow) ov._filterRow.visible = show; } catch (e) {}
+        try { if (ov && ov._filterScroll) ov._filterScroll.visible = show; } catch (e) {}
     }
 
     _syncFilterUI() {

@@ -38,24 +38,48 @@ test('UI-1: adaptive layout constants are the single source of truth', () => {
 
 // ---- UI-2: Search experience ----
 
-test('UI-2: horizontal category filter chips exist — All/Apps/Files/Folders/Web', () => {
+test('UI-2: horizontal category filter chips exist — All/Apps/Files/Folders/Settings/Web', () => {
     assert.ok(APPLET_SRC.includes('quicksearch-filter-row'), 'filter row class');
     assert.ok(APPLET_SRC.includes('quicksearch-filter-chip'), 'chip class');
     assert.ok(APPLET_SRC.includes('this._filterButtons'), 'chip registry');
-    for (const cat of ['all', 'app', 'file', 'folder', 'web']) {
-        assert.ok(APPLET_SRC.includes('"' + cat + '"') || APPLET_SRC.includes("'" + cat + "'"), `category ${cat} present`);
+    const chipIdx = APPLET_SRC.indexOf('const _categories = [');
+    assert.ok(chipIdx !== -1, 'chip list exists');
+    const chipBlock = APPLET_SRC.slice(chipIdx, chipIdx + 600);
+    const order = ['"all"', '"app"', '"file"', '"folder"', '"settings"', '"web"'];
+    let lastPos = -1;
+    for (const cat of order) {
+        const p = chipBlock.indexOf(cat);
+        assert.ok(p !== -1, `category ${cat} present`);
+        assert.ok(p > lastPos, `category ${cat} in order`);
+        lastPos = p;
     }
     assert.ok(APPLET_SRC.includes('_setCategory'), 'category setter exists');
     assert.ok(APPLET_SRC.includes('_syncFilterUI'), 'chip active-state sync exists');
     assert.ok(APPLET_SRC.includes('quicksearch-filter-chip-active'), 'active chip highlight');
 });
 
-test('P2-4: Settings category uses discovered local membership (no chip, filter + section)', () => {
-    // FINAL: no Settings chip in _categories; filter branch + SECTION_ORDER entry exist;
-    // badge/section/filter share _isSettingsResult over the provider membership.
+test('UI-2: filter row visible in searching/results, hidden on idle and AI', () => {
+    const syncIdx = APPLET_SRC.indexOf('_syncShell() {');
+    assert.ok(syncIdx !== -1, 'syncShell exists');
+    const syncBlock = APPLET_SRC.slice(syncIdx, syncIdx + 2500);
+    assert.ok(syncBlock.includes("_setFilterRowVisible(!isAi && (st === 'searching' || st === 'search-results'))"), 'row shown only for search results states');
+    const fnIdx = APPLET_SRC.indexOf('_setFilterRowVisible(v) {');
+    assert.ok(fnIdx !== -1, 'visibility helper exists');
+    const fnBlock = APPLET_SRC.slice(fnIdx, fnIdx + 500);
+    assert.ok(fnBlock.includes('const show = !!v'), 'helper honors its argument');
+    assert.ok(fnBlock.includes('ov._filterRow.visible = show') || fnBlock.includes('ov._filterRow) ov._filterRow.visible = show'), 'row visibility set');
+    assert.ok(fnBlock.includes('ov._filterScroll.visible = show') || fnBlock.includes('ov._filterScroll) ov._filterScroll.visible = show'), 'scroll visibility set');
+});
+
+test('P2-4: Settings category uses discovered local membership (chip + filter + section)', () => {
+    // Settings chip lives between Folders and Web; badge/section/filter share
+    // _isSettingsResult over the provider membership.
     const chipIdx = APPLET_SRC.indexOf('const _categories = [');
     assert.ok(chipIdx !== -1, 'chip list exists');
-    assert.ok(!APPLET_SRC.slice(chipIdx, chipIdx + 600).includes('"settings"'), 'no Settings chip entry');
+    const chipBlock = APPLET_SRC.slice(chipIdx, chipIdx + 600);
+    assert.ok(chipBlock.includes('"settings"'), 'Settings chip entry exists');
+    assert.ok(chipBlock.indexOf('"folder"') < chipBlock.indexOf('"settings"') &&
+        chipBlock.indexOf('"settings"') < chipBlock.indexOf('"web"'), 'Settings chip between Folders and Web');
     const validIdx = APPLET_SRC.indexOf('const valid = ["all", "app", "file", "folder", "settings", "web"];');
     assert.ok(validIdx !== -1, 'valid category list has settings');
     const filterIdx = APPLET_SRC.indexOf('_filterResults(results) {');

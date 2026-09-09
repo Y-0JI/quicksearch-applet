@@ -136,11 +136,14 @@ test('badge + section share one classifier source', () => {
     assert.ok(!src.includes("typeKey === 'app' && !!utilsMod.isSettingsApp(r)"), 'no direct heuristic call in badge');
 });
 
-test('no Settings chip; valid list keeps settings filter', () => {
+test('Settings chip present between Folders and Web; _setCategory accepts settings', () => {
     const src = fs.readFileSync(path.join(__dirname, '../applet.js'), 'utf8');
     assert.ok(src.includes('"all", "app", "file", "folder", "settings", "web"'), 'valid list has settings');
     const chipIdx = src.indexOf('const _categories = [');
-    assert.ok(!src.slice(chipIdx, chipIdx + 600).includes('"settings"'), 'no chip added');
+    const chipBlock = src.slice(chipIdx, chipIdx + 600);
+    assert.ok(chipBlock.includes('"settings"'), 'chip added');
+    assert.ok(chipBlock.indexOf('"folder"') < chipBlock.indexOf('"settings"') &&
+        chipBlock.indexOf('"settings"') < chipBlock.indexOf('"web"'), 'chip order');
 });
 
 function sectionGroups(display, set) {
