@@ -50,15 +50,15 @@ test('UI-2: horizontal category filter chips exist — All/Apps/Files/Folders/We
     assert.ok(APPLET_SRC.includes('quicksearch-filter-chip-active'), 'active chip highlight');
 });
 
-test('P2-4: no fake Settings category — chips are provider-backed only', () => {
-    // Settings had no real provider/type (only a keyword heuristic) → removed.
+test('P2-4: Settings category is presentation-only heuristic (no chip, filter API only)', () => {
+    // PATCH 1: no Settings chip in UI; valid list + filter branch exist, narrow heuristic only.
     assert.ok(!APPLET_SRC.includes('["settings", _("Settings")]') && !APPLET_SRC.includes("[\"settings\", _\\(\"Settings\")]"), 'no Settings chip entry');
-    const validIdx = APPLET_SRC.indexOf('const valid = ["all", "app", "file", "folder", "web"];');
-    assert.ok(validIdx !== -1, 'valid category list has no settings');
-    assert.ok(!APPLET_SRC.slice(validIdx, validIdx + 200).includes('settings'), 'setter rejects settings');
+    const validIdx = APPLET_SRC.indexOf('const valid = ["all", "app", "file", "folder", "settings", "web"];');
+    assert.ok(validIdx !== -1, 'valid category list has settings');
     const filterIdx = APPLET_SRC.indexOf('_filterResults(results) {');
     const filterSection = APPLET_SRC.slice(filterIdx, filterIdx + 1400);
-    assert.ok(!filterSection.includes('cat === \'settings\''), 'filter has no settings branch');
+    assert.ok(filterSection.includes('cat === \'settings\''), 'filter has settings branch');
+    assert.ok(filterSection.includes('utilsMod.isSettingsApp'), 'filter uses production heuristic');
     // po files no longer carry a dead Settings string
     const pot = fs.readFileSync(path.join(ROOT, 'po/quicksearch@yoji.pot'), 'utf8');
     assert.ok(!pot.includes('msgid "Settings"'), 'Settings string removed from pot');
@@ -91,7 +91,8 @@ test('UI-2: category filter is presentation-only — never re-ranks', () => {
     const all = [file, folder, app, web];
     const sorted = all.slice().sort((a, b) => b.score - a.score);
 
-    // replicate _filterResults (applet method; GJS-only file cannot be required)
+    // unknown categories fall through to All (defensive, matches _setCategory)
+    const { isSettingsApp } = require('../utils.js');
     function filterResults(results, cat) {
         if (cat === 'all') return results;
         return results.filter(r => {
@@ -100,6 +101,10 @@ test('UI-2: category filter is presentation-only — never re-ranks', () => {
             if (cat === 'web') return r.type === 'web';
             if (cat === 'file') return r.type === 'file' && String(r.icon || '') !== 'folder-symbolic';
             if (cat === 'folder') return r.type === 'file' && String(r.icon || '') === 'folder-symbolic';
+            if (cat === 'settings') {
+                if (r.type !== 'app') return false;
+                return isSettingsApp(r);
+            }
             return true;
         });
     }
@@ -110,7 +115,10 @@ test('UI-2: category filter is presentation-only — never re-ranks', () => {
     assert.deepEqual(filterResults(sorted, 'app').map(r => r.id), [app.id], 'apps kept');
     assert.deepEqual(filterResults(sorted, 'web').map(r => r.id), [web.id], 'web kept');
     // unknown categories fall through to All (defensive, matches _setCategory)
-    assert.deepEqual(filterResults(sorted, 'settings').map(r => r.id), sorted.map(r => r.id), 'unknown category → all');
+    assert.deepEqual(filterResults(sorted, 'bogus').map(r => r.id), sorted.map(r => r.id), 'unknown category → all');
+    const setApp = mk('app', 150, 9); setApp.title = 'Settings';
+    assert.ok(filterResults([setApp, app], 'settings').some(r => r.id === setApp.id), 'settings filter keeps Settings app');
+    assert.ok(!filterResults([setApp, app], 'settings').some(r => r.id === app.id), 'settings filter drops normal app');
 });
 
 test('UI-2: Best Match leads the panel and is NOT duplicated in sections', () => {

@@ -71,4 +71,12 @@ function normalizeSearchEngine(raw) {
     return Object.prototype.hasOwnProperty.call(ENGINE_ALIASES, k) ? ENGINE_ALIASES[k] : null;
 }
 
-module.exports = { pickFileBackend, sanitizeGlob, buildLocalRows, normalizeSearchEngine };
+// Narrow settings heuristic (presentation-only): title+description match.
+// Type must be 'app'; keywords/executable deliberately excluded (PATCH 1).
+function isSettingsApp(r) {
+    if (!r || r.type !== 'app') return false;
+    const hay = String(r.title || '').toLowerCase() + ' ' + String(r.description || '').toLowerCase();
+    return hay.indexOf('settings') !== -1 || hay.indexOf('pengaturan') !== -1 || hay.indexOf('preferensi') !== -1;
+}
+
+module.exports = { pickFileBackend, sanitizeGlob, buildLocalRows, normalizeSearchEngine, isSettingsApp };

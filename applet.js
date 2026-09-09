@@ -2818,11 +2818,10 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     // ---- UI-2: category filter (presentation only — never re-ranks) ----
 
-    // P2-4: no Settings chip — there is no dedicated Settings provider/type, only an
-    // unreliable keyword heuristic, so the category is omitted until a real source
-    // exists (reliability over filter count).
+    // PATCH 1: settings filter API only (no chip, no section) — narrow
+    // presentation heuristic via utilsMod.isSettingsApp.
     _setCategory(id) {
-        const valid = ["all", "app", "file", "folder", "web"];
+        const valid = ["all", "app", "file", "folder", "settings", "web"];
         if (valid.indexOf(id) === -1) id = "all";
         this._category = id;
         this._syncFilterUI();
@@ -2852,8 +2851,8 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     // Type filter over the ALREADY-ranked result set. "Folders"/"Files" split file
-    // results by their folder icon; unknown categories fall through to All. There is
-    // deliberately NO Settings category (P2-4) — only a real provider would justify it.
+    // results by their folder icon; "settings" keeps apps matching the narrow
+    // presentation heuristic; unknown categories fall through to All.
     _filterResults(results) {
         const cat = this._category || 'all';
         if (cat === 'all') return results;
@@ -2863,6 +2862,10 @@ class QuickSearchApplet extends Applet.IconApplet {
             if (cat === 'web') return r.type === 'web';
             if (cat === 'file') return r.type === 'file' && String(r.icon || '') !== 'folder-symbolic';
             if (cat === 'folder') return r.type === 'file' && String(r.icon || '') === 'folder-symbolic';
+            if (cat === 'settings') {
+                if (r.type !== 'app') return false;
+                try { return utilsMod.isSettingsApp(r); } catch (e) { return false; }
+            }
             return true;
         });
     }
