@@ -2,127 +2,171 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const Module = require('node:module');
 const { isSettingsApp } = require('../utils.js');
 
-test('settings app true', () => {
-    assert.equal(isSettingsApp({ type: 'app', title: 'Settings', description: 'Configure your system' }), true);
+// Discovered membership fixtures: Set<appId> as built by the provider on a
+// given machine. Classifier behavior must follow the SET, never names.
+const SET_A = new Set(['display.desktop', 'network.desktop']);
+const SET_B = new Set(['display.desktop', 'sound.desktop', 'keyboard.desktop']);
+
+test('discovered member -> true, type gate holds', () => {
+    assert.equal(isSettingsApp({ type: 'app', title: 'Display', appId: 'display.desktop' }, SET_A), true);
+    assert.equal(isSettingsApp({ type: 'file', title: 'settings.txt', path: '/a' }, SET_A), false);
+    assert.equal(isSettingsApp(null, SET_A), false);
+    assert.equal(isSettingsApp({}, SET_A), false);
 });
 
-test('normal app false', () => {
-    assert.equal(isSettingsApp({ type: 'app', title: 'Text Editor', description: 'Simple text editor' }), false);
+test('title containing Settings without membership -> false', () => {
+    assert.equal(isSettingsApp({ type: 'app', title: 'Settings', description: 'Configure your system', appId: 's.desktop' }, new Set()), false);
+    assert.equal(isSettingsApp({ type: 'app', title: 'Browser Settings', appId: 'b.desktop' }, SET_A), false);
+    assert.equal(isSettingsApp({ type: 'app', title: 'Pengaturan Sistem', appId: 'p.desktop' }, SET_A), false);
 });
 
-test('file named settings false', () => {
-    assert.equal(isSettingsApp({ type: 'file', title: 'settings.txt', description: '' }), false);
+test('third-party Categories=Settings without membership -> false', () => {
+    assert.equal(isSettingsApp({ type: 'app', title: 'Cool Tweaks', appId: 'cool-tweaks.desktop' }, SET_A), false);
 });
 
-test('indonesian pengaturan true', () => {
-    assert.equal(isSettingsApp({ type: 'app', title: 'Pengaturan Sistem', description: '' }), true);
+test('third-party X-GNOME panel marker without membership -> false', () => {
+    assert.equal(isSettingsApp({ type: 'app', title: 'Firewall Configuration', appId: 'gufw.desktop' }, SET_A), false);
 });
 
-test('preferensi true', () => {
-    assert.equal(isSettingsApp({ type: 'app', title: 'Preferensi Desktop', description: '' }), true);
+test('third-party Settings+HardwareSettings without membership -> false', () => {
+    assert.equal(isSettingsApp({ type: 'app', title: 'Bluetooth Manager', appId: 'blueman-manager.desktop' }, SET_A), false);
+    assert.equal(isSettingsApp({ type: 'app', title: 'Disks', appId: 'org.gnome.DiskUtility.desktop' }, SET_A), false);
 });
 
-test('normal queries no accidental match', () => {
-    const normals = [
-        ['firefox.desktop', 'Firefox Web Browser', 'firefox %u', 'GNOME;GTK;Network;WebBrowser;'],
-        ['org.gnome.Terminal.desktop', 'Terminal', 'gnome-terminal', 'GNOME;GTK;System;TerminalEmulator;'],
-        ['nemo.desktop', 'Files', 'nemo %U', 'GNOME;GTK;Utility;Core;'],
-        ['org.gnome.Calculator.desktop', 'Calculator', 'gnome-calculator', 'GNOME;GTK;Utility;Calculator;'],
-        ['xed.desktop', 'Text Editor', 'xed', 'GNOME;GTK;Utility;TextEditor;'],
-    ];
-    for (const [id, t, ex, cats] of normals) {
-        assert.equal(isSettingsApp({ type: 'app', title: t, description: 'x', appId: id, execLine: ex, categories: cats }), false, t);
-    }
-    assert.equal(isSettingsApp(null), false);
-    assert.equal(isSettingsApp({}), false);
+test('membership follows the machine: set A vs set B', () => {
+    assert.equal(isSettingsApp({ type: 'app', title: 'Network', appId: 'network.desktop' }, SET_A), true);
+    assert.equal(isSettingsApp({ type: 'app', title: 'Network', appId: 'network.desktop' }, SET_B), false);
+    assert.equal(isSettingsApp({ type: 'app', title: 'Sound', appId: 'sound.desktop' }, SET_A), false);
+    assert.equal(isSettingsApp({ type: 'app', title: 'Sound', appId: 'sound.desktop' }, SET_B), true);
 });
 
-test('third-party generic Categories=Settings stays App (not discovered)', () => {
-    assert.equal(isSettingsApp({ type: 'app', title: 'Cool Tweaks', description: 'tweak stuff', appId: 'cool-tweaks.desktop', execLine: 'cool-tweaks', categories: 'GNOME;GTK;Settings;' }), false);
-    assert.equal(isSettingsApp({ type: 'file', title: 'settings.txt', path: '/a', categories: 'Settings;' }), false);
-});
-
-test('utility with Settings marker stays App (Disks guard)', () => {
-    assert.equal(isSettingsApp({ type: 'app', title: 'Disks', description: 'Manage Drives', appId: 'org.gnome.DiskUtility.desktop', execLine: 'gnome-disks', categories: 'GNOME;GTK;Utility;X-GNOME-Utilities;Settings;HardwareSettings;' }), false);
-});
-
-test('cinnamon settings modules classified via runtime desktop-entry signals', () => {
-    const mods = [
-        ['cinnamon-settings.desktop', 'System Settings', 'env WEBKIT_DISABLE_COMPOSITING_MODE=1 cinnamon-settings', '', '', 'Settings;'],
-        ['cinnamon-display-panel.desktop', 'Display', 'cinnamon-settings display', 'display', '', 'GTK;Settings;HardwareSettings;X-Cinnamon-Settings-Panel;'],
-        ['cinnamon-network-panel.desktop', 'Network', 'cinnamon-settings network', 'network', '', 'GTK;Settings;HardwareSettings;X-Cinnamon-Settings-Panel;'],
-        ['cinnamon-settings-sound.desktop', 'Sound', 'cinnamon-settings sound', '', '', 'Settings;'],
-        ['cinnamon-settings-keyboard.desktop', 'Keyboard', 'cinnamon-settings keyboard', '', '', 'Settings;'],
-        ['cinnamon-settings-mouse.desktop', 'Mouse and Touchpad', 'cinnamon-settings mouse', '', '', 'Settings;'],
-        ['cinnamon-settings-power.desktop', 'Power Management', 'cinnamon-settings power', '', '', 'Settings;'],
-        ['cinnamon-settings-users.desktop', 'Users and Groups', 'cinnamon-settings-users', '', '', 'System;Settings;'],
-        ['cinnamon-settings-calendar.desktop', 'Date & Time', 'cinnamon-settings calendar', '', '', 'Settings;'],
-        ['cinnamon-settings-privacy.desktop', 'Privacy', 'cinnamon-settings privacy', '', '', 'Settings;'],
-        ['cinnamon-settings-panel.desktop', 'Panel', 'cinnamon-settings panel', '', '', 'Settings;'],
-        ['gufw.desktop', 'Firewall Configuration', 'gufw', 'gufw', '1', 'GNOME;GTK;Settings;Security;X-GNOME-Settings-Panel;X-GNOME-SystemSettings;'],
-        ['blueman-manager.desktop', 'Bluetooth Manager', 'blueman-manager', '', '', 'GTK;GNOME;Settings;HardwareSettings;'],
-    ];
-    for (const [id, title, ex, sp, gs, cats] of mods) {
-        assert.equal(isSettingsApp({ type: 'app', title, description: 'x', appId: id, execLine: ex, settingsPanel: sp, gnomePanel: gs, gnomeSystem: gs, categories: cats }), true, title);
-    }
-});
-
-test('classification follows discovered membership, not hardcoded names', () => {
-    const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../utils.js'), 'utf8');
+test('no module names or title heuristics in production classifier', () => {
+    const src = fs.readFileSync(path.join(__dirname, '../utils.js'), 'utf8');
     const fn = src.slice(src.indexOf('function isSettingsApp'));
-    assert.ok(!fn.includes('blueman') && !fn.includes('gufw') && !fn.includes('Bluetooth Manager') && !fn.includes('Firewall Configuration'), 'no module names in classifier');
+    for (const s of ['blueman', 'gufw', 'cinnamon-settings', 'cinnamon-display', 'cinnamon-network',
+        'cinnamon-bluetooth', 'cinnamon-color', 'cinnamon-wacom', 'cinnamon-datetime',
+        'pengaturan', 'preferensi', "indexOf('settings')", 'Categories', 'HardwareSettings',
+        'X-GNOME', 'X-Cinnamon', 'execLine', 'settingsPanel']) {
+        assert.ok(!fn.includes(s), 'classifier must not contain: ' + s);
+    }
 });
 
-test('settings section badge uses localized Settings, normal app stays App', () => {
+test('provider builds membership from local desktop entries, no name list', () => {
+    const src = fs.readFileSync(path.join(__dirname, '../providers/appProvider.js'), 'utf8');
+    assert.ok(src.includes('getSettingsApps'), 'provider exposes membership');
+    assert.ok(src.includes('X-Cinnamon-Settings-Panel'), 'panel signal read at runtime');
+    assert.ok(src.includes('cinnamon-settings'), 'exec signal read at runtime');
+    for (const s of ['blueman', 'gufw', 'Bluetooth Manager', 'Firewall Configuration', 'SETTINGS_APPS']) {
+        assert.ok(!src.includes(s), 'provider must not list modules: ' + s);
+    }
+});
+
+test('provider discovery: panel/exec entries join, third-party excluded, refresh on installed-changed', () => {
+    const origRequire = Module.prototype.require;
+    const entries = {
+        'display.desktop': { Exec: 'cinnamon-settings display', 'X-Cinnamon-Settings-Panel': 'display' },
+        'sound.desktop': { Exec: 'cinnamon-settings sound' },
+        'firefox.desktop': { Exec: 'firefox %u' },
+        'cool-tweaks.desktop': { Exec: 'cool-tweaks', Categories: 'GNOME;GTK;Settings;' },
+        'gufw.desktop': { Exec: 'gufw' },
+    };
+    const fakeApps = Object.keys(entries).map(id => ({
+        get_id: () => id,
+        get_name: () => id.replace('.desktop', ''),
+        get_description: () => '',
+        open_new_window: () => {},
+    }));
+    let changeCb = null;
+    const fakeAppsys = {
+        get_all: () => fakeApps,
+        connect: (sig, cb) => { changeCb = cb; return 7; },
+        disconnect: () => {},
+    };
+    const fakeInfo = (id) => ({
+        get_keywords: () => [],
+        get_executable: () => (entries[id].Exec || '').split(' ')[0],
+        get_string: (k) => entries[id][k] || '',
+        get_icon: () => null,
+        has_key: () => false,
+    });
+    Module.prototype.require = function (rid) {
+        if (rid === 'gi.Gio') return { DesktopAppInfo: { new: fakeInfo } };
+        if (rid === 'ui.main') return {};
+        if (rid === 'gi.Cinnamon') return { AppSystem: { get_default: () => fakeAppsys } };
+        return origRequire.apply(this, arguments);
+    };
+    delete require.cache[require.resolve('../providers/appProvider.js')];
+    const { createAppProvider } = require('../providers/appProvider.js');
+    Module.prototype.require = origRequire;
+    const prov = createAppProvider({ makeResult: o => o, scoreResult: () => 1, limits: { app: 5 } });
+    const set = prov.getSettingsApps();
+    assert.ok(set.has('display.desktop'), 'display discovered');
+    assert.ok(set.has('sound.desktop'), 'sound discovered');
+    assert.ok(!set.has('firefox.desktop'), 'firefox excluded');
+    assert.ok(!set.has('cool-tweaks.desktop'), 'third-party Settings excluded');
+    assert.ok(!set.has('gufw.desktop'), 'gnome-only marker excluded');
+    assert.ok(typeof changeCb === 'function', 'installed-changed hooked');
+    delete entries['sound.desktop'];
+    fakeAppsys.get_all = () => Object.keys(entries).map(id => ({
+        get_id: () => id, get_name: () => id, get_description: () => '', open_new_window: () => {},
+    }));
+    changeCb();
+    const set2 = prov.getSettingsApps();
+    assert.ok(!set2.has('sound.desktop'), 'membership refreshes after change');
+    assert.ok(set2.has('display.desktop'), 'display kept');
+    prov.destroy();
+    delete require.cache[require.resolve('../providers/appProvider.js')];
+});
+
+test('badge + section share one classifier source', () => {
     const src = fs.readFileSync(path.join(__dirname, '../applet.js'), 'utf8');
+    assert.ok(src.includes('_isSettingsResult(r)'), 'single classifier helper');
     assert.ok(src.includes('isSettingsRow ? _("Settings") : "App"'), 'badge branch exists');
-    assert.ok(src.includes("typeKey === 'app' && !!utilsMod.isSettingsApp(r)"), 'badge gated on app type');
+    assert.ok(!src.includes("typeKey === 'app' && !!utilsMod.isSettingsApp(r)"), 'no direct heuristic call in badge');
 });
 
-test('production wiring: applet uses utilsMod.isSettingsApp + settings category', () => {
+test('no Settings chip; valid list keeps settings filter', () => {
     const src = fs.readFileSync(path.join(__dirname, '../applet.js'), 'utf8');
-    assert.ok(src.includes('utilsMod.isSettingsApp'), 'applet calls production helper');
     assert.ok(src.includes('"all", "app", "file", "folder", "settings", "web"'), 'valid list has settings');
-    assert.ok(src.includes("cat === 'settings'"), 'filter branch exists');
     const chipIdx = src.indexOf('const _categories = [');
-    const chipSection = src.slice(chipIdx, chipIdx + 600);
-    assert.ok(!chipSection.includes('"settings"'), 'no chip added');
+    assert.ok(!src.slice(chipIdx, chipIdx + 600).includes('"settings"'), 'no chip added');
 });
 
-function sectionGroups(display) {
+function sectionGroups(display, set) {
     const best = display[0];
     const appGroup = display.filter(r => {
         if (!r || r.type !== 'app' || r.id === best.id) return false;
-        return !isSettingsApp(r);
+        return !isSettingsApp(r, set);
     });
     const settingsGroup = display.filter(r => {
         if (!r || r.id === best.id || r.type !== 'app') return false;
-        return isSettingsApp(r);
+        return isSettingsApp(r, set);
     });
     return { best, appGroup, settingsGroup };
 }
 
-test('settings app enters settings section, normal app stays in app', () => {
+test('settings member enters settings section, normal app stays in app', () => {
     const { makeResult, scoreResult } = require('../result.js');
-    const setApp = makeResult({ type: 'app', title: 'Settings', description: 'Configure your system', appId: 's.desktop', score: scoreResult('keyword') });
-    const editor = makeResult({ type: 'app', title: 'Text Editor', description: 'Simple text editor', appId: 'e.desktop', score: scoreResult('keyword') });
+    const disp = makeResult({ type: 'app', title: 'Display', appId: 'display.desktop', score: scoreResult('keyword') });
+    const editor = makeResult({ type: 'app', title: 'Text Editor', appId: 'e.desktop', score: scoreResult('keyword') });
     const top = makeResult({ type: 'file', title: 'exact.txt', path: '/a/exact.txt', score: scoreResult('file-exact') });
-    const display = [top, setApp, editor];
-    const { best, appGroup, settingsGroup } = sectionGroups(display);
+    const display = [top, disp, editor];
+    const { best, appGroup, settingsGroup } = sectionGroups(display, SET_A);
     assert.equal(best.id, top.id);
-    assert.deepEqual(settingsGroup.map(r => r.id), [setApp.id]);
+    assert.deepEqual(settingsGroup.map(r => r.id), [disp.id]);
     assert.deepEqual(appGroup.map(r => r.id), [editor.id]);
 });
 
 test('best match settings not duplicated in section', () => {
     const { makeResult, scoreResult } = require('../result.js');
-    const setApp = makeResult({ type: 'app', title: 'Settings', description: 'Configure your system', appId: 's.desktop', score: scoreResult('app-exact') });
-    const editor = makeResult({ type: 'app', title: 'Text Editor', description: 'x', appId: 'e.desktop', score: scoreResult('keyword') });
-    const display = [setApp, editor];
-    const { best, appGroup, settingsGroup } = sectionGroups(display);
-    assert.equal(best.id, setApp.id);
+    const disp = makeResult({ type: 'app', title: 'Display', appId: 'display.desktop', score: scoreResult('app-exact') });
+    const editor = makeResult({ type: 'app', title: 'Text Editor', appId: 'e.desktop', score: scoreResult('keyword') });
+    const display = [disp, editor];
+    const { best, appGroup, settingsGroup } = sectionGroups(display, SET_A);
+    assert.equal(best.id, disp.id);
     assert.deepEqual(settingsGroup.map(r => r.id), []);
     assert.deepEqual(appGroup.map(r => r.id), [editor.id]);
 });
@@ -130,21 +174,13 @@ test('best match settings not duplicated in section', () => {
 test('file/folder named settings never enter settings section', () => {
     const { makeResult, scoreResult } = require('../result.js');
     const f = makeResult({ type: 'file', title: 'settings.txt', path: '/a/settings.txt', score: scoreResult('file-exact') });
-    const display = [f];
-    const { settingsGroup } = sectionGroups(display);
+    const { settingsGroup } = sectionGroups([f], new Set(['settings.txt']));
     assert.deepEqual(settingsGroup.map(r => r.id), []);
 });
 
-test('ranking order preserved when settings split out', () => {
+test('underlying result type stays app', () => {
     const { makeResult, scoreResult } = require('../result.js');
-    const mk = (t, n, sc) => makeResult(t === 'app'
-        ? { type: t, title: 't' + n, appId: 'id' + n, score: sc }
-        : { type: t, title: 't' + n, path: '/p/' + n, score: sc });
-    const file = mk('file', 1, 180);
-    const app = mk('app', 2, 150);
-    const web = mk('web', 3, 90);
-    const sorted = [file, app, web];
-    assert.deepEqual(sorted.map(r => r.id), [file.id, app.id, web.id]);
-    const { appGroup } = sectionGroups(sorted);
-    assert.deepEqual(appGroup.map(r => r.id), [app.id]);
+    const disp = makeResult({ type: 'app', title: 'Display', appId: 'display.desktop', score: 1 });
+    assert.equal(disp.type, 'app');
+    assert.equal(isSettingsApp(disp, SET_A), true);
 });

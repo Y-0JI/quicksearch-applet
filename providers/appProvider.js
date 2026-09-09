@@ -22,10 +22,37 @@ function createAppProvider(helpers) {
     const limitDefault = helpers.limits && helpers.limits.app ? helpers.limits.app : 5;
     const appsys = Cinnamon.AppSystem.get_default();
     let index = null;
+    let settingsApps = null;
     let installedChangedId = 0;
+
+    function _execBase(execLine) {
+        try {
+            const toks = String(execLine || '').toLowerCase().trim().split(/\s+/);
+            for (let i = 0; i < toks.length; i++) {
+                const base = (toks[i] || '').split('/').pop();
+                if (base) return base;
+                if (toks[i] && toks[i].indexOf('=') === -1) { const b = String(toks[i]).split('/').pop(); if (b) return b; }
+            }
+        } catch (e) {}
+        return '';
+    }
+
+    // Dynamic local membership: which installed apps belong to THIS machine's
+    // Cinnamon System Settings. Signals are read at runtime from each desktop
+    // entry — no module names listed anywhere. A different machine yields a
+    // different set automatically.
+    function _isSettingsEntry(info, execLine) {
+        try {
+            if (info && info.get_string && String(info.get_string("X-Cinnamon-Settings-Panel") || '').trim()) return true;
+        } catch (e) {}
+        const base = _execBase(execLine);
+        if (base === 'cinnamon-settings' || base === 'cinnamon-settings-users') return true;
+        return false;
+    }
 
     function buildIndex() {
         index = [];
+        settingsApps = new Set();
         const apps = appsys.get_all(false);
         for (let i = 0; i < apps.length; i++) {
             const app = apps[i];
@@ -33,6 +60,9 @@ function createAppProvider(helpers) {
             if (!id) continue;
             const info = Gio.DesktopAppInfo.new(id);
             if (_isInternalFileLauncher(id, info)) continue;
+            let execLine = '';
+            try { execLine = info && info.get_string ? String(info.get_string("Exec") || '') : ''; } catch (e) {}
+            if (_isSettingsEntry(info, execLine)) { try { settingsApps.add(id); } catch (e) {} }
             index.push({
                 app: app,
                 appId: id,
@@ -40,12 +70,6 @@ function createAppProvider(helpers) {
                 description: app.get_description() || '',
                 keywords: info ? (info.get_keywords() || []) : [],
                 executable: info ? String(info.get_executable() || '').toLowerCase() : '',
-                categories: (() => { try { return info && info.get_string ? String(info.get_string("Categories") || '') : ''; } catch (e) { return ''; } })(),
-                execLine: (() => { try { return info && info.get_string ? String(info.get_string("Exec") || '') : ''; } catch (e) { return ''; } })(),
-                onlyShowIn: (() => { try { return info && info.get_string ? String(info.get_string("OnlyShowIn") || '') : ''; } catch (e) { return ''; } })(),
-                settingsPanel: (() => { try { return info && info.get_string ? String(info.get_string("X-Cinnamon-Settings-Panel") || '') : ''; } catch (e) { return ''; } })(),
-                gnomePanel: (() => { try { return info && info.get_string ? String(info.get_string("X-GNOME-Settings-Panel") || '') : ''; } catch (e) { return ''; } })(),
-                gnomeSystem: (() => { try { return info && info.get_string ? String(info.get_string("X-GNOME-SystemSettings") || '') : ''; } catch (e) { return ''; } })(),
                 gicon: info ? info.get_icon() : null
             });
         }
@@ -56,10 +80,18 @@ function createAppProvider(helpers) {
             buildIndex();
             if (!installedChangedId) {
                 try {
-                    installedChangedId = appsys.connect('installed-changed', () => { index = null; });
+                    installedChangedId = appsys.connect('installed-changed', () => { index = null; settingsApps = null; });
                 } catch (e) { /* non-critical */ }
             }
         }
+    }
+
+    // Local settings registry snapshot: Set of appIds discovered on THIS
+    // machine. Rebuilt with the index; invalidated on installed-changed.
+    function getSettingsApps() {
+        ensureIndex();
+        if (!settingsApps) return new Set();
+        return settingsApps;
     }
 
     function searchApps(query, limit) {
@@ -89,12 +121,6 @@ function createAppProvider(helpers) {
                     description: e.description,
                     icon: e.gicon,
                     appId: e.appId,
-                    categories: e.categories,
-                    execLine: e.execLine,
-                    onlyShowIn: e.onlyShowIn,
-                    settingsPanel: e.settingsPanel,
-                    gnomePanel: e.gnomePanel,
-                    gnomeSystem: e.gnomeSystem,
                     score: scoreResult(quality),
                     action: () => {
                         try {
@@ -111,13 +137,14 @@ function createAppProvider(helpers) {
 
     function destroy() {
         index = null;
+        settingsApps = null;
         if (installedChangedId) {
             try { appsys.disconnect(installedChangedId); } catch (e) {}
             installedChangedId = 0;
         }
     }
 
-    return { searchApps, destroy };
+    return { searchApps, getSettingsApps, destroy };
 }
 
 function _wordStarts(name, q) {

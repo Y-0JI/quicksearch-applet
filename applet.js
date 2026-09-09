@@ -2818,8 +2818,24 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     // ---- UI-2: category filter (presentation only — never re-ranks) ----
 
-    // PATCH 1: settings filter API only (no chip, no section) — narrow
-    // presentation heuristic via utilsMod.isSettingsApp.
+    // Local settings registry snapshot: Set of appIds that ARE this machine's
+    // Cinnamon System Settings (built by the app provider at runtime).
+    _settingsSet() {
+        try {
+            if (this._appProvider && typeof this._appProvider.getSettingsApps === 'function') {
+                const s = this._appProvider.getSettingsApps();
+                if (s && typeof s.has === 'function') return s;
+            }
+        } catch (e) {}
+        return null;
+    }
+
+    // Single classifier for section grouping, filter, and badge — all read the
+    // same discovered membership. Undiscovered apps are never Settings.
+    _isSettingsResult(r) {
+        try { return utilsMod.isSettingsApp(r, this._settingsSet()); } catch (e) { return false; }
+    }
+
     _setCategory(id) {
         const valid = ["all", "app", "file", "folder", "settings", "web"];
         if (valid.indexOf(id) === -1) id = "all";
@@ -2851,8 +2867,8 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     // Type filter over the ALREADY-ranked result set. "Folders"/"Files" split file
-    // results by their folder icon; "settings" keeps apps matching the narrow
-    // presentation heuristic; unknown categories fall through to All.
+    // results by their folder icon; "settings" keeps discovered local Settings
+    // members; unknown categories fall through to All.
     _filterResults(results) {
         const cat = this._category || 'all';
         if (cat === 'all') return results;
@@ -2864,7 +2880,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             if (cat === 'folder') return r.type === 'file' && String(r.icon || '') === 'folder-symbolic';
             if (cat === 'settings') {
                 if (r.type !== 'app') return false;
-                try { return utilsMod.isSettingsApp(r); } catch (e) { return false; }
+                try { return this._isSettingsResult(r); } catch (e) { return false; }
             }
             return true;
         });
@@ -3352,6 +3368,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             const best = display[0];
             mainRows.push({ header: _("Best Match"), bestHeader: true });
             mainRows.push({ result: best, bestMatch: true });
+            const self = this;
             for (let s = 0; s < SECTION_ORDER.length; s++) {
                 const type = SECTION_ORDER[s][0];
                 const header = SECTION_ORDER[s][1];
@@ -3359,12 +3376,12 @@ class QuickSearchApplet extends Applet.IconApplet {
                 if (type === 'settings') {
                     group = display.filter(r => {
                         if (!r || r.id === best.id || r.type !== 'app') return false;
-                        try { return utilsMod.isSettingsApp(r); } catch (e) { return false; }
+                        try { return self._isSettingsResult(r); } catch (e) { return false; }
                     });
                 } else if (type === 'app') {
                     group = display.filter(r => {
                         if (!r || r.type !== 'app' || r.id === best.id) return false;
-                        try { return !utilsMod.isSettingsApp(r); } catch (e) { return true; }
+                        try { return !self._isSettingsResult(r); } catch (e) { return true; }
                     });
                 } else {
                     group = display.filter(r => r.type === type && r.id !== best.id);
@@ -3493,7 +3510,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         const typeKey = r && r.type ? String(r.type) : "";
         const isFolder = typeKey === "file" && String(r.icon || "") === "folder-symbolic";
         let isSettingsRow = false;
-        try { isSettingsRow = typeKey === 'app' && !!utilsMod.isSettingsApp(r); } catch (e) { isSettingsRow = false; }
+        try { isSettingsRow = typeKey === 'app' && !!this._isSettingsResult(r); } catch (e) { isSettingsRow = false; }
         const typeMap = { app: isSettingsRow ? _("Settings") : "App", file: isFolder ? "Folder" : "File", web: "Web", calc: "Calc", url: "Link" };
         const rightMeta = new St.BoxLayout({ vertical: false, style_class: "quicksearch-right-meta", x_expand: false, x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.CENTER });
         if (typeKey && typeMap[typeKey] && !isRecent) {

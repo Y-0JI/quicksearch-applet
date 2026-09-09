@@ -72,36 +72,20 @@ function normalizeSearchEngine(raw) {
 }
 
 // Settings classification (presentation-only).
-// PRIMARY: dynamic discovery — membership in the LOCAL Cinnamon System Settings
-// registry. The authoritative local signals, read at runtime from each app's
-// desktop entry on the machine where the applet runs:
-//   - Exec starts with "cinnamon-settings" (every native settings module), or
-//   - X-Cinnamon-Settings-Panel key present (hardware panels)
-// No module names are listed: a different machine with different modules gets
-// a different membership automatically.
-// FALLBACK (only when the desktop-entry signals above are unavailable, e.g.
-// legacy hand-written tests): title+description match settings/pengaturan/
-// preferensi. Generic Categories=Settings alone NEVER qualifies — it would
-// promote unrelated third-party apps. Type must be 'app'; never files.
-function isSettingsApp(r) {
+// Single source of truth: the discovered local membership Set built by the
+// app provider from THIS machine's Cinnamon System Settings registry
+// (X-Cinnamon-Settings-Panel / cinnamon-settings Exec). No module names, no
+// title/description guessing, no generic Categories sniffing. Unknown or
+// undiscovered apps stay App — false-negative beats false-positive.
+function isSettingsApp(r, settingsSet) {
     if (!r || r.type !== 'app') return false;
     try {
-        const execTokens = String(r.execLine || r.executable || '').toLowerCase().trim().split(/\s+/);
-        const execBase = (execTokens[0] || '').split('/').pop();
-        if (execBase === 'cinnamon-settings' || execBase === 'cinnamon-settings-users') return true;
-        if (String(r.settingsPanel || '').trim()) return true;
-        if (String(r.gnomePanel || '').trim()) return true;
-        if (String(r.gnomeSystem || '').trim()) return true;
-        const catSet = {};
-        try {
-            const parts = String(r.categories || '').split(';');
-            for (let i = 0; i < parts.length; i++) { const c = parts[i].trim(); if (c) catSet[c] = true; }
-        } catch (e2) {}
-        if (catSet['Settings'] && (catSet['HardwareSettings'] || catSet['Security']) &&
-            !catSet['Utility'] && !catSet['X-GNOME-Utilities']) return true;
+        if (settingsSet && typeof settingsSet.has === 'function') {
+            const id = r.appId != null ? r.appId : r.id;
+            if (id != null && settingsSet.has(id)) return true;
+        }
     } catch (e) {}
-    const hay = String(r.title || '').toLowerCase() + ' ' + String(r.description || '').toLowerCase();
-    return hay.indexOf('settings') !== -1 || hay.indexOf('pengaturan') !== -1 || hay.indexOf('preferensi') !== -1;
+    return false;
 }
 
 module.exports = { pickFileBackend, sanitizeGlob, buildLocalRows, normalizeSearchEngine, isSettingsApp };

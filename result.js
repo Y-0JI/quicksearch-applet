@@ -48,12 +48,6 @@ function makeResult(fields) {
     if (fields.url !== undefined) r.url = fields.url;
     if (fields.path !== undefined) r.path = fields.path;
     if (fields.appId !== undefined) r.appId = fields.appId;
-    if (fields.categories !== undefined) r.categories = String(fields.categories || '');
-    if (fields.execLine !== undefined) r.execLine = String(fields.execLine || '');
-    if (fields.onlyShowIn !== undefined) r.onlyShowIn = String(fields.onlyShowIn || '');
-    if (fields.settingsPanel !== undefined) r.settingsPanel = String(fields.settingsPanel || '');
-    if (fields.gnomePanel !== undefined) r.gnomePanel = String(fields.gnomePanel || '');
-    if (fields.gnomeSystem !== undefined) r.gnomeSystem = String(fields.gnomeSystem || '');
     if (fields.value !== undefined) r.value = fields.value;
     r.id = _stableId(r);
     return r;

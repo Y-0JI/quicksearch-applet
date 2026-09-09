@@ -50,8 +50,9 @@ test('UI-2: horizontal category filter chips exist — All/Apps/Files/Folders/We
     assert.ok(APPLET_SRC.includes('quicksearch-filter-chip-active'), 'active chip highlight');
 });
 
-test('P2-4: Settings category is presentation-only heuristic (no chip, filter + section)', () => {
-    // PATCH 2: no Settings chip in _categories; filter branch + SECTION_ORDER entry exist.
+test('P2-4: Settings category uses discovered local membership (no chip, filter + section)', () => {
+    // FINAL: no Settings chip in _categories; filter branch + SECTION_ORDER entry exist;
+    // badge/section/filter share _isSettingsResult over the provider membership.
     const chipIdx = APPLET_SRC.indexOf('const _categories = [');
     assert.ok(chipIdx !== -1, 'chip list exists');
     assert.ok(!APPLET_SRC.slice(chipIdx, chipIdx + 600).includes('"settings"'), 'no Settings chip entry');
@@ -60,7 +61,9 @@ test('P2-4: Settings category is presentation-only heuristic (no chip, filter + 
     const filterIdx = APPLET_SRC.indexOf('_filterResults(results) {');
     const filterSection = APPLET_SRC.slice(filterIdx, filterIdx + 1400);
     assert.ok(filterSection.includes('cat === \'settings\''), 'filter has settings branch');
-    assert.ok(filterSection.includes('utilsMod.isSettingsApp'), 'filter uses production heuristic');
+    assert.ok(filterSection.includes('_isSettingsResult'), 'filter uses single membership classifier');
+    assert.ok(APPLET_SRC.includes('_settingsSet()'), 'membership snapshot helper exists');
+    assert.ok(APPLET_SRC.includes('getSettingsApps'), 'membership read from provider');
     const pot = fs.readFileSync(path.join(ROOT, 'po/quicksearch@yoji.pot'), 'utf8');
     assert.ok(pot.includes('msgid "SETTINGS"'), 'settings header string in pot');
     assert.ok(APPLET_SRC.includes('_("SETTINGS")'), 'settings header uses gettext');
@@ -94,7 +97,9 @@ test('UI-2: category filter is presentation-only — never re-ranks', () => {
     const sorted = all.slice().sort((a, b) => b.score - a.score);
 
     // unknown categories fall through to All (defensive, matches _setCategory)
+    // membership-gated: only discovered appIds pass the settings filter.
     const { isSettingsApp } = require('../utils.js');
+    const SET = new Set(['id9']);
     function filterResults(results, cat) {
         if (cat === 'all') return results;
         return results.filter(r => {
@@ -105,7 +110,7 @@ test('UI-2: category filter is presentation-only — never re-ranks', () => {
             if (cat === 'folder') return r.type === 'file' && String(r.icon || '') === 'folder-symbolic';
             if (cat === 'settings') {
                 if (r.type !== 'app') return false;
-                return isSettingsApp(r);
+                return isSettingsApp(r, SET);
             }
             return true;
         });
@@ -118,9 +123,9 @@ test('UI-2: category filter is presentation-only — never re-ranks', () => {
     assert.deepEqual(filterResults(sorted, 'web').map(r => r.id), [web.id], 'web kept');
     // unknown categories fall through to All (defensive, matches _setCategory)
     assert.deepEqual(filterResults(sorted, 'bogus').map(r => r.id), sorted.map(r => r.id), 'unknown category → all');
-    const setApp = mk('app', 150, 9); setApp.title = 'Settings';
-    assert.ok(filterResults([setApp, app], 'settings').some(r => r.id === setApp.id), 'settings filter keeps Settings app');
-    assert.ok(!filterResults([setApp, app], 'settings').some(r => r.id === app.id), 'settings filter drops normal app');
+    const setApp = mk('app', 150, 9); setApp.title = 'Display';
+    assert.ok(filterResults([setApp, app], 'settings').some(r => r.id === setApp.id), 'settings filter keeps discovered member');
+    assert.ok(!filterResults([setApp, app], 'settings').some(r => r.id === app.id), 'settings filter drops undiscovered app');
 });
 
 test('UI-2: Best Match leads the panel and is NOT duplicated in sections', () => {
