@@ -3328,6 +3328,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             ["calc", null],
             ["url", null],
             ["app", _("APPLICATIONS")],
+            ["settings", _("SETTINGS")],
             ["file", _("FILES")],
             ["web", _("WEB")]
         ];
@@ -3354,7 +3355,20 @@ class QuickSearchApplet extends Applet.IconApplet {
             for (let s = 0; s < SECTION_ORDER.length; s++) {
                 const type = SECTION_ORDER[s][0];
                 const header = SECTION_ORDER[s][1];
-                const group = display.filter(r => r.type === type && r.id !== best.id);
+                let group;
+                if (type === 'settings') {
+                    group = display.filter(r => {
+                        if (!r || r.id === best.id || r.type !== 'app') return false;
+                        try { return utilsMod.isSettingsApp(r); } catch (e) { return false; }
+                    });
+                } else if (type === 'app') {
+                    group = display.filter(r => {
+                        if (!r || r.type !== 'app' || r.id === best.id) return false;
+                        try { return !utilsMod.isSettingsApp(r); } catch (e) { return true; }
+                    });
+                } else {
+                    group = display.filter(r => r.type === type && r.id !== best.id);
+                }
                 if (!group.length) continue;
                 if (header) mainRows.push({ header: header });
                 for (const r of group) mainRows.push({ result: r });

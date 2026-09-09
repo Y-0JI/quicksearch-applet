@@ -29,6 +29,9 @@ msgstr "FILE"
 msgid "WEB"
 msgstr "WEB"
 
+msgid "SETTINGS"
+msgstr "PENGATURAN"
+
 msgid "Recent"
 msgstr "Terbaru"
 

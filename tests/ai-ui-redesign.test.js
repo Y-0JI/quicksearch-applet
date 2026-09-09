@@ -50,18 +50,20 @@ test('UI-2: horizontal category filter chips exist — All/Apps/Files/Folders/We
     assert.ok(APPLET_SRC.includes('quicksearch-filter-chip-active'), 'active chip highlight');
 });
 
-test('P2-4: Settings category is presentation-only heuristic (no chip, filter API only)', () => {
-    // PATCH 1: no Settings chip in UI; valid list + filter branch exist, narrow heuristic only.
-    assert.ok(!APPLET_SRC.includes('["settings", _("Settings")]') && !APPLET_SRC.includes("[\"settings\", _\\(\"Settings\")]"), 'no Settings chip entry');
+test('P2-4: Settings category is presentation-only heuristic (no chip, filter + section)', () => {
+    // PATCH 2: no Settings chip in _categories; filter branch + SECTION_ORDER entry exist.
+    const chipIdx = APPLET_SRC.indexOf('const _categories = [');
+    assert.ok(chipIdx !== -1, 'chip list exists');
+    assert.ok(!APPLET_SRC.slice(chipIdx, chipIdx + 600).includes('"settings"'), 'no Settings chip entry');
     const validIdx = APPLET_SRC.indexOf('const valid = ["all", "app", "file", "folder", "settings", "web"];');
     assert.ok(validIdx !== -1, 'valid category list has settings');
     const filterIdx = APPLET_SRC.indexOf('_filterResults(results) {');
     const filterSection = APPLET_SRC.slice(filterIdx, filterIdx + 1400);
     assert.ok(filterSection.includes('cat === \'settings\''), 'filter has settings branch');
     assert.ok(filterSection.includes('utilsMod.isSettingsApp'), 'filter uses production heuristic');
-    // po files no longer carry a dead Settings string
     const pot = fs.readFileSync(path.join(ROOT, 'po/quicksearch@yoji.pot'), 'utf8');
-    assert.ok(!pot.includes('msgid "Settings"'), 'Settings string removed from pot');
+    assert.ok(pot.includes('msgid "SETTINGS"'), 'settings header string in pot');
+    assert.ok(APPLET_SRC.includes('_("SETTINGS")'), 'settings header uses gettext');
 });
 
 test('P2-1: category chips live in a horizontal overflow scroll (responsive-safe)', () => {
