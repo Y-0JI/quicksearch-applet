@@ -102,14 +102,14 @@
     min-width: 56px;
 }
 .quicksearch-type {
-    font-size: 7pt;
-    font-weight: 600;
+    font-size: 7.5pt;
+    font-weight: 500;
     letter-spacing: 0.2px;
-    color: rgba(255, 255, 255, 0.62);
-    background-color: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 999px;
-    padding: 2px 9px;
+    color: rgba(255, 255, 255, 0.45);
+    background: none;
+    border: none;
+    border-radius: 0;
+    padding: 2px 4px;
 }
 
 .quicksearch-context-menu {
@@ -533,28 +533,44 @@
     color: rgba(255, 255, 255, 1.0);
 }
 
-/* Ref (advance_ui.png) draws a 1px hairline (rgb 49,57,67 ~= white 10%) between
-   the search input row and the category chips — the chips sit on the same dark
-   surface below it. */
+/* Category strip: flat chip navigation (mockup 04) — NOT a card. The strip
+   carries the pill's own surface so pill + strip read as one piece; the
+   results panel below drops its adjoining border/radius via
+   .quicksearch-results-connected (toggled with strip visibility). */
 .quicksearch-filter-scroll {
     max-height: 56px;
-    background: none;
-    border: none;
+    background-color: rgba(22, 28, 36, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-top: none;
+    border-bottom: none;
     padding: 0;
+    margin-bottom: 0;
+    max-width: 560px;
+}
+/* Pill drops its bottom border/radius while the strip is visible. Base pill
+   style above is untouched — this only applies in the connected state. */
+.quicksearch-entry-row-connected {
+    border-bottom: none;
+    border-radius: 16px 16px 0 0;
+    margin-bottom: 0;
+}
+/* Results panel drops its top border/radius while the strip is visible. */
+.quicksearch-search-view .quicksearch-results-connected {
+    border-top: none;
+    border-radius: 0 0 12px 12px;
 }
 .quicksearch-filter-row {
     spacing: 8px;
-    padding: 10px 8px 10px 8px;
-    border-top: 1px solid rgba(255, 255, 255, 0.09);
+    padding: 2px 8px 2px 8px;
+    border-top: none;
 }
 .quicksearch-filter-chip {
     padding: 7px 16px;
     border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.06);
-    background-color: rgba(255,255,255,0.03);
+    background-color: rgb(28, 36, 45);
 }
-.quicksearch-filter-chip-content { spacing: 6px; }
-.quicksearch-filter-chip-icon { color: rgba(226, 231, 240, 0.70); }
+.quicksearch-filter-chip-content { spacing: 0; }
 .quicksearch-filter-chip-label {
     font-size: 9pt;
     font-weight: 500;
@@ -568,12 +584,12 @@
     color: rgba(255, 255, 255, 0.92);
 }
 .quicksearch-filter-chip-active {
-    background-color: rgba(25, 83, 169, 0.42);
-    border-color: rgba(25, 83, 169, 0.55);
+    background-color: rgb(255, 255, 255);
+    border-color: rgba(255, 255, 255, 0.0);
 }
 .quicksearch-filter-chip-active .quicksearch-filter-chip-label,
 .quicksearch-filter-chip-active .quicksearch-filter-chip-icon {
-    color: rgba(255, 255, 255, 1.0);
+    color: rgba(10, 14, 20, 1.0);
 }
 
 .quicksearch-bestmatch-header {

@@ -96,7 +96,7 @@ test('P2-4: Settings category uses discovered local membership (chip + filter + 
 test('P2-1: category chips live in a horizontal overflow scroll (responsive-safe)', () => {
     assert.ok(APPLET_SRC.includes('quicksearch-filter-scroll'), 'filter scroll container');
     assert.ok(APPLET_SRC.includes('this._filterScroll = new St.ScrollView'), 'scroll built as ScrollView');
-    assert.ok(APPLET_SRC.includes('St.PolicyType.AUTOMATIC, St.PolicyType.NEVER'), 'horizontal overflow policy');
+    assert.ok(APPLET_SRC.includes('this._filterScroll.set_policy(St.PolicyType.NEVER, St.PolicyType.NEVER)'), 'filter strip never shows its own scrollbar (mockup 04)');
     assert.ok(APPLET_SRC.includes('this._filterScroll.add_actor(this._filterRow)') || APPLET_SRC.includes('this._filterScroll.add_child(this._filterRow)'), 'chips inside scroll container');
     assert.ok(CSS_SRC.includes('.quicksearch-filter-scroll'), 'filter scroll styled');
     // no second nav layer / sidebar / dropdown

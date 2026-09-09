@@ -265,26 +265,21 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
                 clip_to_allocation: true,
                 visible: false
             });
-            try { this._filterScroll.set_policy(St.PolicyType.AUTOMATIC, St.PolicyType.NEVER); } catch (e) {}
-            const _catIcon = { all: "view-grid-symbolic", app: "application-x-executable-symbolic", file: "text-x-generic-symbolic", folder: "folder-symbolic", settings: "preferences-system-symbolic", web: "web-browser-symbolic" };
+            try { this._filterScroll.set_policy(St.PolicyType.NEVER, St.PolicyType.NEVER); } catch (e) {}
             const _categories = [
                 ["all", _("All")],
                 ["app", _("Apps")],
                 ["file", _("Files")],
                 ["folder", _("Folders")],
-                ["settings", _("SETTINGS")],
+                ["settings", _("Settings")],
                 ["web", _("Web")]
             ];
             for (let ci = 0; ci < _categories.length; ci++) {
                 const catId = _categories[ci][0];
                 const catLabel = _categories[ci][1];
                 const btn = new St.Button({ style_class: "quicksearch-filter-chip", can_focus: false, reactive: true, track_hover: true });
-                const chipBox = new St.BoxLayout({ style_class: "quicksearch-filter-chip-content", vertical: false });
-                const chipIcon = new St.Icon({ icon_name: _catIcon[catId] || "view-grid-symbolic", icon_size: 12, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-filter-chip-icon" });
-                chipBox.add(chipIcon);
                 const lbl = new St.Label({ text: catLabel, style_class: "quicksearch-filter-chip-label" });
-                chipBox.add(lbl);
-                btn.set_child(chipBox);
+                btn.set_child(lbl);
                 btn.connect("clicked", () => {
                     try { this._applet._setCategory(catId); } catch (e) {}
                     return Clutter.EVENT_STOP;
@@ -2861,11 +2856,26 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     // Mirrors filter-row visibility to both the inner chip row and its scroll wrapper.
     // Hidden state takes zero space (empty-state rule); idle/AI call with false.
+    // When the strip shows, pill + strip + results read as one continuous stack:
+    // the pill and the results panel drop their adjoining border/radius via
+    // state classes. Actors never move — classes only, so autocomplete anchors safe.
     _setFilterRowVisible(v) {
         const ov = this._overlay;
         const show = !!v;
         try { if (ov && ov._filterRow) ov._filterRow.visible = show; } catch (e) {}
         try { if (ov && ov._filterScroll) ov._filterScroll.visible = show; } catch (e) {}
+        try {
+            if (ov && ov._entryRow) {
+                if (show) ov._entryRow.add_style_class_name("quicksearch-entry-row-connected");
+                else ov._entryRow.remove_style_class_name("quicksearch-entry-row-connected");
+            }
+        } catch (e) {}
+        try {
+            if (ov && ov._scroll) {
+                if (show) ov._scroll.add_style_class_name("quicksearch-results-connected");
+                else ov._scroll.remove_style_class_name("quicksearch-results-connected");
+            }
+        } catch (e) {}
     }
 
     _syncFilterUI() {
