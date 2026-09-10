@@ -3287,11 +3287,13 @@ class QuickSearchApplet extends Applet.IconApplet {
     setSelection(idx) {
         if (this._selIdx >= 0 && this._rows[this._selIdx]) {
             this._rows[this._selIdx].button.remove_style_class_name("quicksearch-row-selected");
+            try { if (this._rows[this._selIdx].deleteBtn) this._rows[this._selIdx].deleteBtn.visible = false; } catch (e) {}
         }
         this._selIdx = idx;
         const row = this._rows[idx];
         if (row) {
             row.button.add_style_class_name("quicksearch-row-selected");
+            try { if (row.deleteBtn) row.deleteBtn.visible = true; } catch (e) {}
             this._scrollToRow(row.button);
         }
     }
@@ -3342,6 +3344,21 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!q) return;
         this._recent = [q].concat(this._recent.filter(x => x !== q)).slice(0, RECENT_MAX);
         this.recent_queries_json = JSON.stringify(this._recent);
+    }
+
+    _removeRecent(q) {
+        q = String(q || "").trim();
+        if (!q) return;
+        try { this._recent = utilsMod.removeRecentItem(this._recent, q); }
+        catch (e) {
+            const k = q.toLowerCase();
+            this._recent = (this._recent || []).filter(x => String(x).toLowerCase().trim() !== k);
+        }
+        this.recent_queries_json = JSON.stringify(this._recent || []);
+        try {
+            const cur = this._overlay && this._overlay.getText ? String(this._overlay.getText() || "") : "";
+            this._renderAutocomplete(this._buildLocals(cur));
+        } catch (e) {}
     }
 
     // ---- rendering ----
@@ -3538,11 +3555,25 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { isSettingsRow = typeKey === 'app' && !!this._isSettingsResult(r); } catch (e) { isSettingsRow = false; }
         const typeMap = { app: isSettingsRow ? _("Settings") : "App", file: isFolder ? "Folder" : "File", web: "Web", calc: "Calc", url: "Link" };
         const rightMeta = new St.BoxLayout({ vertical: false, style_class: "quicksearch-right-meta", x_expand: false, x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.CENTER });
+        const isHistoryRow = typeKey === "history";
         if (typeKey && typeMap[typeKey] && !isRecent) {
             try {
                 const typeLbl = new St.Label({ text: typeMap[typeKey], style_class: "quicksearch-type" });
                 rightMeta.add(typeLbl);
             } catch (e) {}
+        }
+        let delBtn = null;
+        if (isHistoryRow) {
+            try {
+                delBtn = new St.Button({ style_class: "quicksearch-history-delete", can_focus: false, reactive: true, track_hover: true, visible: false });
+                const delLbl = new St.Label({ text: _("Hapus"), style_class: "quicksearch-history-delete-label" });
+                try { delBtn.set_child(delLbl); } catch (e) {}
+                delBtn.connect("clicked", () => {
+                    try { this._removeRecent(r.title); } catch (e) {}
+                    return Clutter.EVENT_STOP;
+                });
+                rightMeta.add(delBtn);
+            } catch (e) { delBtn = null; }
         }
 
         content.add(rightMeta, { expand: false, x_fill: false, x_align: St.Align.END });
@@ -3559,7 +3590,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             try { button.add_style_class_name("quicksearch-best-match"); } catch (e) {}
         }
 
-        const row = { button: button, result: r };
+        const row = { button: button, result: r, deleteBtn: delBtn };
         button.connect("clicked", () => this.activateRow(row));
         button.connect("enter-event", () => {
             for (let i = 0; i < this._rows.length; i++) {

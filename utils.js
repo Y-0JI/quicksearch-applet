@@ -77,6 +77,12 @@ function normalizeSearchEngine(raw) {
 // (X-Cinnamon-Settings-Panel / cinnamon-settings Exec). No module names, no
 // title/description guessing, no generic Categories sniffing. Unknown or
 // undiscovered apps stay App — false-negative beats false-positive.
+function removeRecentItem(recent, query) {
+    const q = String(query == null ? '' : query).toLowerCase().trim();
+    if (!q) return Array.isArray(recent) ? recent.slice() : [];
+    return (Array.isArray(recent) ? recent : []).filter(x => String(x).toLowerCase().trim() !== q);
+}
+
 function isSettingsApp(r, settingsSet) {
     if (!r || r.type !== 'app') return false;
     try {
@@ -88,4 +94,4 @@ function isSettingsApp(r, settingsSet) {
     return false;
 }
 
-module.exports = { pickFileBackend, sanitizeGlob, buildLocalRows, normalizeSearchEngine, isSettingsApp };
+module.exports = { pickFileBackend, sanitizeGlob, buildLocalRows, removeRecentItem, normalizeSearchEngine, isSettingsApp };

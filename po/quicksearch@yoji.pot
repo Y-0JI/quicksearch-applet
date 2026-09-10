@@ -145,3 +145,7 @@ msgstr ""
 #: applet.js
 msgid "Enter Ask · Esc Close"
 msgstr ""
+
+#: applet.js
+msgid "Hapus"
+msgstr ""

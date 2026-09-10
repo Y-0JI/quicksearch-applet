@@ -110,3 +110,6 @@ msgstr "Enter Kirim · Esc Tutup"
 
 msgid "Enter Ask · Esc Close"
 msgstr "Enter Tanya · Esc Tutup"
+
+msgid "Hapus"
+msgstr "Hapus"

@@ -655,6 +655,20 @@
 .quicksearch-row-selected .quicksearch-row-chevron {
     color: rgba(255,255,255,0.38);
 }
+.quicksearch-history-delete {
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: none;
+    background: none;
+}
+.quicksearch-history-delete-label {
+    font-size: 8.5pt;
+    text-decoration: underline;
+    color: rgba(140, 170, 220, 0.95);
+}
+.quicksearch-history-delete:hover {
+    background-color: rgba(255, 255, 255, 0.10);
+}
 
 .quicksearch-entry-row-focused {
     border-color: rgba(25, 83, 169, 0.45);

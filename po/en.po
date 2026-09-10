@@ -109,3 +109,6 @@ msgstr "Enter Send · Esc Close"
 
 msgid "Enter Ask · Esc Close"
 msgstr "Enter Ask · Esc Close"
+
+msgid "Hapus"
+msgstr "Delete"

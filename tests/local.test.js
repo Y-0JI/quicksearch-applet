@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { buildLocalRows } = require('../utils.js');
+const { buildLocalRows, removeRecentItem } = require('../utils.js');
 const { processResults, makeResult, SCORES } = require('../result.js');
 
 const RECENT = ['Gesture', 'gemini ai', 'gempa hari ini', 'gemini', 'document'];
@@ -83,6 +83,13 @@ test('prefix match outranks substring match', () => {
 test('earlier substring position outranks later one', () => {
     const r = buildLocalRows('re', [], ['Software Manager', 'Core']);
     assert.equal(r.suggestion[0], 'Core'); // 're' at index 2 vs 6
+});
+
+test('removeRecentItem drops exact query case-insensitive', () => {
+    assert.deepEqual(removeRecentItem(['A', 'b', 'C'], 'b'), ['A', 'C']);
+    assert.deepEqual(removeRecentItem(['A', 'b'], 'B'), ['A']);
+    assert.deepEqual(removeRecentItem(['A'], ''), ['A']);
+    assert.deepEqual(removeRecentItem(['A', 'a '], 'a'), []);
 });
 
 test('local rows rank above calculator in merged results', () => {
