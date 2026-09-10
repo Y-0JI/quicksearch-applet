@@ -35,13 +35,13 @@
     border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 12px;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.36);
-    max-width: 560px;
+    max-width: 660px;
 }
 
 .quicksearch-entry {
     padding: 5px 6px;
     font-size: 10pt;
-    width: 280px;
+    width: 380px;
     color: rgba(255, 255, 255, 0.95);
     background-color: rgba(0, 0, 0, 0);
     border: none;
@@ -58,7 +58,7 @@
     border: 1px solid rgba(255, 255, 255, 0.09);
     border-radius: 8px;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.34);
-    max-width: 560px;
+    max-width: 660px;
 }
 
 .quicksearch-section-header {
@@ -151,23 +151,24 @@
     color: rgba(255,255,255,0.40);
 }
 
-/* Single Mode AI pill (hapus.png): blue pill right, white when AI active. */
+/* AI mode toggle (icon-only, borderless file icon). */
 .quicksearch-mode-button {
-    padding: 6px 14px;
-    border-radius: 999px;
+    padding: 4px;
+    border-radius: 0;
     border: none;
-    background-color: rgba(25, 83, 169, 1.0);
+    background: none;
+    box-shadow: none;
 }
-.quicksearch-mode-content { spacing: 5px; }
-.quicksearch-mode-icon { color: rgba(255, 255, 255, 1.0); }
-.quicksearch-mode-label { font-size: 8.5pt; font-weight: 600; color: rgba(255, 255, 255, 1.0); }
-.quicksearch-mode-button:hover { background-color: rgba(35, 100, 195, 1.0); }
+.quicksearch-mode-content { spacing: 0; }
+.quicksearch-mode-icon { icon-size: 20px; opacity: 0.85; }
+.quicksearch-mode-button:hover { background: none; border: none; box-shadow: none; }
+.quicksearch-mode-button:hover .quicksearch-mode-icon { opacity: 1.0; }
 .quicksearch-mode-active {
-    background-color: rgba(255, 255, 255, 1.0);
+    background: none;
     border: none;
+    box-shadow: none;
 }
-.quicksearch-mode-active .quicksearch-mode-label,
-.quicksearch-mode-active .quicksearch-mode-icon { color: rgba(10, 14, 20, 1.0); }
+.quicksearch-mode-active .quicksearch-mode-icon { opacity: 1.0; }
 
 .quicksearch-ai-loading, .quicksearch-ai-answer, .quicksearch-ai-error { padding: 8px 10px; font-size: 10pt; }
 .quicksearch-ai-error { color: rgba(255,120,120,0.90); }
@@ -498,22 +499,6 @@
 .quicksearch-search-icon {
     color: rgba(255, 255, 255, 0.42);
 }
-.quicksearch-close-button {
-    padding: 4px 8px;
-    border-radius: 999px;
-    border: none;
-    background: none;
-}
-.quicksearch-close-button-label {
-    font-size: 10pt;
-    color: rgba(255, 255, 255, 0.48);
-}
-.quicksearch-close-button:hover {
-    background-color: rgba(255, 255, 255, 0.10);
-}
-.quicksearch-close-button:hover .quicksearch-close-button-label {
-    color: rgba(255, 255, 255, 0.95);
-}
 
 
 /* Category strip: flat chip navigation (mockup 04) — NOT a card. The strip
@@ -528,7 +513,7 @@
     border-bottom: none;
     padding: 0;
     margin-bottom: 0;
-    max-width: 560px;
+    max-width: 660px;
 }
 /* Pill drops its bottom border/radius while the strip is visible. Base pill
    style above is untouched — this only applies in the connected state. */
@@ -814,9 +799,15 @@
 .quicksearch-best-match,
 .quicksearch-best-match.quicksearch-row-selected,
 .quicksearch-filter-chip,
-.quicksearch-filter-chip-active,
-.quicksearch-mode-button {
+.quicksearch-filter-chip-active {
     border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: none;
+}
+.quicksearch-mode-button,
+.quicksearch-mode-button:hover,
+.quicksearch-mode-active {
+    border: none;
+    background: none;
     box-shadow: none;
 }
 .quicksearch-filter-chip,

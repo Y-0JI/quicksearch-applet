@@ -91,10 +91,14 @@ function fallbackUrlForEngine(engine, searxngUrl, q) {
 
 const QuickSearchOverlay = GObject.registerClass(
 class QuickSearchOverlay extends ModalDialog.ModalDialog {
-    constructor(applet) {
+    constructor(applet, metadata) {
         super({ styleClass: "quicksearch-dialog", destroyOnClose: false });
 
         this._applet = applet;
+        try {
+            const mp = metadata && metadata.path ? String(metadata.path) : "";
+            this._appletDir = mp || (applet && applet._appletDir) || "";
+        } catch (e) { this._appletDir = ""; }
 
         this._entry = new St.Entry({
             hint_text: _("Mau cari apa"),
@@ -112,19 +116,12 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             track_hover: true
         });
         const _aiModeIcon = new St.Icon({
-            icon_name: "starred-symbolic",
-            icon_size: 12,
-            icon_type: St.IconType.SYMBOLIC,
+            gicon: this._aiGicon(false),
+            icon_size: 20,
             style_class: "quicksearch-mode-icon"
         });
-        const _aiModeLabel = new St.Label({
-            text: _("✨ Mode AI"),
-            style_class: "quicksearch-mode-label"
-        });
-        const _aiModeContent = new St.BoxLayout({ style_class: "quicksearch-mode-content", vertical: false });
-        _aiModeContent.add(_aiModeIcon);
-        _aiModeContent.add(_aiModeLabel);
-        this._modeAiButton.set_child(_aiModeContent);
+        this._modeAiIcon = _aiModeIcon;
+        try { this._modeAiButton.set_child(_aiModeIcon); } catch (e) {}
         try {
             this._searchIcon = new St.Icon({
                 icon_name: "system-search",
@@ -135,23 +132,6 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             entryRow.add(this._searchIcon);
         } catch (e) { try { global.log("[quicksearch@yoji] search icon init failed: " + e); } catch (e2) {} }
         entryRow.add(this._entry, { expand: true });
-        try {
-            this._closeButton = new St.Button({
-                style_class: "quicksearch-close-button",
-                can_focus: false,
-                reactive: true,
-                track_hover: true
-            });
-            const _closeLabel = new St.Label({ text: _("\u2715"), style_class: "quicksearch-close-button-label" });
-            try { this._closeButton.set_child(_closeLabel); } catch (e) {}
-            entryRow.add(this._closeButton);
-            this._closeButton.connect("clicked", () => {
-                try { this._applet.close(); } catch (e) {}
-                return Clutter.EVENT_STOP;
-            });
-        } catch (e) {
-            try { global.log("[quicksearch@yoji] close button init failed: " + e); } catch (e2) {}
-        }
         try {
             entryRow.add(this._modeAiButton);
         } catch (e) {
@@ -472,6 +452,46 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
                 return Clutter.EVENT_PROPAGATE;
             });
         }
+    }
+
+    // ponytail: FileIcon gicon swap, fallback starred-symbolic bila PNG hilang; ceiling=icon ai/ dir.
+    _aiIconPath(active) {
+        try {
+            const dir = String(this._appletDir || "");
+            if (!dir) return "";
+            const base = dir.replace(/\/+$/, "");
+            return base + "/icon ai/" + (active ? "ai.png" : "ai_hollow.png");
+        } catch (e) { return ""; }
+    }
+
+    _aiGicon(active) {
+        try {
+            const p = this._aiIconPath(active);
+            if (p && Gio && Gio.File) {
+                const f = Gio.File.new_for_path(p);
+                if (f && typeof f.query_exists === 'function' && !f.query_exists(null)) throw new Error("missing " + p);
+                if (typeof Gio.FileIcon === 'function') {
+                    try { return new Gio.FileIcon({ file: f }); } catch (e2) {}
+                }
+            }
+        } catch (e) {
+            try { global.log("[quicksearch@yoji] AI icon load failed, fallback starred: " + e); } catch (e2) {}
+        }
+        return null;
+    }
+
+    _syncAiModeIcon(isAi) {
+        try {
+            if (!this._modeAiIcon) return;
+            const g = this._aiGicon(isAi);
+            if (g) {
+                try { this._modeAiIcon.set_gicon(g); return; } catch (e) {}
+                try { this._modeAiIcon.gicon = g; return; } catch (e2) {}
+            }
+            try { this._modeAiIcon.set_icon_name("starred-symbolic"); } catch (e) {
+                try { this._modeAiIcon.icon_name = "starred-symbolic"; } catch (e2) {}
+            }
+        } catch (e) {}
     }
 
     // Phase 9: caret blink is bound to whichever entry currently owns keyboard focus
@@ -804,11 +824,13 @@ class QuickSearchSourcesPopover {
 }
 
 class QuickSearchApplet extends Applet.IconApplet {
-    constructor(orientation, panel_height, instance_id) {
+    constructor(orientation, panel_height, instance_id, metadata) {
         super(orientation, panel_height, instance_id);
 
         this.set_applet_icon_name("system-search");
         this.set_applet_tooltip(_("Quick Search"));
+        try { this._appletDir = metadata && metadata.path ? String(metadata.path) : ""; }
+        catch (e) { this._appletDir = ""; }
 
         this._overlay = null;
         this._hotkeyName = UUID + "-open";
@@ -1116,6 +1138,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 if (isAi) ov._modeAiButton.add_style_class_name("quicksearch-mode-active");
                 else ov._modeAiButton.remove_style_class_name("quicksearch-mode-active");
             }
+            try { if (typeof ov._syncAiModeIcon === 'function') ov._syncAiModeIcon(isAi); } catch (e2) {}
         } catch (e) {}
         try {
             if (isAi) ov._entryRow.add_style_class_name("quicksearch-mode-active");
@@ -2397,6 +2420,11 @@ class QuickSearchApplet extends Applet.IconApplet {
 
     on_applet_clicked() { this.toggle(); }
 
+    _metadataForOverlay() {
+        try { if (this._appletDir) return { path: this._appletDir }; } catch (e) {}
+        return null;
+    }
+
     toggle() {
         if (this._overlay && this._overlay.state !== ModalDialog.State.CLOSED) {
             this.close();
@@ -2408,7 +2436,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     open() {
         try { global.log("[quicksearch@yoji] open() called mode=" + this._mode); } catch (e) {}
         if (!this._overlay) {
-            this._overlay = new QuickSearchOverlay(this);
+            this._overlay = new QuickSearchOverlay(this, this._metadataForOverlay());
         }
         // AI-2: every open starts in Normal Search (§16); conversation history is preserved
         // across open/close — only Clear chat removes it (§13/§1).
@@ -3616,7 +3644,7 @@ class QuickSearchApplet extends Applet.IconApplet {
 }
 
 function main(metadata, orientation, panel_height, instance_id) {
-    return new QuickSearchApplet(orientation, panel_height, instance_id);
+    return new QuickSearchApplet(orientation, panel_height, instance_id, metadata);
 }
 
 module.exports = { main };

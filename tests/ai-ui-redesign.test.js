@@ -14,14 +14,25 @@ const CSS_SRC = fs.readFileSync(path.join(ROOT, 'stylesheet.css'), 'utf8');
 
 // ---- UI-1: Layout foundation ----
 
-test('UI-1: search pill has leading search icon + compact close button (✕)', () => {
+test('UI-1: search pill has leading search icon, no close button (Esc/outside-click closes)', () => {
     assert.ok(APPLET_SRC.includes('quicksearch-search-icon'), 'search icon class in pill');
-    assert.ok(APPLET_SRC.includes('this._closeButton = new St.Button'), 'close button built');
-    assert.ok(APPLET_SRC.includes('quicksearch-close-button'), 'close button class');
-    assert.ok(APPLET_SRC.includes('entryRow.add(this._closeButton)'), 'close button lives inside the pill');
-    const closeIdx = APPLET_SRC.indexOf('this._closeButton.connect');
-    const closeSection = APPLET_SRC.slice(closeIdx, closeIdx + 200);
-    assert.ok(closeSection.includes('this._applet.close()'), 'close button closes the applet');
+    assert.ok(!APPLET_SRC.includes('this._closeButton = new St.Button'), 'close button removed');
+    assert.ok(!APPLET_SRC.includes('quicksearch-close-button'), 'close button CSS class removed');
+    assert.ok(!APPLET_SRC.includes('entryRow.add(this._closeButton)'), 'close button not in pill');
+    assert.ok(APPLET_SRC.includes('KEY_Escape'), 'Escape still closes the applet');
+    assert.ok(CSS_SRC.includes('.quicksearch-mode-button'), 'AI toggle button styled');
+});
+
+test('UI-1: AI toggle uses file icons (ai_hollow idle / ai active), borderless 17px', () => {
+    assert.ok(APPLET_SRC.includes('ai_hollow.png'), 'idle icon file pinned');
+    assert.ok(APPLET_SRC.includes('"ai.png"') || APPLET_SRC.includes('/ai.png'), 'active icon file pinned');
+    assert.ok(APPLET_SRC.includes('_syncAiModeIcon'), 'icon swapped on mode sync');
+    assert.ok(APPLET_SRC.includes('icon_size: 20'), 'icon sized 20px');
+    assert.ok(!APPLET_SRC.includes('icon_name: "starred-symbolic"') || APPLET_SRC.includes('fallback starred'), 'starred only as fallback');
+    assert.ok(CSS_SRC.includes('.quicksearch-mode-button:hover { background: none;'), 'no circle hover background');
+    assert.ok(!CSS_SRC.includes('.quicksearch-close-button'), 'close button CSS removed');
+    assert.ok(CSS_SRC.includes('width: 380px;'), 'entry widened to 380px');
+    assert.ok(CSS_SRC.includes('max-width: 660px;'), 'pill + panels widened to 660px');
 });
 
 test('UI-1: adaptive layout constants are the single source of truth', () => {
@@ -336,7 +347,7 @@ test('P2-2: sources stay inline-compact — wrapping pills, label + View more on
 test('P1-3: overlay constructor cannot fail silently — new widgets are isolated + logged', () => {
     // every new constructor widget block logs on failure instead of killing the
     // whole overlay (which would produce exactly “click does nothing”)
-    for (const tag of ['search icon init failed', 'close button init failed', 'category filter row init failed', 'composer plus icon init failed', 'hints bar init failed']) {
+    for (const tag of ['search icon init failed', 'category filter row init failed', 'composer plus icon init failed', 'hints bar init failed']) {
         assert.ok(APPLET_SRC.includes(tag), `failure log tag present: ${tag}`);
     }
     // the filter row block wraps ALL of its construction in one try/catch so a single
