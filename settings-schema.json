@@ -37,7 +37,7 @@
         "default": "ddgo",
         "options": {
             "DuckDuckGo": "ddgo",
-            "Google (Serper API)": "google",
+            "Google": "google",
             "Bing": "bing",
             "SearXNG (Local)": "searxng"
         }
