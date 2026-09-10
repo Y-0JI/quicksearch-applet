@@ -3230,9 +3230,25 @@ class QuickSearchApplet extends Applet.IconApplet {
         return Clutter.EVENT_PROPAGATE;
     }
 
+    _clearSelection() {
+        try {
+            if (this._selIdx >= 0 && this._rows[this._selIdx]) {
+                try { this._rows[this._selIdx].button.remove_style_class_name("quicksearch-row-selected"); } catch (e2) {}
+                try { if (this._rows[this._selIdx].deleteBtn) this._rows[this._selIdx].deleteBtn.visible = false; } catch (e2) {}
+            }
+        } catch (e) {}
+        this._selIdx = -1;
+    }
+
     _moveSelection(delta) {
         if (!this._rows.length) return;
         let idx = this._selIdx < 0 ? 0 : this._selIdx + delta;
+        if (idx < 0) {
+            this._clearSelection();
+            const auto = this._overlay ? this._overlay._autoScroll : null;
+            if (auto && this._autoRows.length > 0) auto.visible = true;
+            return;
+        }
         idx = Math.max(0, Math.min(idx, this._rows.length - 1));
         this.setSelection(idx);
         const inAuto = idx < this._autoRows.length && this._autoRows.length > 0;

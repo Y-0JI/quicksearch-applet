@@ -35,6 +35,13 @@ test('UI-1: AI toggle uses file icons (ai_hollow idle / ai active), borderless 1
     assert.ok(CSS_SRC.includes('max-width: 660px;'), 'pill + panels widened to 660px');
 });
 
+test('UI-2: Up from first suggestion returns to searchbox (deselect), not stuck at row 0', () => {
+    const mvIdx = APPLET_SRC.indexOf('_moveSelection(delta) {');
+    assert.ok(mvIdx !== -1, 'moveSelection exists');
+    const mvBlock = APPLET_SRC.slice(mvIdx, mvIdx + 700);
+    assert.ok(mvBlock.includes('_clearSelection()'), 'Up at top deselects back to searchbox');
+});
+
 test('UI-2: typing never auto-selects autocomplete row 0 (Google-like, no white box)', () => {
     const syncIdx = APPLET_SRC.indexOf('_syncSelection() {');
     assert.ok(syncIdx !== -1, 'syncSelection exists');
