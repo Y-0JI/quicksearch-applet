@@ -105,28 +105,6 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         this._entry.clutter_text.set_cursor_visible(true);
         const entryRow = new St.BoxLayout({ style_class: "quicksearch-entry-row" });
         this._entryRow = entryRow;
-        const _modeSeg = new St.BoxLayout({ style_class: "quicksearch-mode-seg", vertical: false });
-        this._modeSeg = _modeSeg;
-        this._modeSearchButton = new St.Button({
-            style_class: "quicksearch-mode-button quicksearch-mode-search",
-            can_focus: false,
-            reactive: true,
-            track_hover: true
-        });
-        const _searchModeIcon = new St.Icon({
-            icon_name: "view-grid-symbolic",
-            icon_size: 12,
-            icon_type: St.IconType.SYMBOLIC,
-            style_class: "quicksearch-mode-icon"
-        });
-        const _searchModeLabel = new St.Label({
-            text: _("Search"),
-            style_class: "quicksearch-mode-label"
-        });
-        const _searchModeContent = new St.BoxLayout({ style_class: "quicksearch-mode-content", vertical: false });
-        _searchModeContent.add(_searchModeIcon);
-        _searchModeContent.add(_searchModeLabel);
-        this._modeSearchButton.set_child(_searchModeContent);
         this._modeAiButton = new St.Button({
             style_class: "quicksearch-mode-button quicksearch-mode-ai",
             can_focus: false,
@@ -140,19 +118,13 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             style_class: "quicksearch-mode-icon"
         });
         const _aiModeLabel = new St.Label({
-            text: _("AI"),
+            text: _("✨ Mode AI"),
             style_class: "quicksearch-mode-label"
         });
         const _aiModeContent = new St.BoxLayout({ style_class: "quicksearch-mode-content", vertical: false });
         _aiModeContent.add(_aiModeIcon);
         _aiModeContent.add(_aiModeLabel);
         this._modeAiButton.set_child(_aiModeContent);
-        _modeSeg.add(this._modeSearchButton);
-        _modeSeg.add(this._modeAiButton);
-        this._modeButton = this._modeSearchButton;
-        this._modeIcon = _searchModeIcon;
-        this._modeLabel = _searchModeLabel;
-        entryRow.add(_modeSeg);
         try {
             this._searchIcon = new St.Icon({
                 icon_name: "system-search",
@@ -181,51 +153,13 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
             try { global.log("[quicksearch@yoji] close button init failed: " + e); } catch (e2) {}
         }
         try {
-            this._searchButton = new St.Button({
-                style_class: "quicksearch-search-button",
-                can_focus: false,
-                reactive: true,
-                track_hover: true
-            });
-            const _searchBtnLabel = new St.Label({ text: _("Search"), style_class: "quicksearch-search-button-label" });
-            try { this._searchButton.set_child(_searchBtnLabel); } catch (e) {}
-            entryRow.add(this._searchButton);
-            this._searchButton.connect("clicked", () => {
-                try {
-                    if (this._applet._mode === 'ai') {
-                        const t = this._entry ? this._entry.get_text() : "";
-                        if (this._applet._hasConversation && this._applet._hasConversation()) {
-                            try { if (this._applet._overlay && this._applet._overlay._composerEntry) global.stage.set_key_focus(this._applet._overlay._composerEntry); } catch (e) {}
-                        } else if (String(t || "").trim()) {
-                            this._applet._submitAIQuery(t);
-                        }
-                    } else {
-                        const sel = this._applet._selIdx >= 0 ? this._applet._rows[this._applet._selIdx] : null;
-                        if (sel) this._applet.activateRow(sel);
-                        else if (this._applet._sortedResults && this._applet._sortedResults[0]) {
-                            let bestRow = null;
-                            for (let i = 0; i < (this._applet._rows || []).length; i++) {
-                                if (this._applet._rows[i] && this._applet._rows[i].result && this._applet._rows[i].result.id === this._applet._sortedResults[0].id) { bestRow = this._applet._rows[i]; break; }
-                            }
-                            if (bestRow) this._applet.activateRow(bestRow);
-                            else if (this._applet._sortedResults[0].action) { try { this._applet._sortedResults[0].action(); } catch (e) {} try { this._applet._pushRecent(this._entry ? this._entry.get_text() : ""); } catch (e) {} try { this._applet.close(); } catch (e) {} }
-                        }
-                    }
-                } catch (e) {}
-                return Clutter.EVENT_STOP;
-            });
+            entryRow.add(this._modeAiButton);
         } catch (e) {
-            try { global.log("[quicksearch@yoji] search button init failed: " + e); } catch (e2) {}
+            try { global.log("[quicksearch@yoji] mode AI button init failed: " + e); } catch (e2) {}
         }
         try {
-            this._modeSearchButton.connect("clicked", () => {
-                try { this._applet._goToSearchMode(); } catch (e) {}
-                return Clutter.EVENT_STOP;
-            });
-        } catch (e) {}
-        try {
             this._modeAiButton.connect("clicked", () => {
-                try { this._applet._goToAiMode(); } catch (e) {}
+                try { this._applet._toggleMode(); } catch (e) {}
                 return Clutter.EVENT_STOP;
             });
         } catch (e) {}
@@ -371,7 +305,6 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         // New Chat lives as the chat pane's own header; the pane itself includes:
         // [New Chat] / dedicated conversation scroll / composer.
         this._aiHeader = new St.BoxLayout({ style_class: "quicksearch-ai-chat-header", vertical: false, visible: false });
-        this._headerModeButton = null;
         this._resetButton = new St.Button({ style_class: "quicksearch-ai-reset", can_focus: false, reactive: true, track_hover: true });
         const _newLabel = new St.Label({ text: _("\u271a New Chat"), style_class: "quicksearch-ai-reset-label" });
         try { this._resetButton.set_child(_newLabel); } catch (e) {}
@@ -1179,14 +1112,9 @@ class QuickSearchApplet extends Applet.IconApplet {
             }
         } catch (e) {}
         try {
-            if (ov._modeSearchButton && ov._modeAiButton) {
-                if (isAi) {
-                    ov._modeSearchButton.remove_style_class_name("quicksearch-mode-active");
-                    ov._modeAiButton.add_style_class_name("quicksearch-mode-active");
-                } else {
-                    ov._modeAiButton.remove_style_class_name("quicksearch-mode-active");
-                    ov._modeSearchButton.add_style_class_name("quicksearch-mode-active");
-                }
+            if (ov._modeAiButton) {
+                if (isAi) ov._modeAiButton.add_style_class_name("quicksearch-mode-active");
+                else ov._modeAiButton.remove_style_class_name("quicksearch-mode-active");
             }
         } catch (e) {}
         try {

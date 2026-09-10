@@ -510,8 +510,13 @@ test('ui file checks: Thinking and error strings', () => {
     assert.ok(APPLET_SRC.includes('Thinking...'), 'must render Thinking...');
     assert.ok(APPLET_SRC.includes('Unable to get an AI response.'), 'must render generic error');
     assert.ok(!APPLET_SRC.includes('apiKey') || APPLET_SRC.includes('sanitizeError') || true, 'no raw key leak check is via provider');
-    // overlay must have mode button inside entryRow
+    // overlay must have single Mode AI pill inside entryRow (no seg, no Search button)
     assert.ok(APPLET_SRC.includes('quicksearch-mode-button'), 'mode button class');
+    assert.ok(APPLET_SRC.includes('_modeAiButton'), 'single AI button ref');
+    assert.ok(!APPLET_SRC.includes('_modeSearchButton'), 'no search-mode button ref');
+    assert.ok(!APPLET_SRC.includes('_modeSeg'), 'no mode seg container');
+    assert.ok(!APPLET_SRC.includes('quicksearch-search-button'), 'no Search button class');
+    assert.ok(APPLET_SRC.includes('_toggleMode'), 'pill toggles both directions');
     assert.ok(APPLET_SRC.includes('quicksearch-entry-row'), 'entryRow');
     assert.ok(APPLET_SRC.includes('_syncModeUI'), 'syncModeUI');
     assert.ok(APPLET_SRC.includes('_renderAIState'), 'renderAIState');

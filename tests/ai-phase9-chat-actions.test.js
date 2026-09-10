@@ -277,10 +277,10 @@ test('chat controls: single Stop/Send action slot, New Chat + Search switch in h
     assert.ok(APPLET_SRC.includes('_aiHeader'), 'chat header container exists');
 });
 
-test('mode switch is a two-way door: header Search switch + safe AI->Search lifecycle', () => {
+test('mode switch is a two-way door: pill Mode AI toggle + safe AI->Search lifecycle', () => {
     assert.ok(APPLET_SRC.includes('_goToAiMode') && APPLET_SRC.includes('_goToSearchMode'), 'directional mode methods exist');
-    assert.ok(APPLET_SRC.includes('_headerModeButton'), 'header mode switch exists');
-    assert.ok(APPLET_SRC.includes('_goToSearchMode(); }'), 'header Search switch wired');
+    assert.ok(APPLET_SRC.includes('_modeAiButton'), 'single Mode AI pill exists');
+    assert.ok(APPLET_SRC.includes('_toggleMode'), 'pill toggles both directions');
     // AI->Search must stop any active request and invalidate stale callbacks: gen bump
     // FIRST, engine cancel second (repo invariant), then model/UI cleanup
     const def = APPLET_SRC.slice(APPLET_SRC.indexOf('_goToSearchMode() {'), APPLET_SRC.indexOf('_goToSearchMode() {') + 1000);

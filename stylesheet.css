@@ -151,27 +151,23 @@
     color: rgba(255,255,255,0.40);
 }
 
-/* Persistent segmented mode control in the pill — matches advance_ui.png */
-.quicksearch-mode-seg {
-    spacing: 3px;
-    padding: 2px;
+/* Single Mode AI pill (hapus.png): blue pill right, white when AI active. */
+.quicksearch-mode-button {
+    padding: 6px 14px;
     border-radius: 999px;
-    background-color: rgba(0, 0, 0, 0.20);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-}
-.quicksearch-mode-button { padding: 4px 10px; border-radius: 999px; border: none; background: none; }
-.quicksearch-mode-content { spacing: 5px; }
-.quicksearch-mode-icon { color: rgba(226, 231, 240, 0.68); }
-.quicksearch-mode-label { font-size: 8.5pt; font-weight: 600; color: rgba(226, 231, 240, 0.74); }
-.quicksearch-mode-button:hover { background-color: rgba(255, 255, 255, 0.08); }
-.quicksearch-mode-button:hover .quicksearch-mode-icon,
-.quicksearch-mode-button:hover .quicksearch-mode-label { color: rgba(255, 255, 255, 0.95); }
-.quicksearch-mode-active {
+    border: none;
     background-color: rgba(25, 83, 169, 1.0);
+}
+.quicksearch-mode-content { spacing: 5px; }
+.quicksearch-mode-icon { color: rgba(255, 255, 255, 1.0); }
+.quicksearch-mode-label { font-size: 8.5pt; font-weight: 600; color: rgba(255, 255, 255, 1.0); }
+.quicksearch-mode-button:hover { background-color: rgba(35, 100, 195, 1.0); }
+.quicksearch-mode-active {
+    background-color: rgba(255, 255, 255, 1.0);
     border: none;
 }
 .quicksearch-mode-active .quicksearch-mode-label,
-.quicksearch-mode-active .quicksearch-mode-icon { color: rgba(255, 255, 255, 1.0); }
+.quicksearch-mode-active .quicksearch-mode-icon { color: rgba(10, 14, 20, 1.0); }
 
 .quicksearch-ai-loading, .quicksearch-ai-answer, .quicksearch-ai-error { padding: 8px 10px; font-size: 10pt; }
 .quicksearch-ai-error { color: rgba(255,120,120,0.90); }
@@ -518,23 +514,7 @@
 .quicksearch-close-button:hover .quicksearch-close-button-label {
     color: rgba(255, 255, 255, 0.95);
 }
-.quicksearch-search-button {
-    padding: 4px 10px;
-    border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background-color: rgba(255, 255, 255, 0.08);
-}
-.quicksearch-search-button-label {
-    font-size: 8.5pt;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.88);
-}
-.quicksearch-search-button:hover {
-    background-color: rgba(255, 255, 255, 0.14);
-}
-.quicksearch-search-button:hover .quicksearch-search-button-label {
-    color: rgba(255, 255, 255, 1.0);
-}
+
 
 /* Category strip: flat chip navigation (mockup 04) — NOT a card. The strip
    carries the pill's own surface so pill + strip read as one piece; the
@@ -835,18 +815,15 @@
 .quicksearch-best-match.quicksearch-row-selected,
 .quicksearch-filter-chip,
 .quicksearch-filter-chip-active,
-.quicksearch-search-button,
-.quicksearch-mode-seg {
+.quicksearch-mode-button {
     border: 1px solid rgba(255, 255, 255, 0.14);
     box-shadow: none;
 }
 .quicksearch-filter-chip,
-.quicksearch-best-match,
-.quicksearch-search-button {
+.quicksearch-best-match {
     background-color: rgba(255, 255, 255, 0.08);
 }
-.quicksearch-filter-chip-active,
-.quicksearch-mode-active {
+.quicksearch-filter-chip-active {
     background-color: rgba(255, 255, 255, 0.16);
 }
 .quicksearch-filter-scroll {
