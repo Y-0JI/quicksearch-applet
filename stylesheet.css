@@ -160,7 +160,7 @@
     box-shadow: none;
 }
 .quicksearch-mode-content { spacing: 0; }
-.quicksearch-mode-icon { icon-size: 20px; opacity: 0.85; }
+.quicksearch-mode-icon { icon-size: 24px; opacity: 0.85; }
 .quicksearch-mode-button:hover { background: none; border: none; box-shadow: none; }
 .quicksearch-mode-button:hover .quicksearch-mode-icon { opacity: 1.0; }
 .quicksearch-mode-active {

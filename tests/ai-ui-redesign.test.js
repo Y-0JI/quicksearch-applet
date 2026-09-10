@@ -27,7 +27,7 @@ test('UI-1: AI toggle uses file icons (ai_hollow idle / ai active), borderless 1
     assert.ok(APPLET_SRC.includes('ai_hollow.png'), 'idle icon file pinned');
     assert.ok(APPLET_SRC.includes('"ai.png"') || APPLET_SRC.includes('/ai.png'), 'active icon file pinned');
     assert.ok(APPLET_SRC.includes('_syncAiModeIcon'), 'icon swapped on mode sync');
-    assert.ok(APPLET_SRC.includes('icon_size: 20'), 'icon sized 20px');
+    assert.ok(APPLET_SRC.includes('icon_size: 24'), 'icon sized 24px');
     assert.ok(!APPLET_SRC.includes('icon_name: "starred-symbolic"') || APPLET_SRC.includes('fallback starred'), 'starred only as fallback');
     assert.ok(CSS_SRC.includes('.quicksearch-mode-button:hover { background: none;'), 'no circle hover background');
     assert.ok(!CSS_SRC.includes('.quicksearch-close-button'), 'close button CSS removed');

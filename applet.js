@@ -117,7 +117,7 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         });
         const _aiModeIcon = new St.Icon({
             gicon: this._aiGicon(false),
-            icon_size: 20,
+            icon_size: 24,
             style_class: "quicksearch-mode-icon"
         });
         this._modeAiIcon = _aiModeIcon;
