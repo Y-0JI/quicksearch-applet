@@ -663,11 +663,11 @@
 }
 .quicksearch-history-delete-label {
     font-size: 8.5pt;
+    color: rgba(255, 255, 255, 0.75);
+}
+.quicksearch-history-delete-label-hover {
     text-decoration: underline;
     color: rgba(140, 170, 220, 0.95);
-}
-.quicksearch-history-delete:hover {
-    background-color: rgba(255, 255, 255, 0.10);
 }
 
 .quicksearch-entry-row-focused {

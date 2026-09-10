@@ -3572,6 +3572,12 @@ class QuickSearchApplet extends Applet.IconApplet {
                     try { this._removeRecent(r.title); } catch (e) {}
                     return Clutter.EVENT_STOP;
                 });
+                delBtn.connect("enter-event", () => {
+                    try { delLbl.add_style_class_name("quicksearch-history-delete-label-hover"); } catch (e) {}
+                });
+                delBtn.connect("leave-event", () => {
+                    try { delLbl.remove_style_class_name("quicksearch-history-delete-label-hover"); } catch (e) {}
+                });
                 rightMeta.add(delBtn);
             } catch (e) { delBtn = null; }
         }
