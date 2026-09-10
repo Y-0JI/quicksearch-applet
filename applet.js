@@ -3401,15 +3401,16 @@ class QuickSearchApplet extends Applet.IconApplet {
             }
         } catch (e) {}
 
-        // UI-2: Best Match hierarchy — the highest-ranked result of the CURRENT
-        // (filtered) set leads the panel as a distinct surface, then the grouped
-        // sections follow WITHOUT duplicating it. Ranking logic itself is untouched.
+        // UI-2: Best Match hierarchy — All only. Category views list plain groups.
         const display = this._filterResults(this._sortedResults);
         const mainRows = [];
         if (display.length > 0) {
-            const best = display[0];
-            mainRows.push({ header: _("Best Match"), bestHeader: true });
-            mainRows.push({ result: best, bestMatch: true });
+            const showBest = (this._category || 'all') === 'all';
+            const best = showBest ? display[0] : null;
+            if (showBest) {
+                mainRows.push({ header: _("Best Match"), bestHeader: true });
+                mainRows.push({ result: best, bestMatch: true });
+            }
             const self = this;
             for (let s = 0; s < SECTION_ORDER.length; s++) {
                 const type = SECTION_ORDER[s][0];
@@ -3417,16 +3418,16 @@ class QuickSearchApplet extends Applet.IconApplet {
                 let group;
                 if (type === 'settings') {
                     group = display.filter(r => {
-                        if (!r || r.id === best.id || r.type !== 'app') return false;
+                        if (!r || (best && r.id === best.id) || r.type !== 'app') return false;
                         try { return self._isSettingsResult(r); } catch (e) { return false; }
                     });
                 } else if (type === 'app') {
                     group = display.filter(r => {
-                        if (!r || r.type !== 'app' || r.id === best.id) return false;
+                        if (!r || r.type !== 'app' || (best && r.id === best.id)) return false;
                         try { return !self._isSettingsResult(r); } catch (e) { return true; }
                     });
                 } else {
-                    group = display.filter(r => r.type === type && r.id !== best.id);
+                    group = display.filter(r => r.type === type && (!best || r.id !== best.id));
                 }
                 if (!group.length) continue;
                 if (header) mainRows.push({ header: header });

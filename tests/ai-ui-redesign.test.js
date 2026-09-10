@@ -184,6 +184,13 @@ test('UI-2: Best Match leads the panel and is NOT duplicated in sections', () =>
     assert.ok(APPLET_SRC.includes('_("Enter")'), 'Enter hint translated');
 });
 
+test('UI-2: Best Match only in All category, hidden in filtered views', () => {
+    const renderIdx = APPLET_SRC.indexOf('renderResults(results) {');
+    const renderSection = APPLET_SRC.slice(renderIdx, renderIdx + 4500);
+    assert.ok(renderSection.includes("(this._category || 'all') === 'all'"), 'best match gated on all category');
+    assert.ok(renderSection.includes('showBest'), 'best match flag present');
+});
+
 test('UI-2: empty state exists and stays out of the idle panel', () => {
     assert.ok(APPLET_SRC.includes('_("Tidak ada hasil untuk pencarian ini.")'), 'empty state message');
     assert.ok(APPLET_SRC.includes('quicksearch-empty'), 'empty state class');
