@@ -308,18 +308,20 @@ function _parseErrorMessage(text, fallbackStatus) {
     return 'HTTP ' + fallbackStatus;
 }
 
+function _redactAuth(s) {
+    try {
+        let t = String(s);
+        t = _redactKnownKeys(t);
+        t = t.replace(/Bearer\s+[A-Za-z0-9._\-~+\/]+=*/gi, 'Bearer [REDACTED]');
+        t = t.replace(/api[_-]?key\s*[:=]\s*\S+/gi, 'api_key=[REDACTED]');
+        return _redactKnownKeys(t);
+    } catch (e) { return String(s); }
+}
+
 function _sanitizedLog() {
     try {
         const args = Array.prototype.slice.call(arguments);
-        // never log auth headers / api keys — strip bearer tokens and any known apiKey values
-        const line = args.map(a => {
-            let s = String(a);
-            s = _redactKnownKeys(s);
-            s = s.replace(/Bearer\s+[A-Za-z0-9._\-~+\/]+=*/gi, 'Bearer [REDACTED]');
-            s = s.replace(/api[_-]?key\s*[:=]\s*\S+/gi, 'api_key=[REDACTED]');
-            s = _redactKnownKeys(s);
-            return s;
-        }).join(' ');
+        const line = args.map(a => _redactAuth(a)).join(' ');
         const msg = '[quicksearch] ' + line;
         if (typeof global !== 'undefined' && global && typeof global.log === 'function') global.log(msg);
         else if (typeof console !== 'undefined' && typeof console.log === 'function') console.log(msg);
@@ -338,14 +340,7 @@ function _sanitizeUrl(url) {
 function _aiLog() {
     try {
         const args = Array.prototype.slice.call(arguments);
-        const line = args.map(a => {
-            let s = String(a);
-            s = _redactKnownKeys(s);
-            s = s.replace(/Bearer\s+[A-Za-z0-9._\-~+\/]+=*/gi, 'Bearer [REDACTED]');
-            s = s.replace(/api[_-]?key\s*[:=]\s*\S+/gi, 'api_key=[REDACTED]');
-            s = _redactKnownKeys(s);
-            return s;
-        }).join(' ');
+        const line = args.map(a => _redactAuth(a)).join(' ');
         const msg = '[QuickSearch AI] ' + line;
         if (typeof global !== 'undefined' && global && typeof global.log === 'function') global.log(msg);
         else if (typeof console !== 'undefined' && typeof console.log === 'function') console.log(msg);
@@ -353,14 +348,7 @@ function _aiLog() {
 }
 
 function _sanitizeDiagnosticString(str) {
-    try {
-        let s = String(str || '');
-        s = _redactKnownKeys(s);
-        s = s.replace(/Bearer\s+[A-Za-z0-9._\-~+\/]+=*/gi, 'Bearer [REDACTED]');
-        s = s.replace(/api[_-]?key\s*[:=]\s*\S+/gi, 'api_key=[REDACTED]');
-        s = _redactKnownKeys(s);
-        return s;
-    } catch (e) { return String(str || ''); }
+    try { return _redactAuth(str); } catch (e) { return String(str || ''); }
 }
 
 function _attachStage(err, stage, extra) {
@@ -1266,7 +1254,7 @@ function createNineRouterProvider(opts) {
 
         let parser = null;
         let _spLoadErrors = [];
-        function _sanitizeSpMsg(s) { try { let t=String(s||''); t=t.replace(/Bearer\s+[A-Za-z0-9._\-~+\/]+=*/gi,'Bearer [REDACTED]'); t=t.replace(/api[_-]?key\s*[:=]\s*\S+/gi,'api_key=[REDACTED]'); return t.slice(0,300);} catch(e){ return String(s||'').slice(0,300); } }
+        function _sanitizeSpMsg(s) { try { return _redactAuth(s).slice(0,300); } catch(e){ return String(s||'').slice(0,300); } }
         try {
             let sp = null;
             const _attempts = ['./ai/streamParser.js','./streamParser.js','ai/streamParser.js'];

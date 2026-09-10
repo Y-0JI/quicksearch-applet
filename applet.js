@@ -258,7 +258,7 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
 
         this._filterButtons = [];
         try {
-            this._filterRow = new St.BoxLayout({ style_class: "quicksearch-filter-row", vertical: false, visible: false, x_expand: false });
+            this._filterRow = new St.BoxLayout({ style_class: "quicksearch-filter-row", vertical: false, visible: false, x_expand: true });
             this._filterScroll = new St.ScrollView({
                 style_class: "quicksearch-filter-scroll",
                 x_fill: true, y_fill: false,
@@ -285,7 +285,7 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
                     return Clutter.EVENT_STOP;
                 });
                 this._filterButtons.push({ id: catId, button: btn, label: lbl });
-                this._filterRow.add(btn);
+                this._filterRow.add(btn, { expand: true, x_fill: true });
             }
             try { this._filterScroll.add_actor(this._filterRow); } catch (e) { try { this._filterScroll.add_child(this._filterRow); } catch (e2) {} }
             this._searchView.add(this._filterScroll);

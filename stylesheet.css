@@ -295,9 +295,12 @@
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
 }
 
-/* autocomplete row icons (magnifier / history clock) — white */
+/* autocomplete row icons (magnifier / history clock) — white.
+   Fixed slot so clock (14px) vs magnifier (24px) never shifts the text column. */
 .quicksearch-auto-icon {
     color: #ffffff;
+    min-width: 24px;
+    icon-size: 24px;
 }
 
 .quicksearch-ai-pane {
@@ -562,7 +565,6 @@
 .quicksearch-filter-row {
     spacing: 8px;
     padding: 2px 8px 2px 8px;
-    border-top: none;
 }
 .quicksearch-filter-chip {
     padding: 7px 16px;
@@ -570,25 +572,23 @@
     border: 1px solid rgba(255, 255, 255, 0.06);
     background-color: rgb(28, 36, 45);
 }
-.quicksearch-filter-chip-content { spacing: 0; }
 .quicksearch-filter-chip-label {
     font-size: 9pt;
     font-weight: 500;
+    text-align: center;
     color: rgba(226, 231, 240, 0.72);
 }
 .quicksearch-filter-chip:hover {
     background-color: rgba(255, 255, 255, 0.07);
 }
-.quicksearch-filter-chip:hover .quicksearch-filter-chip-label,
-.quicksearch-filter-chip:hover .quicksearch-filter-chip-icon {
+.quicksearch-filter-chip:hover .quicksearch-filter-chip-label {
     color: rgba(255, 255, 255, 0.92);
 }
 .quicksearch-filter-chip-active {
     background-color: rgb(255, 255, 255);
     border-color: rgba(255, 255, 255, 0.0);
 }
-.quicksearch-filter-chip-active .quicksearch-filter-chip-label,
-.quicksearch-filter-chip-active .quicksearch-filter-chip-icon {
+.quicksearch-filter-chip-active .quicksearch-filter-chip-label {
     color: rgba(10, 14, 20, 1.0);
 }
 

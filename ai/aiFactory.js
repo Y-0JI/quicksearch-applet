@@ -13,18 +13,6 @@ function _sanitizeRequireMsg(s) {
         return t.slice(0, 400);
     } catch (e) { return String(s || '').slice(0, 400); }
 }
-function _tryRequire(paths) {
-    const errors = [];
-    for (const p of paths) {
-        try {
-            const m = require(p);
-            if (m) return m;
-        } catch (e) {
-            errors.push({ path: p, name: (e && e.name) || 'Error', message: _sanitizeRequireMsg(e && e.message || String(e)) });
-        }
-    }
-    return null;
-}
 function _tryRequireWithDiagnostics(key, paths) {
     const errors = [];
     for (const p of paths) {
@@ -86,13 +74,13 @@ if (!sourceContentExpanderMod) {
 
 function _trim(s) { return String(s || '').trim(); }
 
-function _makeAuthErrorProvider() {
+function _makeErrorProvider(code, message) {
     function _attach(e) { e.stage = 'provider_create'; e._stage = 'provider_create'; return e; }
     if (aiProviderMod && typeof aiProviderMod.createMockAiProvider === 'function') {
         return aiProviderMod.createMockAiProvider({
             handler: (req, cb) => {
-                const e = new Error('AI provider auth error');
-                e.code = 'auth_error';
+                const e = new Error(message);
+                e.code = code;
                 _attach(e);
                 cb(e);
             }
@@ -101,52 +89,25 @@ function _makeAuthErrorProvider() {
     return {
         request: (payload, cancellable, cb) => {
             if (typeof cancellable === 'function' && cb === undefined) { cb = cancellable; }
-            const e = new Error('AI provider auth error');
-            e.code = 'auth_error';
+            const e = new Error(message);
+            e.code = code;
             _attach(e);
             if (cb) cb(e);
         },
         streamRequest(payload, cancellable, onEvent) {
             if (typeof cancellable === 'function' && onEvent === undefined) { onEvent = cancellable; }
-            const e = new Error('AI provider auth error');
-            e.code = 'auth_error';
+            const e = new Error(message);
+            e.code = code;
             _attach(e);
-            if (onEvent) onEvent({ type: 'error', error: { code: 'auth_error', message: e.message, stage: 'provider_create' } });
+            if (onEvent) onEvent({ type: 'error', error: { code: code, message: e.message, stage: 'provider_create' } });
         },
         destroy() {}
     };
 }
 
-function _makeProviderErrorProvider() {
-    function _attach(e) { e.stage = 'provider_create'; e._stage = 'provider_create'; return e; }
-    if (aiProviderMod && typeof aiProviderMod.createMockAiProvider === 'function') {
-        return aiProviderMod.createMockAiProvider({
-            handler: (req, cb) => {
-                const e = new Error('AI provider error');
-                e.code = 'provider_error';
-                _attach(e);
-                cb(e);
-            }
-        });
-    }
-    return {
-        request: (payload, cancellable, cb) => {
-            if (typeof cancellable === 'function' && cb === undefined) { cb = cancellable; }
-            const e = new Error('AI provider error');
-            e.code = 'provider_error';
-            _attach(e);
-            if (cb) cb(e);
-        },
-        streamRequest(payload, cancellable, onEvent) {
-            if (typeof cancellable === 'function' && onEvent === undefined) { onEvent = cancellable; }
-            const e = new Error('AI provider error');
-            e.code = 'provider_error';
-            _attach(e);
-            if (onEvent) onEvent({ type: 'error', error: { code: 'provider_error', message: e.message, stage: 'provider_create' } });
-        },
-        destroy() {}
-    };
-}
+function _makeAuthErrorProvider() { return _makeErrorProvider('auth_error', 'AI provider auth error'); }
+
+function _makeProviderErrorProvider() { return _makeErrorProvider('provider_error', 'AI provider error'); }
 
 function createAiEngine(opts) {
     opts = opts || {};
