@@ -3438,9 +3438,6 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (prevIdx >= 0 && this._rows && this._rows[prevIdx] && this._rows[prevIdx].result) {
             prevId = this._rows[prevIdx].result.id || null;
         }
-        const hidden = this._overlay && !this._overlay._autoScroll.visible;
-        const startAt = hidden ? Math.min(this._autoRows.length,
-                                          Math.max(0, this._rows ? this._autoRows.length : 0)) : 0;
         this._rows = this._autoRows.concat(this._mainRows);
         if (!this._rows.length) { this._selIdx = -1; return; }
         // try restore by id
@@ -3460,7 +3457,12 @@ class QuickSearchApplet extends Applet.IconApplet {
             return;
         }
         this._selIdx = -1;
-        this.setSelection(Math.min(startAt, this._rows.length - 1));
+        try {
+            for (const r of this._rows) {
+                try { r.button.remove_style_class_name("quicksearch-row-selected"); } catch (e2) {}
+                try { if (r.deleteBtn) r.deleteBtn.visible = false; } catch (e2) {}
+            }
+        } catch (e) {}
     }
 
     _buildRow(item) {

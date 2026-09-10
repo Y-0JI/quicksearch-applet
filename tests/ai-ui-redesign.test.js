@@ -35,6 +35,25 @@ test('UI-1: AI toggle uses file icons (ai_hollow idle / ai active), borderless 1
     assert.ok(CSS_SRC.includes('max-width: 660px;'), 'pill + panels widened to 660px');
 });
 
+test('UI-2: typing never auto-selects autocomplete row 0 (Google-like, no white box)', () => {
+    const syncIdx = APPLET_SRC.indexOf('_syncSelection() {');
+    assert.ok(syncIdx !== -1, 'syncSelection exists');
+    const syncBlock = APPLET_SRC.slice(syncIdx, syncIdx + 1500);
+    assert.ok(!syncBlock.includes('this.setSelection(Math.min(startAt'), 'no auto-select fallback to row 0 on fresh render');
+    const renderIdx = APPLET_SRC.indexOf('_renderAutocomplete(locals) {');
+    assert.ok(renderIdx !== -1, 'renderAutocomplete exists');
+    const renderBlock = APPLET_SRC.slice(renderIdx, renderIdx + 800);
+    assert.ok(APPLET_SRC.includes('this._selIdx = -1;\n        try {\n            for (const r of this._rows)'), 'fresh render clears all row highlights');
+});
+
+test('UI-2: autocomplete top is flat against the pill', () => {
+    const autoIdx = CSS_SRC.indexOf('.quicksearch-autocomplete.quicksearch-results {');
+    assert.ok(autoIdx !== -1, 'autocomplete surface styled');
+    const autoBlock = CSS_SRC.slice(autoIdx, autoIdx + 300);
+    assert.ok(autoBlock.includes('border-radius: 0 0 8px 8px'), 'top flat, bottom rounded');
+    assert.ok(autoBlock.includes('border-top: none'), 'no top border seam');
+});
+
 test('UI-1: adaptive layout constants are the single source of truth', () => {
     assert.ok(APPLET_SRC.includes('const LAYOUT = {'), 'LAYOUT constants exist');
     for (const k of ['topPad', 'pillH', 'filterH', 'hintsH', 'maxResultsH']) {

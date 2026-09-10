@@ -290,6 +290,8 @@
 .quicksearch-autocomplete.quicksearch-results {
     background-color: rgba(19, 26, 32, 0.98);
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    border-radius: 0 0 8px 8px;
+    border-top: none;
 }
 
 /* autocomplete row icons (magnifier / history clock) — white.
