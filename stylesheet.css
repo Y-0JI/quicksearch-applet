@@ -808,11 +808,13 @@
     box-shadow: none;
 }
 .quicksearch-row,
-.quicksearch-row-selected,
+.quicksearch-row-selected {
+    border: none;
+    box-shadow: none;
+}
 .quicksearch-entry-row-focused,
 .quicksearch-entry-row.quicksearch-mode-active,
 .quicksearch-ai-composer-focused .quicksearch-ai-composer-well {
-    border: none;
     box-shadow: none;
 }
 .quicksearch-best-match,
@@ -839,6 +841,9 @@
 }
 .quicksearch-entry-row-connected {
     border-bottom: none;
+    border-left: 1px solid rgba(255, 255, 255, 0.14);
+    border-right: 1px solid rgba(255, 255, 255, 0.14);
+    border-top: 1px solid rgba(255, 255, 255, 0.14);
 }
 .quicksearch-search-view .quicksearch-results-connected {
     border-top: none;
