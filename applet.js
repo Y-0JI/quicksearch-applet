@@ -1140,10 +1140,6 @@ class QuickSearchApplet extends Applet.IconApplet {
             }
             try { if (typeof ov._syncAiModeIcon === 'function') ov._syncAiModeIcon(isAi); } catch (e2) {}
         } catch (e) {}
-        try {
-            if (isAi) ov._entryRow.add_style_class_name("quicksearch-mode-active");
-            else ov._entryRow.remove_style_class_name("quicksearch-mode-active");
-        } catch (e) {}
         try { this._syncShell(); } catch (e) {}
         try { this._syncAIComposerState(); } catch (e) {}
         try { this._syncAIFooter(); } catch (e) {}

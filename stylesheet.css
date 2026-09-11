@@ -163,12 +163,12 @@
 .quicksearch-mode-icon { icon-size: 24px; opacity: 0.85; }
 .quicksearch-mode-button:hover { background: none; border: none; box-shadow: none; }
 .quicksearch-mode-button:hover .quicksearch-mode-icon { opacity: 1.0; }
-.quicksearch-mode-active {
+.quicksearch-mode-button.quicksearch-mode-active {
     background: none;
     border: none;
     box-shadow: none;
 }
-.quicksearch-mode-active .quicksearch-mode-icon { opacity: 1.0; }
+.quicksearch-mode-button.quicksearch-mode-active .quicksearch-mode-icon { opacity: 1.0; }
 
 .quicksearch-ai-loading, .quicksearch-ai-answer, .quicksearch-ai-error { padding: 8px 10px; font-size: 10pt; }
 .quicksearch-ai-error { color: rgba(255,120,120,0.90); }
@@ -641,13 +641,6 @@
     border-color: rgba(25, 83, 169, 0.45);
 }
 
-/* Ref (advance_ui.png): the command bar keeps the SAME neutral border and surface
-   in both modes — the mode signal is the blue active segment inside the pill, not a
-   tinted pill. Switching modes never shifts the pill or the panels below it. */
-.quicksearch-entry-row.quicksearch-mode-active {
-    border-color: rgba(255, 255, 255, 0.11);
-}
-
 .quicksearch-ai-composer-focused .quicksearch-ai-composer-well {
     border-color: rgba(25, 83, 169, 0.35);
 }
@@ -794,7 +787,6 @@
     box-shadow: none;
 }
 .quicksearch-entry-row-focused,
-.quicksearch-entry-row.quicksearch-mode-active,
 .quicksearch-ai-composer-focused .quicksearch-ai-composer-well {
     box-shadow: none;
 }
@@ -807,7 +799,7 @@
 }
 .quicksearch-mode-button,
 .quicksearch-mode-button:hover,
-.quicksearch-mode-active {
+.quicksearch-mode-button.quicksearch-mode-active {
     border: none;
     background: none;
     box-shadow: none;
