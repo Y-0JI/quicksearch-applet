@@ -1223,6 +1223,29 @@ class QuickSearchApplet extends Applet.IconApplet {
         else this._goToAiMode();
     }
 
+    _isAiIdle() {
+        try {
+            return this._mode === 'ai' && !this._hasConversation();
+        } catch (e) { return false; }
+    }
+
+    // ponytail: guarded refocus shared by both mode switches. set_key_focus on
+    // the already-focused entry resets the pill margin_top for one frame (pill
+    // jumps up) — only refocus when focus actually moved away.
+    _refocusTopEntry() {
+        try {
+            if (this._overlay && this._overlay._entry) {
+                let need = true;
+                try {
+                    need = !global.stage || typeof global.stage.get_key_focus !== 'function' ||
+                        global.stage.get_key_focus() !== this._overlay._entry.clutter_text;
+                } catch (e) {}
+                if (need && global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(this._overlay._entry);
+                if (this._overlay._startCaretBlink) this._overlay._startCaretBlink();
+            }
+        } catch (e) {}
+    }
+
     _goToAiMode() {
         if (this._mode === 'ai' || !this._overlay) return;
         if (this._engine) try { this._engine.cancel(); } catch (e) {}
@@ -1239,12 +1262,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (this._hasConversation()) {
             try { this._activateComposerInput(); } catch (e) {}
         } else {
-            try {
-                if (this._overlay && this._overlay._entry) {
-                    if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(this._overlay._entry);
-                    if (this._overlay._startCaretBlink) this._overlay._startCaretBlink();
-                }
-            } catch (e) {}
+            try { this._refocusTopEntry(); } catch (e) {}
         }
     }
 
@@ -1272,12 +1290,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { this._deactivateComposerInput(); } catch (e) {}
         this.renderResults([]);
         try { this._syncRegionGeometry(); } catch (e) {}
-        try {
-            if (this._overlay && this._overlay._entry) {
-                if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(this._overlay._entry);
-                if (this._overlay._startCaretBlink) this._overlay._startCaretBlink();
-            }
-        } catch (e) {}
+        try { this._refocusTopEntry(); } catch (e) {}
         const txt = this._overlay ? this._overlay.getText() : "";
         if (txt && String(txt).trim()) {
             // re-trigger normal search for current text
@@ -2912,6 +2925,12 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) {}
         if (this._mode === 'ai') {
             if (!this._hasConversation()) {
+                // ponytail: AI idle re-asserts the same pill anchor as the search path
+                // above (identical formula) on every geometry sync, so async margin
+                // resets from key-focus can never leave the pill offset.
+                try {
+                    if (ov._entryRow && Math.round(ov._entryRow.margin_top) !== needTop) ov._entryRow.set_margin_top(needTop);
+                } catch (e) {}
                 try { ov._contentArea.set_size(w, 0); } catch (e) {}
                 try { if (ov._aiView) ov._aiView.set_size(w, 0); } catch (e) {}
                 try { if (ov._aiPane) ov._aiPane.set_size(w, 0); } catch (e) {}
