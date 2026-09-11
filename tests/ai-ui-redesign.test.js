@@ -46,12 +46,34 @@ test('UI-2: clicking Hapus deletes history WITHOUT activating the row (no bubble
     const delIdx = APPLET_SRC.indexOf('delBtn.connect("clicked"');
     assert.ok(delIdx !== -1, 'delete button click handler exists');
     const delBlock = APPLET_SRC.slice(delIdx, delIdx + 400);
-    assert.ok(delBlock.includes('_removeRecent'), 'delete click removes the history item');
-    assert.ok(delBlock.includes('_suppressRowClick'), 'delete click suppresses the row click');
-    const rowIdx = APPLET_SRC.indexOf('button.connect("clicked"');
-    assert.ok(rowIdx !== -1, 'row click handler exists');
-    const rowBlock = APPLET_SRC.slice(rowIdx, rowIdx + 400);
-    assert.ok(rowBlock.includes('_suppressRowClick'), 'row click bails when suppressed by delete');
+    assert.ok(delBlock.includes('_removeRecent(r.title)'), 'delete click removes only that history item');
+    const pressIdx = APPLET_SRC.indexOf('delBtn.connect("button-press-event"');
+    assert.ok(pressIdx !== -1, 'delete button stops press propagation locally');
+    const pressBlock = APPLET_SRC.slice(pressIdx, pressIdx + 300);
+    assert.ok(pressBlock.includes('EVENT_STOP'), 'press returns EVENT_STOP');
+    const rowIdx = APPLET_SRC.indexOf('button.connect("button-press-event", (actor, event)');
+    assert.ok(rowIdx !== -1, 'row press guard exists');
+    const rowBlock = APPLET_SRC.slice(rowIdx, rowIdx + 900);
+    assert.ok(rowBlock.includes('_historyDeleteArmed'), 'row press bails when delete armed');
+    assert.ok(rowBlock.includes('get_source'), 'row press checks local event source');
+});
+
+test('UI-2: history delete uses shared helpers (no duplicated storage logic)', () => {
+    assert.ok(APPLET_SRC.includes('_showRowDeleteButton(row)'), 'show helper exists');
+    assert.ok(APPLET_SRC.includes('_hideRowDeleteButton(row)'), 'hide helper exists');
+    const rmIdx = APPLET_SRC.indexOf('_removeRecent(q) {');
+    assert.ok(rmIdx !== -1, '_removeRecent is single source of truth');
+    const rmBlock = APPLET_SRC.slice(rmIdx, rmIdx + 600);
+    assert.ok(rmBlock.includes('removeRecentItem'), 'storage delete via shared util');
+    assert.ok(rmBlock.includes('_renderAutocomplete'), 'autocomplete re-rendered after deletion');
+    assert.ok(!rmBlock.includes('_engine.query'), 'no new search triggered by delete');
+});
+
+test('UI-2: autocomplete history rows can show delete button (autoRows in selection)', () => {
+    const renderIdx = APPLET_SRC.indexOf('_renderAutocomplete(locals) {');
+    assert.ok(renderIdx !== -1, 'renderAutocomplete exists');
+    const renderBlock = APPLET_SRC.slice(renderIdx, renderIdx + 900);
+    assert.ok(renderBlock.includes('this._rows = this._autoRows.concat'), 'autoRows registered for selection/hover');
 });
 
 test('UI-2: typing never auto-selects autocomplete row 0 (Google-like, no white box)', () => {

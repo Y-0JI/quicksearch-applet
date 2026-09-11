@@ -3132,6 +3132,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._overlay._autoScroll.visible = this._autoRows.length > 0;
         try { this._settleAutoAnchor(); } catch (e) {}
         this._syncRegionGeometry();
+        try { this._rows = this._autoRows.concat(this._mainRows || []); } catch (e) {}
         this._syncSelection();
     }
 
@@ -3230,11 +3231,19 @@ class QuickSearchApplet extends Applet.IconApplet {
         return Clutter.EVENT_PROPAGATE;
     }
 
+    _showRowDeleteButton(row) {
+        try { if (row && row.deleteBtn) row.deleteBtn.visible = true; } catch (e) {}
+    }
+
+    _hideRowDeleteButton(row) {
+        try { if (row && row.deleteBtn) row.deleteBtn.visible = false; } catch (e) {}
+    }
+
     _clearSelection() {
         try {
             if (this._selIdx >= 0 && this._rows[this._selIdx]) {
                 try { this._rows[this._selIdx].button.remove_style_class_name("quicksearch-row-selected"); } catch (e2) {}
-                try { if (this._rows[this._selIdx].deleteBtn) this._rows[this._selIdx].deleteBtn.visible = false; } catch (e2) {}
+                this._hideRowDeleteButton(this._rows[this._selIdx]);
             }
         } catch (e) {}
         this._selIdx = -1;
@@ -3259,13 +3268,13 @@ class QuickSearchApplet extends Applet.IconApplet {
     setSelection(idx) {
         if (this._selIdx >= 0 && this._rows[this._selIdx]) {
             this._rows[this._selIdx].button.remove_style_class_name("quicksearch-row-selected");
-            try { if (this._rows[this._selIdx].deleteBtn) this._rows[this._selIdx].deleteBtn.visible = false; } catch (e) {}
+            this._hideRowDeleteButton(this._rows[this._selIdx]);
         }
         this._selIdx = idx;
         const row = this._rows[idx];
         if (row) {
             row.button.add_style_class_name("quicksearch-row-selected");
-            try { if (row.deleteBtn) row.deleteBtn.visible = true; } catch (e) {}
+            this._showRowDeleteButton(row);
             this._scrollToRow(row.button);
         }
     }
@@ -3476,7 +3485,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         try {
             for (const r of this._rows) {
                 try { r.button.remove_style_class_name("quicksearch-row-selected"); } catch (e2) {}
-                try { if (r.deleteBtn) r.deleteBtn.visible = false; } catch (e2) {}
+                this._hideRowDeleteButton(r);
             }
         } catch (e) {}
     }
@@ -3543,8 +3552,12 @@ class QuickSearchApplet extends Applet.IconApplet {
                 delBtn = new St.Button({ style_class: "quicksearch-history-delete", can_focus: false, reactive: true, track_hover: true, visible: false });
                 const delLbl = new St.Label({ text: _("Hapus"), style_class: "quicksearch-history-delete-label" });
                 try { delBtn.set_child(delLbl); } catch (e) {}
+                delBtn.connect("button-press-event", (actor, event) => {
+                    try { this._historyDeleteArmed = true; } catch (e) {}
+                    return Clutter.EVENT_STOP;
+                });
                 delBtn.connect("clicked", () => {
-                    try { this._suppressRowClick = true; } catch (e) {}
+                    try { this._historyDeleteArmed = false; } catch (e) {}
                     try { this._removeRecent(r.title); } catch (e) {}
                     return Clutter.EVENT_STOP;
                 });
@@ -3573,16 +3586,38 @@ class QuickSearchApplet extends Applet.IconApplet {
         }
 
         const row = { button: button, result: r, deleteBtn: delBtn };
+        button.connect("button-press-event", (actor, event) => {
+            try {
+                if (this._historyDeleteArmed) { this._historyDeleteArmed = false; return Clutter.EVENT_STOP; }
+                let src = null;
+                try { src = event && typeof event.get_source === 'function' ? event.get_source() : null; } catch (e2) { src = null; }
+                let n = src, depth = 0;
+                while (n && depth < 6) {
+                    if (n === delBtn) { return Clutter.EVENT_STOP; }
+                    try { n = typeof n.get_parent === 'function' ? n.get_parent() : null; } catch (e2) { n = null; }
+                    depth++;
+                }
+            } catch (e) {}
+            return Clutter.EVENT_PROPAGATE;
+        });
         button.connect("clicked", () => {
             try {
-                if (this._suppressRowClick) { this._suppressRowClick = false; return Clutter.EVENT_STOP; }
-            } catch (e) { try { this._suppressRowClick = false; } catch (e2) {} }
+                if (this._historyDeleteArmed) { this._historyDeleteArmed = false; return Clutter.EVENT_STOP; }
+            } catch (e) {}
             this.activateRow(row);
         });
         button.connect("enter-event", () => {
             for (let i = 0; i < this._rows.length; i++) {
-                if (this._rows[i] === row) { this.setSelection(i); break; }
+                if (this._rows[i] === row) { this.setSelection(i); return; }
             }
+            if (isHistoryRow) this._showRowDeleteButton(row);
+        });
+        button.connect("leave-event", () => {
+            try {
+                if (this._selIdx < 0 || !this._rows[this._selIdx] || this._rows[this._selIdx] !== row) {
+                    if (isHistoryRow) this._hideRowDeleteButton(row);
+                }
+            } catch (e) {}
         });
         // right-click anywhere on row — only app/file produce a menu
         if (r && (r.type === "app" || r.type === "file")) {
