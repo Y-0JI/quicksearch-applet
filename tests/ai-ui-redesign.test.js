@@ -42,20 +42,18 @@ test('UI-2: Up from first suggestion returns to searchbox (deselect), not stuck 
     assert.ok(mvBlock.includes('_clearSelection()'), 'Up at top deselects back to searchbox');
 });
 
-test('UI-2: clicking Hapus deletes history WITHOUT activating the row (no bubble)', () => {
-    const delIdx = APPLET_SRC.indexOf('delBtn.connect("clicked"');
-    assert.ok(delIdx !== -1, 'delete button click handler exists');
-    const delBlock = APPLET_SRC.slice(delIdx, delIdx + 400);
-    assert.ok(delBlock.includes('_removeRecent(r.title)'), 'delete click removes only that history item');
+test('UI-2: press on Hapus deletes history directly (deterministic, no clicked lifecycle)', () => {
+    assert.ok(!APPLET_SRC.includes('_historyDeleteArmed'), 'no armed-flag mechanism left');
     const pressIdx = APPLET_SRC.indexOf('delBtn.connect("button-press-event"');
-    assert.ok(pressIdx !== -1, 'delete button stops press propagation locally');
-    const pressBlock = APPLET_SRC.slice(pressIdx, pressIdx + 300);
+    assert.ok(pressIdx !== -1, 'delete button press handler exists');
+    const pressBlock = APPLET_SRC.slice(pressIdx, pressIdx + 500);
+    assert.ok(pressBlock.includes('_removeRecent(r.title)'), 'press calls _removeRecent directly');
     assert.ok(pressBlock.includes('EVENT_STOP'), 'press returns EVENT_STOP');
     const rowIdx = APPLET_SRC.indexOf('button.connect("button-press-event", (actor, event)');
     assert.ok(rowIdx !== -1, 'row press guard exists');
     const rowBlock = APPLET_SRC.slice(rowIdx, rowIdx + 900);
-    assert.ok(rowBlock.includes('_historyDeleteArmed'), 'row press bails when delete armed');
     assert.ok(rowBlock.includes('get_source'), 'row press checks local event source');
+    assert.ok(rowBlock.includes('n === delBtn'), 'press from delete button never reaches activateRow');
 });
 
 test('UI-2: history delete uses shared helpers (no duplicated storage logic)', () => {

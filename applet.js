@@ -3553,11 +3553,14 @@ class QuickSearchApplet extends Applet.IconApplet {
                 const delLbl = new St.Label({ text: _("Hapus"), style_class: "quicksearch-history-delete-label" });
                 try { delBtn.set_child(delLbl); } catch (e) {}
                 delBtn.connect("button-press-event", (actor, event) => {
-                    try { this._historyDeleteArmed = true; } catch (e) {}
+                    try {
+                        const b = event && typeof event.get_button === 'function' ? event.get_button() : 1;
+                        if (b !== 1) return Clutter.EVENT_PROPAGATE;
+                    } catch (e) {}
+                    try { this._removeRecent(r.title); } catch (e) {}
                     return Clutter.EVENT_STOP;
                 });
                 delBtn.connect("clicked", () => {
-                    try { this._historyDeleteArmed = false; } catch (e) {}
                     try { this._removeRecent(r.title); } catch (e) {}
                     return Clutter.EVENT_STOP;
                 });
@@ -3588,7 +3591,6 @@ class QuickSearchApplet extends Applet.IconApplet {
         const row = { button: button, result: r, deleteBtn: delBtn };
         button.connect("button-press-event", (actor, event) => {
             try {
-                if (this._historyDeleteArmed) { this._historyDeleteArmed = false; return Clutter.EVENT_STOP; }
                 let src = null;
                 try { src = event && typeof event.get_source === 'function' ? event.get_source() : null; } catch (e2) { src = null; }
                 let n = src, depth = 0;
@@ -3601,9 +3603,6 @@ class QuickSearchApplet extends Applet.IconApplet {
             return Clutter.EVENT_PROPAGATE;
         });
         button.connect("clicked", () => {
-            try {
-                if (this._historyDeleteArmed) { this._historyDeleteArmed = false; return Clutter.EVENT_STOP; }
-            } catch (e) {}
             this.activateRow(row);
         });
         button.connect("enter-event", () => {
