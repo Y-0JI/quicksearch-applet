@@ -27,6 +27,11 @@
         "description": "Show recent searches while typing",
         "default": true
     },
+    "panel-icon": {
+        "type": "iconfilechooser",
+        "description": "Panel icon",
+        "default": "system-search"
+    },
     "sec-search": {
         "type": "section",
         "description": "Search"

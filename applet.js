@@ -827,7 +827,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     constructor(orientation, panel_height, instance_id, metadata) {
         super(orientation, panel_height, instance_id);
 
-        this.set_applet_icon_name("system-search");
+        this._applyPanelIcon();
         this.set_applet_tooltip(_("Quick Search"));
         try { this._appletDir = metadata && metadata.path ? String(metadata.path) : ""; }
         catch (e) { this._appletDir = ""; }
@@ -856,6 +856,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.max_web = 5;
         this.debounce_ms = 150;
         this.show_recent = true;
+        this.panel_icon = "system-search";
         this.recent_queries_json = "";
 
         this.settings.bind("open-shortcut", "open_shortcut", () => this._bindHotkey());
@@ -873,6 +874,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.settings.bind("max-web", "max_web", () => this._rebuildEngine());
         this.settings.bind("debounce-ms", "debounce_ms", () => this._rebuildEngine());
         this.settings.bind("show-recent", "show_recent");
+        this.settings.bind("panel-icon", "panel_icon", () => this._applyPanelIcon());
         this.settings.bind("recent-queries", "recent_queries_json");
         this.settings.bind("web-search-api-key", "web_search_api_key", () => { this._rebuildEngine(); this._rebuildAiEngine(); });
         this.settings.bind("searxng-url", "searxng_url", () => { this._rebuildEngine(); this._rebuildAiEngine(); });
@@ -2416,6 +2418,15 @@ class QuickSearchApplet extends Applet.IconApplet {
             this.search_engine = n;
         }
         return this.search_engine;
+    }
+
+    _applyPanelIcon() {
+        const name = String(this.panel_icon || "system-search").trim() || "system-search";
+        try {
+            const f = Gio.File.new_for_path(name);
+            if (f.query_exists(null)) { this.set_applet_icon_path(name); return; }
+        } catch (e) {}
+        try { this.set_applet_icon_name(name); } catch (e) {}
     }
 
     _searchEngineLabel(id) {
