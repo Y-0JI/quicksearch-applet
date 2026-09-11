@@ -3544,6 +3544,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 const delLbl = new St.Label({ text: _("Hapus"), style_class: "quicksearch-history-delete-label" });
                 try { delBtn.set_child(delLbl); } catch (e) {}
                 delBtn.connect("clicked", () => {
+                    try { this._suppressRowClick = true; } catch (e) {}
                     try { this._removeRecent(r.title); } catch (e) {}
                     return Clutter.EVENT_STOP;
                 });
@@ -3572,7 +3573,12 @@ class QuickSearchApplet extends Applet.IconApplet {
         }
 
         const row = { button: button, result: r, deleteBtn: delBtn };
-        button.connect("clicked", () => this.activateRow(row));
+        button.connect("clicked", () => {
+            try {
+                if (this._suppressRowClick) { this._suppressRowClick = false; return Clutter.EVENT_STOP; }
+            } catch (e) { try { this._suppressRowClick = false; } catch (e2) {} }
+            this.activateRow(row);
+        });
         button.connect("enter-event", () => {
             for (let i = 0; i < this._rows.length; i++) {
                 if (this._rows[i] === row) { this.setSelection(i); break; }

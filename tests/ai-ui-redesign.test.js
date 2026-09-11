@@ -42,6 +42,18 @@ test('UI-2: Up from first suggestion returns to searchbox (deselect), not stuck 
     assert.ok(mvBlock.includes('_clearSelection()'), 'Up at top deselects back to searchbox');
 });
 
+test('UI-2: clicking Hapus deletes history WITHOUT activating the row (no bubble)', () => {
+    const delIdx = APPLET_SRC.indexOf('delBtn.connect("clicked"');
+    assert.ok(delIdx !== -1, 'delete button click handler exists');
+    const delBlock = APPLET_SRC.slice(delIdx, delIdx + 400);
+    assert.ok(delBlock.includes('_removeRecent'), 'delete click removes the history item');
+    assert.ok(delBlock.includes('_suppressRowClick'), 'delete click suppresses the row click');
+    const rowIdx = APPLET_SRC.indexOf('button.connect("clicked"');
+    assert.ok(rowIdx !== -1, 'row click handler exists');
+    const rowBlock = APPLET_SRC.slice(rowIdx, rowIdx + 400);
+    assert.ok(rowBlock.includes('_suppressRowClick'), 'row click bails when suppressed by delete');
+});
+
 test('UI-2: typing never auto-selects autocomplete row 0 (Google-like, no white box)', () => {
     const syncIdx = APPLET_SRC.indexOf('_syncSelection() {');
     assert.ok(syncIdx !== -1, 'syncSelection exists');
