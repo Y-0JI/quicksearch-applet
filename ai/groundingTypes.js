@@ -157,7 +157,7 @@ function createToolResult(query, sources) {
 }
 
 function createToolError(code, message) {
-    const allowed = ['invalid_query', 'backend_unavailable', 'request_failed', 'cancelled', 'invalid_response'];
+    const allowed = ['invalid_query', 'backend_unavailable', 'request_failed', 'cancelled', 'invalid_response', 'upstream_unavailable'];
     const c = allowed.includes(code) ? code : 'request_failed';
     const msg = typeof message === 'string' && message.trim() ? message.trim().split('\n')[0].slice(0, 200) : 'Web search error';
     return { type: 'tool_error', tool: TOOL_NAME, code: c, message: msg };
@@ -180,7 +180,7 @@ function fromCallbackError(err) {
     if (err.type === 'tool_error' && err.code && err.tool) return { type: err.type, tool: err.tool, code: err.code, message: err.message };
     const code = err.code;
     const msg = typeof err.message === 'string' ? err.message.split('\n')[0].slice(0, 200) : 'Web search error';
-    if (code === 'invalid_query' || code === 'backend_unavailable' || code === 'request_failed' || code === 'cancelled' || code === 'invalid_response') {
+    if (code === 'invalid_query' || code === 'backend_unavailable' || code === 'request_failed' || code === 'cancelled' || code === 'invalid_response' || code === 'upstream_unavailable') {
         return createToolError(code, msg);
     }
     return createToolError('request_failed', msg);

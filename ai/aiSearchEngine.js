@@ -12,6 +12,7 @@ if (!sourceFormatterMod) try { global.log("[quicksearch@yoji] aiSearchEngine mis
 
 const ERROR_MESSAGES = {
     provider_error: 'AI provider unavailable',
+    upstream_unavailable: 'Web search is temporarily unavailable because the search backend has no healthy upstream sources.',
     web_search_unavailable: 'Web search unavailable',
     grounding_error: 'Web search unavailable',
     no_results: 'No search results found',
@@ -162,6 +163,7 @@ function _normalizeWebError(err) {
     function _withStage(obj, e) { const s = _stageOf(e); if (s) { obj.stage = s; obj._stage = s; } if (e && e.status != null) obj.status = e.status; if (e && e.httpStatus != null) obj.httpStatus = e.httpStatus; return obj; }
     if (!err) return { code: 'web_search_unavailable', message: ERROR_MESSAGES.web_search_unavailable };
     if (err.code === 'cancelled') return _withStage({ code: 'cancelled', message: null }, err);
+    if (err.code === 'upstream_unavailable') return _withStage({ code: 'upstream_unavailable', message: err.message || ERROR_MESSAGES.upstream_unavailable }, err);
     if (err.code === 'no_results') return _withStage({ code: 'no_results', message: err.message || ERROR_MESSAGES.no_results }, err);
     if (err.code === 'web_search_unavailable') return _withStage({ code: 'web_search_unavailable', message: err.message || ERROR_MESSAGES.web_search_unavailable }, err);
     if (err.code === 'request_failed') return _withStage({ code: 'web_search_unavailable', message: err.message || ERROR_MESSAGES.web_search_unavailable }, err);

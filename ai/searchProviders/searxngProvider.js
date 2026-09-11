@@ -98,6 +98,24 @@ function parseSearXngHtml(html) {
     return out.slice(0, MAX_PARSE_RESULTS);
 }
 
+// ponytail: fail-safe upstream-outage detector. Only true when the page is structurally a
+// SearXNG result/error shell (dialog-error-block or #results) AND carries an upstream health
+// marker (response-error/suspended/rate-limit/access-denied/captcha). Arbitrary prose with
+// the word "suspended" never matches. ceiling=HTML diagnostic text (no structured API).
+function isSearxngUpstreamOutage(html) {
+    const b = String(html || '');
+    if (!b) return false;
+    const hasShell = b.indexOf('dialog-error-block') >= 0 || b.indexOf('id="results"') >= 0 || b.indexOf("id='results'") >= 0;
+    if (!hasShell) return false;
+    const hasHealthCell = b.indexOf('response-error') >= 0;
+    if (!hasHealthCell) return false;
+    const low = b.toLowerCase();
+    return low.indexOf('suspended') >= 0 || low.indexOf('too many requests') >= 0 ||
+        low.indexOf('access denied') >= 0 || low.indexOf('captcha') >= 0 ||
+        low.indexOf('rate limit') >= 0 || low.indexOf('rate-limit') >= 0 ||
+        low.indexOf('upstream') >= 0;
+}
+
 // SearchProvider interface: search(query, cancellable) -> Promise<SearchResult[]>
 function createSearXngProvider(opts) {
     opts = opts || {};
@@ -164,6 +182,10 @@ function createSearXngProvider(opts) {
             const parsed = parseSearXngHtml(body);
             _log('query="' + q.slice(0, 120) + '" provider=' + PROVIDER_NAME + ' http_status=' + status + ' content_type=' + (contentType || 'text/html') + ' parsed_results=' + parsed.length);
             if (parsed.length === 0) {
+                if (isSearxngUpstreamOutage(body)) {
+                    _log('query="' + q.slice(0, 120) + '" provider=' + PROVIDER_NAME + ' http_status=' + status + ' error=upstream outage (no healthy upstream) stage=web_search_upstream');
+                    return Promise.reject(_makeError('Web search is temporarily unavailable because the search backend has no healthy upstream sources.', 'upstream_unavailable', 'web_search_upstream', { httpStatus: status, backend: PROVIDER_NAME, contentType }));
+                }
                 return Promise.reject(_makeError('No search results found', 'no_results', 'web_search_parse', { httpStatus: status, backend: PROVIDER_NAME, contentType }));
             }
             const results = normalizeSearchResults(parsed);
@@ -177,4 +199,4 @@ function createSearXngProvider(opts) {
     return { search, __providerName: PROVIDER_NAME };
 }
 
-module.exports = { createSearXngProvider, parseSearXngHtml, PROVIDER_NAME, DEFAULT_TIMEOUT_MS };
+module.exports = { createSearXngProvider, parseSearXngHtml, isSearxngUpstreamOutage, PROVIDER_NAME, DEFAULT_TIMEOUT_MS };

@@ -2018,7 +2018,11 @@ class QuickSearchApplet extends Applet.IconApplet {
                     } catch (e) {}
                 } else if (msg.status === 'error') {
                     // §9: error belongs to this assistant interaction; history stays intact
-                    const errText = diagOn ? this._buildAiDiagnosticText(msg.error) : _("Unable to get an AI response.");
+                    // upstream outage gets its own message (not the generic/misleading one).
+                    const isUpstreamOut = !!(msg.error && msg.error.code === 'upstream_unavailable');
+                    const errText = isUpstreamOut && !diagOn
+                        ? _("Web search is temporarily unavailable because the search backend has no healthy upstream sources.")
+                        : (diagOn ? this._buildAiDiagnosticText(msg.error) : _("Unable to get an AI response."));
                     if (msg.content) {
                         try {
                             addAnswerHeading();

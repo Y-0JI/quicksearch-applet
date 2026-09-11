@@ -179,6 +179,10 @@ function _mapError(err, fallbackCode) {
     if (!err) return Gt.createToolError(fallbackCode || 'request_failed', 'Web search error');
     const code = err.code;
     const msg = _sanitizeMessage(err.message);
+    if (code === 'upstream_unavailable') {
+        const te = Gt.createToolError('upstream_unavailable', msg);
+        return _attachStage(te, err);
+    }
     if (code === 'invalid_query' || code === 'backend_unavailable' || code === 'request_failed' || code === 'cancelled' || code === 'invalid_response') {
         const te = Gt.createToolError(code, msg);
         return _attachStage(te, err);
