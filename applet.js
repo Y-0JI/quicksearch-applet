@@ -2917,6 +2917,15 @@ class QuickSearchApplet extends Applet.IconApplet {
                 try { if (ov._aiPane) ov._aiPane.set_size(w, 0); } catch (e) {}
                 try { if (ov._scroll) ov._scroll.set_size(w, 0); } catch (e) {}
                 try { if (ov._aiScroll) ov._aiScroll.set_size(w, 0); } catch (e) {}
+                // ponytail: same empty-shell size as search idle (h=0 -> dlgH2=70) so the
+                // pill does not re-measure one frame shorter when switching modes.
+                try {
+                    const dlgH2 = Math.max(0, 0 + 70);
+                    try { ov.dialogLayout.set_height(dlgH2); } catch (e) {}
+                    try { ov.dialogLayout.set_size(w, dlgH2); } catch (e) {}
+                    try { ov.dialogLayout.queue_relayout(); } catch (e) {}
+                    try { ov.contentLayout.queue_relayout(); } catch (e) {}
+                } catch (e) {}
                 return;
             }
             try { this._syncAiPaneGeometry(); } catch (e) {}
