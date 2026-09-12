@@ -1812,6 +1812,31 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) { return false; }
     }
 
+    // Thinking-only presentation: compact ✨ + "Thinking..." + CSS dots.
+    // No timer/animation object — render rebuilds actor per _renderAIState(),
+    // first token flips branch so actor drops with zero cleanup.
+    _buildAiThinkingActor() {
+        try {
+            const box = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-loading quicksearch-ai-thinking" });
+            try {
+                const icon = new St.Label({ text: "\u2728", style_class: "quicksearch-ai-thinking-icon" });
+                box.add_child(icon);
+                const lbl = new St.Label({ text: _("Thinking..."), style_class: "quicksearch-ai-thinking-label" });
+                try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+                box.add_child(lbl);
+                const dots = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-thinking-dots" });
+                for (let i = 0; i < 3; i++) {
+                    try {
+                        const d = new St.Label({ text: "\u2022", style_class: "quicksearch-ai-thinking-dot quicksearch-ai-thinking-dot-" + (i + 1) });
+                        dots.add_child(d);
+                    } catch (e) {}
+                }
+                box.add_child(dots);
+            } catch (e) {}
+            return box;
+        } catch (e) { return null; }
+    }
+
     _buildAiAnswerActor(content) {
         try {
             const text = String(content || '');
@@ -1981,9 +2006,8 @@ class QuickSearchApplet extends Applet.IconApplet {
                         } catch (e) {}
                     } else {
                         try {
-                            const lbl = new St.Label({ text: _("Thinking..."), style_class: "quicksearch-ai-loading" });
-                            try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
-                            ov.aiResultsBox.add_child(lbl);
+                            const actor = this._buildAiThinkingActor();
+                            if (actor) ov.aiResultsBox.add_child(actor);
                         } catch (e) {}
                     }
                 } else if (msg.status === 'complete') {
