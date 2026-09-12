@@ -1328,6 +1328,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     _clearAIState() {
+        try { this._stopAiThinkingPulse(); } catch (e) {}
         try { this._hideSourcesPopover(); } catch (e) {}
         this._cancelAILayoutSync();
         this._aiLoading = false;
@@ -1339,6 +1340,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     _clearAIStateVisualOnly() {
+        try { this._stopAiThinkingPulse(); } catch (e) {}
         this._aiLoading = false;
         this._aiStreaming = false;
         this._aiEditId = null;
@@ -1812,31 +1814,98 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) { return false; }
     }
 
-    // Thinking-only presentation: compact ✨ + "Thinking..." + CSS dots.
-    // No timer/animation object — render rebuilds actor per _renderAIState(),
-    // first token flips branch so actor drops with zero cleanup.
+    // Thinking-only presentation: compact sparkle + Thinking label + pulsing dots.
+    // One GLib timer per Thinking lifetime (caret-blink pattern): builder starts it,
+    // _renderAIState() stops it before every rebuild, and the tick self-removes when
+    // Thinking no longer applies (first token / cancel) or actors leave the stage.
+    // Pulse is a 1200ms sine wave (100ms tick x 12 steps), 120° phase per dot.
+    // No engine / streaming / state changes.
     _buildAiThinkingActor() {
         try {
-            const box = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-loading quicksearch-ai-thinking" });
+            const box = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-loading quicksearch-ai-thinking", y_align: St.Align.MIDDLE });
             try {
-                const icon = new St.Label({ text: "\u2728", style_class: "quicksearch-ai-thinking-icon" });
+                const icon = new St.Label({ text: "✨", style_class: "quicksearch-ai-thinking-icon", y_align: St.Align.MIDDLE });
                 box.add_child(icon);
-                const lbl = new St.Label({ text: _("Thinking..."), style_class: "quicksearch-ai-thinking-label" });
+                const lbl = new St.Label({ text: _("Thinking..."), style_class: "quicksearch-ai-thinking-label", y_align: St.Align.MIDDLE });
                 try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
                 box.add_child(lbl);
-                const dots = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-thinking-dots" });
+                const dots = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-thinking-dots", y_align: St.Align.MIDDLE });
+                const dotActors = [];
                 for (let i = 0; i < 3; i++) {
                     try {
-                        const d = new St.Label({ text: "\u2022", style_class: "quicksearch-ai-thinking-dot quicksearch-ai-thinking-dot-" + (i + 1) });
+                        const d = new St.Label({ text: "●", style_class: "quicksearch-ai-thinking-dot quicksearch-ai-thinking-dot-" + (i + 1), y_align: St.Align.MIDDLE });
+                        try { d.set_opacity(110 + Math.round(145 * (0.5 + 0.5 * Math.sin(-(i * 2 * Math.PI / 3))))); } catch (e) {}
                         dots.add_child(d);
+                        dotActors.push(d);
                     } catch (e) {}
                 }
                 box.add_child(dots);
+                try { this._startAiThinkingPulse(box, dotActors); } catch (e) {}
+                try {
+                    const self = this;
+                    box.connect('destroy', function() {
+                        try { if (self && self._aiThinkingOwner === box) self._stopAiThinkingPulse(); } catch (e) {}
+                    });
+                } catch (e) {}
             } catch (e) {}
             return box;
         } catch (e) { return null; }
     }
 
+    _startAiThinkingPulse(owner, dots) {
+        this._stopAiThinkingPulse();
+        if (!owner || !dots || dots.length !== 3) return;
+        this._aiThinkingOwner = owner;
+        this._aiThinkingDots = dots;
+        this._aiThinkingFrame = 0;
+        try {
+            const self = this;
+            this._aiThinkingTimerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                try {
+                    if (!self || self._aiThinkingOwner !== owner) return GLib.SOURCE_REMOVE;
+                    const ds = self._aiThinkingDots;
+                    if (!ds || ds.length !== 3) return GLib.SOURCE_REMOVE;
+                    for (let i = 0; i < 3; i++) {
+                        try {
+                            if (ds[i] && typeof ds[i].get_stage === 'function' && !ds[i].get_stage()) return GLib.SOURCE_REMOVE;
+                        } catch (e) {}
+                    }
+                    if (!self._isAiThinkingActive()) return GLib.SOURCE_REMOVE;
+                    const t = (self._aiThinkingFrame = (self._aiThinkingFrame || 0) + 1);
+                    for (let i = 0; i < 3; i++) {
+                        try {
+                            const angle = (2 * Math.PI * t / 12) - (i * 2 * Math.PI / 3);
+                            const level = 0.5 + 0.5 * Math.sin(angle);
+                            ds[i].set_opacity(Math.round(110 + 145 * level));
+                        } catch (e) {}
+                    }
+                } catch (e) {}
+                return GLib.SOURCE_CONTINUE;
+            });
+        } catch (e) { this._aiThinkingTimerId = 0; }
+    }
+
+    _stopAiThinkingPulse() {
+        if (this._aiThinkingTimerId) {
+            try { GLib.source_remove(this._aiThinkingTimerId); } catch (e) {}
+            this._aiThinkingTimerId = 0;
+        }
+        this._aiThinkingOwner = null;
+        this._aiThinkingDots = null;
+    }
+
+    // Read-only Thinking check for the pulse tick: true only while an assistant
+    // message is still streaming with empty content.
+    _isAiThinkingActive() {
+        try {
+            if (!convMod || !this._conversation) return true;
+            const msgs = convMod.getMessages(this._conversation);
+            for (const m of msgs) {
+                if (m && m.role === 'assistant' && m.status === 'streaming' && !m.content) return true;
+            }
+            return false;
+        } catch (e) { return true; }
+    }
     _buildAiAnswerActor(content) {
         try {
             const text = String(content || '');
@@ -1931,6 +2000,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { if (ov._autoScroll) ov._autoScroll.visible = false; } catch (e) {}
         // UI-2/8: strict separation — AI Mode never renders search filter chips
         try { this._setFilterRowVisible(false); } catch (e) {}
+        // 9D: stop Thinking pulse before rebuild — one timer max, never orphan.
+        try { this._stopAiThinkingPulse(); } catch (e) {}
         this._autoRows = [];
         try { while (ov.aiResultsBox.get_n_children() > 0) ov.aiResultsBox.remove_child(ov.aiResultsBox.get_child_at_index(0)); } catch (e) {}
         this._clearMsgTooltips();
@@ -2393,6 +2464,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     _stopAI() {
+        try { this._stopAiThinkingPulse(); } catch (e) {}
         try { this._hideSourcesPopover(); } catch (e) {}
         this._cancelAILayoutSync();
         this._aiGen++;
@@ -2411,6 +2483,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     _resetConversation() {
+        try { this._stopAiThinkingPulse(); } catch (e) {}
         try { this._hideSourcesPopover(); } catch (e) {}
         this._cancelAILayoutSync();
         this._aiGen++;
@@ -2568,6 +2641,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     close() {
+        try { this._stopAiThinkingPulse(); } catch (e) {}
         this._cancelAILayoutSync();
         try { this._hideSourcesPopover(); } catch (e) {}
         try { if (this._contextMenu) this._contextMenu.hide(); } catch (e) {}
@@ -3715,6 +3789,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._cancelPopupHide();
         this._cancelAutoAnchor();
         // Phase 9 lifecycle: no pending scroll timer, edit target, or message actor map
+        try { this._stopAiThinkingPulse(); } catch (e) {}
         this._cancelAIScroll();
         this._aiEditId = null;
         this._aiMsgActors = {};

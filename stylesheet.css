@@ -660,14 +660,14 @@
 }
 
 /* Thinking-only: compact inline row, no timer/animation (static dots). */
-.quicksearch-ai-thinking { spacing: 6px; }
-.quicksearch-ai-thinking-icon { font-size: 9pt; color: rgba(196,181,253,0.90); }
-.quicksearch-ai-thinking-label { font-size: 9pt; color: rgba(255,255,255,0.50); }
-.quicksearch-ai-thinking-dots { spacing: 2px; padding-left: 2px; }
-.quicksearch-ai-thinking-dot { font-size: 9pt; }
-.quicksearch-ai-thinking-dot-1 { color: rgba(255,255,255,0.55); }
-.quicksearch-ai-thinking-dot-2 { color: rgba(255,255,255,0.35); }
-.quicksearch-ai-thinking-dot-3 { color: rgba(255,255,255,0.20); }
+.quicksearch-ai-thinking { spacing: 8px; padding: 10px 14px; }
+.quicksearch-ai-thinking-icon { font-size: 10pt; color: rgba(196,181,253,0.95); padding: 0; }
+.quicksearch-ai-thinking-label { font-size: 9.5pt; font-style: italic; color: rgba(255,255,255,0.55); padding: 1px 0 0 0; }
+.quicksearch-ai-thinking-dots { spacing: 3px; padding: 2px 0 0 4px; }
+.quicksearch-ai-thinking-dot { font-size: 7pt; padding: 0; }
+.quicksearch-ai-thinking-dot-1 { color: rgba(255,255,255,0.60); }
+.quicksearch-ai-thinking-dot-2 { color: rgba(255,255,255,0.38); }
+.quicksearch-ai-thinking-dot-3 { color: rgba(255,255,255,0.22); }
 
 .quicksearch-ai-md-codebox {
     background-color: rgba(0, 0, 0, 0.26);
