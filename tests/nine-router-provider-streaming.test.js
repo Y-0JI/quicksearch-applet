@@ -366,3 +366,63 @@ test('request non-streaming: JSON error message preserved', async () => {
         });
     });
 });
+
+// ── Streaming idle-timeout policy ──
+// The absolute deadline only guards connection; once data flows, an IDLE timeout applies.
+test('streaming: idle timeout fires with stalled message and stream_read stage', async () => {
+    const { STREAM_IDLE_TIMEOUT_MS } = require('../ai/nineRouterProvider.js');
+    assert.ok(STREAM_IDLE_TIMEOUT_MS > 30000, 'idle window must exceed the 30s connect deadline');
+    const provider = createNineRouterProvider({
+        baseUrl: 'http://localhost:3000', apiKey: FAKE_KEY, model: FAKE_MODEL,
+        timeoutMs: 60,
+        streamIdleTimeoutMs: 80,
+        httpStreamFetch: (url, opts, onChunk, onDone) => {
+            // one chunk arrives fast, then the stream goes silent forever
+            setTimeout(() => onChunk(sseDelta('partial')), 5);
+            // never call onDone — transport stays open, silent
+        }
+    });
+    const t0 = Date.now();
+    const events = await new Promise(resolve => {
+        const evs = [];
+        provider.streamRequest({ query: 'q' }, e => {
+            evs.push(e);
+            if (e.type === 'error' || e.type === 'complete') resolve(evs);
+        });
+        setTimeout(() => resolve(evs), 2000);
+    });
+    const elapsed = Date.now() - t0;
+    const errEvt = events.find(e => e.type === 'error');
+    assert.ok(errEvt, 'must eventually emit error, got: ' + JSON.stringify(events.map(e => e.type)));
+    assert.equal(errEvt.error.code, 'timeout');
+    assert.equal(errEvt.error.stage || errEvt.error._stage, 'stream_read');
+    assert.ok(/stalled/i.test(errEvt.error.message), 'stalled message, got: ' + errEvt.error.message);
+    // fired after the connect deadline would have (i.e. idle window was used, re-armed)
+    assert.ok(elapsed >= 80, 'idle timeout must not fire before the window, elapsed=' + elapsed);
+});
+
+test('streaming: no absolute kill while chunks keep flowing past the connect deadline', async () => {
+    const provider = createNineRouterProvider({
+        baseUrl: 'http://localhost:3000', apiKey: FAKE_KEY, model: FAKE_MODEL,
+        timeoutMs: 60,
+        httpStreamFetch: (url, opts, onChunk, onDone) => {
+            // chunks every 30ms — stream stays alive well past the 60ms deadline
+            let i = 0;
+            const iv = setInterval(() => {
+                onChunk(sseDelta('chunk' + i + ' '));
+                if (++i >= 10) { clearInterval(iv); onChunk(sseDone()); onDone(null); }
+            }, 30);
+        }
+    });
+    const events = await new Promise(resolve => {
+        const evs = [];
+        provider.streamRequest({ query: 'q' }, e => {
+            evs.push(e);
+            if (e.type === 'error' || e.type === 'complete') resolve(evs);
+        });
+        setTimeout(() => resolve(evs), 2000);
+    });
+    const complete = events.find(e => e.type === 'complete');
+    assert.ok(complete, 'must complete, not timeout — got: ' + JSON.stringify(events.map(e => e.type + ':' + (e.error && e.error.message))));
+    assert.ok((complete.result.text || '').includes('chunk9'), 'all chunks received');
+});

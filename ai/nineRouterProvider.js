@@ -7,6 +7,10 @@ try { GLib = require('gi.GLib'); } catch (e) {}
 try { Soup = require('gi.Soup'); } catch (e) {}
 
 const DEFAULT_TIMEOUT_MS = 30000;
+// Streaming idle window: max silence (no SSE data) tolerated mid-stream before the
+// request is declared stalled. Wider than DEFAULT_TIMEOUT_MS because reasoning models
+// legitimately pause long between chunks (thinking, upstream queueing).
+const STREAM_IDLE_TIMEOUT_MS = 90000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 const MIN_MAX_OUTPUT_TOKENS = 512;
 const MAX_MAX_OUTPUT_TOKENS = 16384;
@@ -197,7 +201,12 @@ function createDefaultHttpFetch() {
         function ensureSession() {
             if (!session) {
                 try { session = new Soup.Session(); } catch (e) { throw _attachStage(e, 'soup_session_create'); }
-                try { session.timeout = 30; } catch (e) {}
+                // Non-streaming: the whole answer arrives in ONE body after the model finishes,
+                // so Soup `timeout` acts as a total-duration cap. Reasoning models routinely
+                // take 60-120s on technical questions — the fixed 30s here aborted every long
+                // generation with "AI network error". Match the JS-level deadline budget.
+                try { session.timeout = Math.ceil(STREAM_IDLE_TIMEOUT_MS / 1000) + 60; } catch (e) {}
+                try { session.idle_timeout = 0; } catch (e) {}
             }
             return session;
         }
@@ -518,7 +527,15 @@ function createDefaultStreamingHttpFetch() {
         function ensureSession() {
             if (!session) {
                 try { session = new Soup.Session(); } catch (e) { throw _attachStage(e, 'soup_session_create'); }
-                try { session.timeout = 30; } catch (e) {}
+                // Soup `timeout` is a SOCKET-LEVEL I/O timeout: it aborts whenever no bytes
+                // arrive for this many seconds. Reasoning models legitimately stay silent
+                // for 50s+ while thinking (measured: 50.8s gap between SSE chunks on a
+                // technical question), so this MUST exceed the JS-level idle window
+                // (STREAM_IDLE_TIMEOUT_MS) — otherwise Soup kills the connection mid-think
+                // and the user sees "AI network error". The JS idle timer stays the only
+                // mid-stream guard; Soup just needs to be strictly more patient.
+                try { session.timeout = Math.ceil(STREAM_IDLE_TIMEOUT_MS / 1000) + 30; } catch (e) {}
+                try { session.idle_timeout = 0; } catch (e) {}
             }
             return session;
         }
@@ -1370,6 +1387,27 @@ function createNineRouterProvider(opts) {
             }
         }
 
+        // Timeout policy (streamRequest): the absolute deadline only guards CONNECTION +
+        // first response byte. Once the stream starts delivering data, it is replaced by an
+        // IDLE timeout — the request is killed only when NO data arrives for the idle window,
+        // never for total duration. Long reasoning-model streams that keep sending chunks
+        // are legitimate and must not be killed mid-flight (was: fixed 30s wall-clock
+        // deadline that aborted healthy streams at second 30).
+        // Idle window is wider than the connect deadline: reasoning models legitimately go
+        // silent for long stretches mid-generation ("thinking" before emitting content),
+        // so silence alone must not kill the request too eagerly.
+        let streamStarted = false;
+        const IDLE_TIMEOUT_MS = (typeof opts.streamIdleTimeoutMs === 'number' && opts.streamIdleTimeoutMs > 0)
+            ? opts.streamIdleTimeoutMs : STREAM_IDLE_TIMEOUT_MS;
+        function _armIdleTimeout() {
+            if (state.timeoutId) { _cancelTimeout(state.timeoutId); state.timeoutId = null; }
+            state.timeoutId = _scheduleTimeout(IDLE_TIMEOUT_MS, () => {
+                if (state.settled) return;
+                try { if (state.soupCancellable && typeof state.soupCancellable.cancel === 'function') state.soupCancellable.cancel(); } catch (e) {}
+                const e = _makeStagedError('AI stream stalled (no data for ' + Math.round(IDLE_TIMEOUT_MS / 1000) + 's) — the provider stopped sending data mid-response', 'timeout', 'stream_read');
+                settle(e);
+            });
+        }
         state.timeoutId = _scheduleTimeout(timeoutMs, () => {
             if (state.settled) return;
             try { if (state.soupCancellable && typeof state.soupCancellable.cancel === 'function') state.soupCancellable.cancel(); } catch (e) {}
@@ -1416,6 +1454,13 @@ function createNineRouterProvider(opts) {
         // onChunk: feed raw SSE text to parser
         function onChunk(rawText) {
             if (state.settled || _isCancelled(cancellable)) return;
+            // first chunk (or any later chunk) proves the transport is alive -> switch from
+            // connect deadline to idle-timeout arming (see Timeout policy above)
+            if (!streamStarted) {
+                streamStarted = true;
+                try { _aiLog('first chunk received; deadline -> idle timeout'); } catch (e) {}
+            }
+            _armIdleTimeout();
             if (parser) {
                 try { parser.feed(rawText); } catch (e) { return settle(_attachStage(e, 'stream_parse')); }
             }
@@ -1492,4 +1537,4 @@ function createNineRouterProvider(opts) {
     return { request, streamRequest, destroy, _buildUrl: buildChatCompletionsUrl, maxOutputTokens };
 }
 
-module.exports = { createNineRouterProvider, NineRouterProvider: createNineRouterProvider, buildChatCompletionsUrl, buildRequestBody, buildChatMessages, parseResponseText, DEFAULT_TIMEOUT_MS, DEFAULT_MAX_OUTPUT_TOKENS, normalizeMaxOutputTokens };
+module.exports = { createNineRouterProvider, NineRouterProvider: createNineRouterProvider, buildChatCompletionsUrl, buildRequestBody, buildChatMessages, parseResponseText, DEFAULT_TIMEOUT_MS, STREAM_IDLE_TIMEOUT_MS, DEFAULT_MAX_OUTPUT_TOKENS, normalizeMaxOutputTokens };
