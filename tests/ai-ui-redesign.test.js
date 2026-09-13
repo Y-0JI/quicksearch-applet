@@ -426,14 +426,17 @@ test('P1-4: open() verifies the modal actually left the CLOSED state', () => {
     assert.ok(section.includes('WARN overlay.state still CLOSED'), 'failure is logged, not swallowed');
 });
 
-test('P2-3: long code lines scroll horizontally inside the code surface', () => {
-    assert.ok(APPLET_SRC.includes('quicksearch-ai-md-code-scroll'), 'code scroll container');
-    const codeIdx = APPLET_SRC.indexOf('block.kind === \'code\'');
+test('P2-3: long code lines contained without a nested scrollview', () => {
+    // Regression: a nested St.ScrollView inside the chat's own _aiScroll collapsed to an
+    // empty viewport on Cinnamon -> codebox rendered with no visible text. The label must
+    // be a direct child again; long lines are contained by char-wise hard wrapping.
+    const codeIdx = APPLET_SRC.indexOf("block.kind === 'code'");
     const codeSection = APPLET_SRC.slice(codeIdx, codeIdx + 3000);
-    assert.ok(codeSection.includes('St.PolicyType.AUTOMATIC, St.PolicyType.NEVER'), 'horizontal overflow policy');
-    assert.ok(codeSection.includes('codeScroll.add_actor(codeLbl)') || codeSection.includes('codeScroll.add_child(codeLbl)'), 'code label inside scroll');
-    assert.ok(codeSection.includes('set_line_wrap(false)'), 'code lines stay single-line (scroll, not wrap)');
+    assert.ok(!codeSection.includes('new St.ScrollView'), 'no nested ScrollView in code blocks (empty-viewport bug)');
+    assert.ok(!codeSection.includes('quicksearch-ai-md-code-scroll'), 'scroll container class removed');
+    assert.ok(codeSection.includes('codeBox.add(codeLbl)') || codeSection.includes('codeBox.add_child(codeLbl)'), 'code label is a direct child of the codebox');
+    assert.ok(codeSection.includes('Pango.WrapMode.CHAR'), 'long lines hard-wrap by character');
+    assert.ok(codeSection.includes('set_line_wrap(true)'), 'wrap enabled');
     assert.ok(codeSection.includes('quicksearch-ai-md-code-copy'), 'copy button still present');
-    assert.ok(codeSection.includes('codeHeader.add(copyBtn'), 'copy stays above the scroll area (visible + clickable)');
-    assert.ok(CSS_SRC.includes('.quicksearch-ai-md-code-scroll'), 'code scroll styled');
+    assert.ok(codeSection.includes('codeHeader.add(copyBtn'), 'copy stays above the code text (visible + clickable)');
 });
