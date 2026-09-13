@@ -2112,10 +2112,23 @@ class QuickSearchApplet extends Applet.IconApplet {
                 } else if (msg.status === 'error') {
                     // §9: error belongs to this assistant interaction; history stays intact
                     // upstream outage gets its own message (not the generic/misleading one).
+                    // When the pipeline attached a more specific detail (e.g. "engines: brave,
+                    // google cse"), prefer it over the canned sentence so the user can act.
                     const isUpstreamOut = !!(msg.error && msg.error.code === 'upstream_unavailable');
-                    const errText = isUpstreamOut && !diagOn
-                        ? _("Web search is temporarily unavailable because the search backend has no healthy upstream sources.")
-                        : (diagOn ? this._buildAiDiagnosticText(msg.error) : _("Unable to get an AI response."));
+                    const upstreamDetail = (isUpstreamOut && msg.error && msg.error.message &&
+                        /engines:/i.test(String(msg.error.message))) ? String(msg.error.message) : null;
+                    // A stalled stream already explains itself ("AI stream stalled — the
+                    // provider stopped sending data mid-response") — show it as-is instead
+                    // of the generic "Unable to get an AI response."
+                    const isStalled = !!(msg.error && msg.error.code === 'timeout' &&
+                        msg.error.message && /stalled/i.test(String(msg.error.message)));
+                    const errText = upstreamDetail && !diagOn
+                        ? _(upstreamDetail)
+                        : isUpstreamOut && !diagOn
+                            ? _("Web search is temporarily unavailable because the search backend has no healthy upstream sources.")
+                            : isStalled && !diagOn
+                                ? _(String(msg.error.message))
+                                : (diagOn ? this._buildAiDiagnosticText(msg.error) : _("Unable to get an AI response."));
                     if (msg.content) {
                         try {
                             addAnswerHeading();
