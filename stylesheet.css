@@ -325,8 +325,11 @@
     border: none;
     border-radius: 0;
     box-shadow: none;
-    padding: 2px 2px;
+    /* same breathing room as the regular search results box (reference) */
+    padding: 6px 5px;
 }
+
+/* scrollbar = theme default, identical to the regular search results scroll */
 
 .quicksearch-ai-chat-header {
     spacing: 6px;
@@ -371,7 +374,7 @@
 }
 
 .quicksearch-ai-composer {
-    padding: 0 2px 2px 2px;
+    padding: 0 2px 4px 2px;
     spacing: 4px;
     margin-top: 4px;
     background: none;

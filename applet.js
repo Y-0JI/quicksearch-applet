@@ -306,6 +306,9 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         try { this._aiScroll.set_policy(St.PolicyType.NEVER, St.PolicyType.AUTOMATIC); } catch (e) {}
         try { this._aiScroll.set_clip_to_allocation(true); } catch (e) {}
         this._aiPane = new St.BoxLayout({ style_class: "quicksearch-ai-pane", vertical: true, visible: false });
+        // padding/scrollbar styling is pure CSS (matches the search results box) —
+        // no clip on the pane itself: a pane-level clip chops painted children
+        // (borders/shadows/text edges) and makes content look cut off.
         try { this._aiPane.add(this._aiHeader, { x_fill: true }); } catch (e) {}
         try { this._aiPane.add(this._aiScroll, { x_fill: true }); } catch (e) {}
         try { this._aiPane.add(this._aiComposer, { x_fill: true }); } catch (e) {}
@@ -3074,6 +3077,11 @@ class QuickSearchApplet extends Applet.IconApplet {
                 } catch (e) {}
                 return;
             }
+            // OFFSIDE GUARD: the search results scroll is a sibling of the AI pane inside
+            // _contentArea — a stale non-zero height from search mode stacks ABOVE the AI
+            // box and shoves it below the dialog border (New Chat row and scrollbar land
+            // outside). Keep it zeroed while the AI pane is the active region.
+            try { if (ov._scroll) ov._scroll.set_size(w, 0); } catch (e) {}
             try { this._syncAiPaneGeometry(); } catch (e) {}
             return;
         }
@@ -3135,28 +3143,31 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!ov || !ov._aiPane) return;
         try {
             const w = Math.max(240, Math.round(Number(this._lastPanelWidth) || 0) || 620);
+            // children live INSIDE the pane's 10px padding — measure/size them with the
+            // inner width, never the outer one (an outer-width child pushes its right
+            // edge onto the pane border and gets chopped by the clip).
+            const innerW = Math.max(200, w - 20);
             let fixedH = 40; // pane padding + spacing
             try {
                 if (ov._aiHeader && ov._aiHeader.visible) {
-                    const [, h] = ov._aiHeader.get_preferred_height(w);
+                    const [, h] = ov._aiHeader.get_preferred_height(innerW);
                     fixedH += Math.max(1, Math.round(Number(h) || 0));
                 }
             } catch (e) { fixedH += 32; }
             try {
                 if (ov._aiComposer && ov._aiComposer.visible) {
-                    const [, h] = ov._aiComposer.get_preferred_height(w);
+                    const [, h] = ov._aiComposer.get_preferred_height(innerW);
                     fixedH += Math.max(1, Math.round(Number(h) || 0));
                 }
             } catch (e) { fixedH += 48; }
             let natH = 0;
             if (ov._aiScroll && ov.aiResultsBox) {
                 try {
-                    const [, contentNat] = ov.aiResultsBox.get_preferred_height(w);
+                    const [, contentNat] = ov.aiResultsBox.get_preferred_height(innerW);
                     natH = Number(contentNat) || 0;
                 } catch (e) { natH = 0; }
                 if (natH <= 0) {
-                    try {
-                        const [, fb] = ov._aiScroll.get_preferred_height(w);
+                    try {                            const [, fb] = ov._aiScroll.get_preferred_height(innerW);
                         natH = Number(fb) || 0;
                     } catch (e) { natH = 0; }
                 }
@@ -3175,7 +3186,10 @@ class QuickSearchApplet extends Applet.IconApplet {
             if (ov._aiScroll) {
                 try { ov._aiScroll.x_fill = true; } catch (e) {}
                 try { ov._aiScroll.y_fill = false; } catch (e) {}
-                try { ov._aiScroll.set_size(w, scrollH); } catch (e) {}
+                try { ov._aiScroll.set_size(innerW, scrollH); } catch (e) {}
+                // same clipping as the search results scroll (plain scroll clip —
+                // no extra clip on the pane itself, which chopped painted children)
+                try { ov._aiScroll.set_clip_to_allocation(true); } catch (e) {}
             }
             const totalH = Math.min(fixedH + scrollH, Math.max(0, bottomLimit - pillBottom));
             try { ov._aiPane.set_size(w, Math.max(0, totalH)); } catch (e) {}
