@@ -10,9 +10,13 @@ function upstreamDownPage() {
     <div id="results" class="">
     <div class="dialog-error-block" role="alert"><p><strong>Sorry!</strong></p><p>No results were found.</p></div>
     </div>
-    <table><tr><td class="response-error">Suspended: too many requests</td></tr>
-    <tr><td class="response-error">Suspended: access denied</td></tr>
-    <tr><td class="response-error">Suspended: CAPTCHA</td></tr></table>
+    <div id="engines_msg"><table class="engine-stats" id="engines_msg-table">
+    <tr><td class="engine-name"><a href="/stats?engine=brave">brave</a></td>
+    <td class="response-error">Suspended: too many requests</td></tr>
+    <tr><td class="engine-name"><a href="/stats?engine=google+cse">google cse</a></td>
+    <td class="response-error">Suspended: access denied</td></tr>
+    <tr><td class="engine-name"><a href="/stats?engine=bing">bing</a></td>
+    <td class="response-error">Suspended: CAPTCHA</td></tr></table></div>
     </body></html>`;
 }
 function genuineNoResultsPage() {
@@ -98,4 +102,24 @@ test('H. connection refused stays backend_unavailable', async () => {
     try { await provider.search('q', null); } catch (e) { err = e; }
     assert.ok(err);
     assert.equal(err.code, 'backend_unavailable');
+});
+
+test('I. upstream error detail names the suspended engines', async () => {
+    const provider = createSearXngProvider({ searxngUrl: 'http://127.0.0.1:8080', httpGet: fakeHttpGet(upstreamDownPage()) });
+    let err = null;
+    try { await provider.search('q', null); } catch (e) { err = e; }
+    assert.ok(err);
+    assert.equal(err.code, 'upstream_unavailable');
+    assert.ok(/engines: brave/i.test(err.message), 'message names engines, got: ' + err.message);
+    assert.ok(/google\s?\+?\s?cse/i.test(err.message), 'message includes second engine, got: ' + err.message);
+});
+
+test('J. no engine-name cells -> upstream error without engines detail (graceful)', async () => {
+    const html = `<html><body><div id="results"></div><td class="response-error">Suspended: CAPTCHA</td></body></html>`;
+    const provider = createSearXngProvider({ searxngUrl: 'http://127.0.0.1:8080', httpGet: fakeHttpGet(html) });
+    let err = null;
+    try { await provider.search('q', null); } catch (e) { err = e; }
+    assert.ok(err);
+    assert.equal(err.code, 'upstream_unavailable');
+    assert.ok(!/engines:/.test(err.message), 'no engines detail when cells missing, got: ' + err.message);
 });

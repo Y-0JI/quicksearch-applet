@@ -141,7 +141,14 @@ function _normalizeProviderError(err) {
     if (err.code === 'unsupported_tool') return withMeta({ code: 'unsupported_tool', message: ERROR_MESSAGES.unsupported_tool });
     if (err.code === 'invalid_response') return withMeta({ code: 'invalid_response', message: ERROR_MESSAGES.invalid_response });
     if (err.code === 'no_results') return withMeta({ code: 'no_results', message: err.message ? _sanitizeEngineMessage(err.message) : ERROR_MESSAGES.no_results });
-    if (err.code === 'timeout') return withMeta({ code: 'timeout', message: ERROR_MESSAGES.timeout });
+    if (err.code === 'timeout') {
+        // A stalled stream carries a more specific message than the generic timeout line —
+        // keep it so the user can tell "provider stopped mid-answer" from "request never
+        // got a response". Fall back to the canned message only when the provider sent none.
+        const m = err.message ? _sanitizeEngineMessage(err.message) : '';
+        const stalled = /stalled|no data for/i.test(m) ? m : ERROR_MESSAGES.timeout;
+        return withMeta({ code: 'timeout', message: stalled });
+    }
     if (err.code === 'auth_error') return withMeta({ code: 'auth_error', message: ERROR_MESSAGES.auth_error });
     if (err.code === 'rate_limited') return withMeta({ code: 'rate_limited', message: ERROR_MESSAGES.rate_limited });
     if (err.code === 'network_error') return withMeta({ code: 'network_error', message: ERROR_MESSAGES.network_error });

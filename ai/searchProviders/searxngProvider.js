@@ -116,6 +116,28 @@ function isSearxngUpstreamOutage(html) {
         low.indexOf('upstream') >= 0;
 }
 
+// Extract the names of engines reporting an error (td.engine-name anchors inside the
+// "Messages from the search engines" table). Used to make the upstream_unavailable error
+// actionable — the user sees WHICH engines are down, not just that something is wrong.
+// Best-effort diagnostic only: returns [] on any mismatch, never throws.
+function extractUnhealthyEngines(html) {
+    const out = [];
+    try {
+        const b = String(html || '');
+        const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+        let rm;
+        while ((rm = rowRe.exec(b)) !== null && out.length < 10) {
+            const row = rm[1];
+            if (row.indexOf('response-error') < 0) continue;
+            const nameM = /<td[^>]*class="[^"]*\bengine-name\b[^"]*"[^>]*>([\s\S]*?)<\/td>/i.exec(row);
+            if (!nameM) continue;
+            const name = String(nameM[1] || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            if (name && out.indexOf(name) < 0) out.push(name.slice(0, 40));
+        }
+    } catch (e) {}
+    return out;
+}
+
 // SearchProvider interface: search(query, cancellable) -> Promise<SearchResult[]>
 function createSearXngProvider(opts) {
     opts = opts || {};
@@ -183,8 +205,10 @@ function createSearXngProvider(opts) {
             _log('query="' + q.slice(0, 120) + '" provider=' + PROVIDER_NAME + ' http_status=' + status + ' content_type=' + (contentType || 'text/html') + ' parsed_results=' + parsed.length);
             if (parsed.length === 0) {
                 if (isSearxngUpstreamOutage(body)) {
-                    _log('query="' + q.slice(0, 120) + '" provider=' + PROVIDER_NAME + ' http_status=' + status + ' error=upstream outage (no healthy upstream) stage=web_search_upstream');
-                    return Promise.reject(_makeError('Web search is temporarily unavailable because the search backend has no healthy upstream sources.', 'upstream_unavailable', 'web_search_upstream', { httpStatus: status, backend: PROVIDER_NAME, contentType }));
+                    const engines = extractUnhealthyEngines(body);
+                    const detail = engines.length ? ' (engines: ' + engines.join(', ') + ')' : '';
+                    _log('query="' + q.slice(0, 120) + '" provider=' + PROVIDER_NAME + ' http_status=' + status + ' error=upstream outage (no healthy upstream' + detail + ') stage=web_search_upstream');
+                    return Promise.reject(_makeError('Web search is temporarily unavailable because the search backend has no healthy upstream sources.' + detail, 'upstream_unavailable', 'web_search_upstream', { httpStatus: status, backend: PROVIDER_NAME, contentType }));
                 }
                 return Promise.reject(_makeError('No search results found', 'no_results', 'web_search_parse', { httpStatus: status, backend: PROVIDER_NAME, contentType }));
             }
@@ -199,4 +223,4 @@ function createSearXngProvider(opts) {
     return { search, __providerName: PROVIDER_NAME };
 }
 
-module.exports = { createSearXngProvider, parseSearXngHtml, isSearxngUpstreamOutage, PROVIDER_NAME, DEFAULT_TIMEOUT_MS };
+module.exports = { createSearXngProvider, parseSearXngHtml, isSearxngUpstreamOutage, extractUnhealthyEngines, PROVIDER_NAME, DEFAULT_TIMEOUT_MS };
