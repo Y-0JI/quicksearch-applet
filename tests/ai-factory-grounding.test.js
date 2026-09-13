@@ -54,13 +54,15 @@ test('B production tool: SearXNG backend error -> web_search_request stage prese
     const httpGet = (url,canc,cb)=>{ const e=new Error('econnrefused'); e.code='backend_unavailable'; cb(e); };
     const { createProductionWebSearchTool } = require('../ai/webSearchTool.js');
     const tool = createProductionWebSearchTool({ engine:'searxng', searxngUrl:'http://127.0.0.1:8080', httpGet });
-    const prov = createMockAiProvider({ responses:[{type:'tool_call',tool:'web_search',arguments:{query:'q'}}] });
+    const prov = createMockAiProvider({ responses:[{type:'answer',text:'never reached'}] });
     const { createAISearchEngine } = require('../ai/aiSearchEngine.js');
-    const engine = createAISearchEngine({ provider: prov, webSearchTool: tool, enableGrounding:true });
+    const engine = createAISearchEngine({ provider: prov, webSearchTool: tool, enableGrounding:true, liveDataFallback: false });
+    // live query: the outage hits the pre-search leg and must surface with its web_search stage
+    // (non-live queries degrade to a knowledge answer since the 2026-09-13 policy change)
     await new Promise((res,rej)=>{
-        engine.search('hi', (err, result)=>{
+        engine.search('harga bitcoin terbaru', (err, result)=>{
             try {
-                assert.ok(err, 'should error');
+                assert.ok(err, 'should error for live query');
                 assert.ok(err.stage || err._stage, 'stage preserved');
                 const stage = err.stage || err._stage;
                 assert.ok(stage.includes('web_search') || stage === 'web_search_request' || stage === 'web_search_init', 'stage is web_search related got ' + stage);

@@ -84,7 +84,7 @@ test('E2E. provider -> tool -> engine keeps upstream_unavailable + stage', async
         httpGet: fakeHttpGet(upstreamDownPage())
     });
     const prov = createMockAiProvider({ responses: [{ type: 'answer', text: 'never reached' }] });
-    const engine = createAISearchEngine({ provider: prov, webSearchTool: tool, enableGrounding: true });
+    const engine = createAISearchEngine({ provider: prov, webSearchTool: tool, enableGrounding: true, liveDataFallback: false });
     let err = null;
     await new Promise((res) => engine.search('cek kenaikan ihsg hari ini', (e) => { err = e; res(); }));
     assert.ok(err, 'must error, not answer');

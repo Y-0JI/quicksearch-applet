@@ -88,19 +88,26 @@ test('engine: provider error normalized', () => {
     assert.equal(err.code, 'provider_error');
 });
 
-// 7 web search error normalized
-test('engine: web search error normalized', () => {
+// 7 web search outage on a non-live query degrades to a knowledge answer (2026-09-13).
+// Payload shapes: tools offered -> tool_call leg; groundingContext -> grounded leg;
+// neither -> tool-less knowledge retry leg.
+test('engine: web search outage degrades to knowledge answer (non-live query)', () => {
     const provider = createMockAiProvider({
         handler: (req, cb) => {
-            if (!req.groundingContext) return cb(null, { type: 'tool_call', tool: 'web_search', arguments: { query: 'x' } });
+            if (req.groundingContext) return cb(null, { type: 'answer', text: 'grounded' });
+            if (req.tools && req.tools.length > 0) return cb(null, { type: 'tool_call', tool: 'web_search', arguments: { query: 'x' } });
             cb(null, { type: 'answer', text: 'ok' });
         }
     });
     const tool = createMockWebSearchTool({ handler: (q, c, cb) => { const e = new Error('fail'); e.code = 'web_search_unavailable'; cb(e); } });
     const engine = createAISearchEngine({ provider, webSearchTool: tool, enableGrounding: true });
-    let err = null;
-    engine.search('q', { onError: e => { err = e; } });
-    assert.equal(err.code, 'web_search_unavailable');
+    let got = null, err = null;
+    engine.search('q', { onAnswer: d => { got = d; }, onError: e => { err = e; } });
+    assert.equal(err, null, 'no error: outage falls back to knowledge answer');
+    assert.ok(got);
+    assert.equal(got.text, 'ok');
+    assert.equal(got.grounded, false);
+    assert.equal(got.sources.length, 0);
 });
 
 // 8 stale response ignored (first async answer ignored after second search)

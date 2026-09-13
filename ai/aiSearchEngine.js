@@ -7,6 +7,7 @@ let sourceFormatterMod = _tryReq('./ai/sourceFormatter.js') || _tryReq('./source
 let citationCleanerMod = _tryReq('./ai/citationCleaner.js') || _tryReq('./citationCleaner.js') || _tryReq('ai/citationCleaner.js');
 let Gt = _tryReq('./ai/groundingTypes.js') || _tryReq('./groundingTypes.js') || _tryReq('ai/groundingTypes.js');
 let responseIntentMod = _tryReq('./ai/responseIntent.js') || _tryReq('./responseIntent.js') || _tryReq('ai/responseIntent.js');
+let liveDataMod = _tryReq('./ai/liveDataFallback.js') || _tryReq('./liveDataFallback.js') || _tryReq('ai/liveDataFallback.js');
 if (!promptBuilderMod) try { global.log("[quicksearch@yoji] aiSearchEngine missing promptBuilder"); } catch (e) {}
 if (!sourceFormatterMod) try { global.log("[quicksearch@yoji] aiSearchEngine missing sourceFormatter"); } catch (e) {}
 
@@ -313,6 +314,41 @@ function createAISearchEngine(deps) {
         return p;
     }
 
+    // Payload for the knowledge fallback: a plain, tool-less, ungrounded generation —
+    // identical shape to the conversational direct-answer path. Used only when web
+    // search cannot provide sources (availability outage / empty results) and the
+    // question does not require live data.
+    function _knowledgeRetryPayload(q, fallbackQuery) {
+        const p = {
+            query: q,
+            systemPrompt: _buildRequestSystemPrompt(promptBuilder, false, fallbackQuery || q),
+            tools: []
+        };
+        const t = _modeTemperature(generationStrategy, false);
+        if (t !== undefined) p.temperature = t;
+        return p;
+    }
+
+    // Keyless direct-API grounding for structured live data (weather/stocks/news).
+    // Used when the general web search backend is down (upstream outage / zero results):
+    // instead of failing a live-data question, ground it from its canonical free API.
+    let _liveData = null;
+    function _liveDataFallbackSources(query, cancellable) {
+        // null (sync) = unavailable -> caller falls through synchronously; a Promise = async fetch
+        if (deps.liveDataFallback === false) return null;
+        if (!_liveData) {
+            if (!liveDataMod || typeof liveDataMod.createLiveDataFallback !== 'function') return null;
+            try { _liveData = liveDataMod.createLiveDataFallback({ httpGet: deps.liveDataHttpGet || null }); } catch (e) { return null; }
+        }
+        return _liveData.fetch(query, cancellable)
+            .then((r) => {
+                const sources = (r && Array.isArray(r.sources) && r.sources.length) ? r.sources : null;
+                try { if (typeof global !== 'undefined' && global.log) global.log('[AI Search] live-data fallback: domain=' + (r && r.domain) + ' sources=' + (sources ? sources.length : 'none')); } catch (e) {}
+                return sources;
+            })
+            .catch(() => null);
+    }
+
     function _deliverAnswer(myGen, cancellable, callbacks, text, sources, meta) {
         if (_stale(myGen) || _isCancelled(cancellable) || destroyed) return;
         // sources is the numbered evidence of the grounded leg -> its text may carry [n] markers
@@ -416,8 +452,53 @@ function createAISearchEngine(deps) {
                     : { query: q, maxResults: 5 };
                 webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
                     if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                    const outage = wErr ? _normalizeWebError(wErr) : null;
+                    const emptyResults = !wErr && !!wResults && wResults.type === 'tool_result' && Array.isArray(wResults.sources) && wResults.sources.length === 0;
+                    if (outage && outage.code === 'cancelled') return;
+                    if (outage || emptyResults) {
+                        // structured live data (weather/stocks/news)? ground from its keyless direct API
+                        const altP1 = _liveDataFallbackSources(q, myCancellable);
+                        if (altP1) { altP1.then((altSources) => {
+                            if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                            if (altSources) {
+                                try { if (typeof global !== 'undefined' && global.log) global.log('[QuickSearch AI] web search unavailable -> live-data direct API grounding (structured query)'); } catch (e) {}
+                                _prepareGroundingContext(myGen, myCancellable, q, altSources, q, (ctxInfo) => {
+                                    if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                                    try {
+                                        provider.request(_withHistory(_groundedPayload(q, ctxInfo.groundingContext, ctxInfo.groundingContextObj, altSources)), myCancellable, (err2, res2) => {
+                                            if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                                            if (err2) {
+                                                const n3 = _normalizeProviderError(err2);
+                                                if (n3.code === 'cancelled') return;
+                                                return _deliverError(myGen, myCancellable, callbacks, n3.code, n3.message, { stage: n3.stage, status: n3.status, name: n3.name });
+                                            }
+                                            if (!res2 || res2.type !== 'answer' || typeof res2.text !== 'string' || !String(res2.text).trim()) {
+                                                return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
+                                            }
+                                            return _deliverAnswer(myGen, myCancellable, callbacks, res2.text, altSources, _metaOf(res2));
+                                        });
+                                    } catch (e) {
+                                        const n = _normalizeProviderError(e);
+                                        return _deliverError(myGen, myCancellable, callbacks, n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
+                                    }
+                                });
+                                return;
+                            }
+                            return _deliverError(myGen, myCancellable, callbacks,
+                                outage ? (outage.code || 'web_search_unavailable') : 'no_results',
+                                (outage && outage.message) || ERROR_MESSAGES.no_results,
+                                outage ? { stage: outage.stage || 'web_search_request', status: outage.status } : { stage: 'web_search_normalize' });
+                        });
+                        } else {
+                            return _deliverError(myGen, myCancellable, callbacks,
+                                outage ? (outage.code || 'web_search_unavailable') : 'no_results',
+                                (outage && outage.message) || ERROR_MESSAGES.no_results,
+                                outage ? { stage: outage.stage || 'web_search_request', status: outage.status } : { stage: 'web_search_normalize' });
+                        }
+                        return;
+                    }
                     if (wErr) {
-                        const n2 = _normalizeWebError(wErr);
+                        const n2 = outage || _normalizeWebError(wErr);
                         if (n2.code === 'cancelled') return;
                         return _deliverError(myGen, myCancellable, callbacks, n2.code, n2.message, { stage: n2.stage || wErr.stage || wErr._stage || 'web_search_request', status: n2.status || wErr.status });
                     }
@@ -510,8 +591,78 @@ function createAISearchEngine(deps) {
                             : { query: toolQuery, maxResults: 5 };
                         webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
                             if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                            // Availability outage (no healthy upstream) or zero results: answer from
+                            // model knowledge when the question does not need live data — a search
+                            // outage must not kill the whole AI request (2026-09-13).
+                            const outage = wErr ? _normalizeWebError(wErr) : null;
+                            const emptyResults = !wErr && !!wResults && wResults.type === 'tool_result' && Array.isArray(wResults.sources) && wResults.sources.length === 0;
+                            if (outage && outage.code === 'cancelled') return;
+                            if ((outage && outage.code !== 'invalid_query') || emptyResults) {
+                                // structured live data (weather/stocks/news)? ground from its keyless direct API
+                                if (_isLiveIntent(toolQuery)) {
+                                    const altP2 = _liveDataFallbackSources(toolQuery, myCancellable);
+                                    if (altP2) { altP2.then((altSources) => {
+                                        if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                                        if (altSources) {
+                                            try { if (typeof global !== 'undefined' && global.log) global.log('[QuickSearch AI] web search unavailable -> live-data direct API grounding (structured query)'); } catch (e) {}
+                                            _prepareGroundingContext(myGen, myCancellable, q, altSources, toolQuery, (ctxInfo) => {
+                                                if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                                                try {
+                                                    provider.request(_withHistory(_groundedPayload(q, ctxInfo.groundingContext, ctxInfo.groundingContextObj, altSources)), myCancellable, (err2, res2) => {
+                                                        if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                                                        if (err2) {
+                                                            const n3 = _normalizeProviderError(err2);
+                                                            if (n3.code === 'cancelled') return;
+                                                            return _deliverError(myGen, myCancellable, callbacks, n3.code, n3.message, { stage: n3.stage, status: n3.status, name: n3.name });
+                                                        }
+                                                        if (!res2 || res2.type !== 'answer' || typeof res2.text !== 'string' || !String(res2.text).trim()) {
+                                                            return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
+                                                        }
+                                                        return _deliverAnswer(myGen, myCancellable, callbacks, res2.text, altSources, _metaOf(res2));
+                                                    });
+                                                } catch (e) {
+                                                    const n = _normalizeProviderError(e);
+                                                    return _deliverError(myGen, myCancellable, callbacks, n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
+                                                }
+                                            });
+                                            return;
+                                        }
+                                        return _deliverError(myGen, myCancellable, callbacks,
+                                            outage ? (outage.code || 'web_search_unavailable') : 'no_results',
+                                            (outage && outage.message) || ERROR_MESSAGES.no_results,
+                                            outage ? { stage: outage.stage || 'web_search_request', status: outage.status } : { stage: 'web_search_normalize' });
+                                    });
+                                    } else {
+                                        return _deliverError(myGen, myCancellable, callbacks,
+                                            outage ? (outage.code || 'web_search_unavailable') : 'no_results',
+                                            (outage && outage.message) || ERROR_MESSAGES.no_results,
+                                            outage ? { stage: outage.stage || 'web_search_request', status: outage.status } : { stage: 'web_search_normalize' });
+                                    }
+                                    return;
+                                }
+                                if (!_isLiveIntent(toolQuery)) {
+                                    try {
+                                        provider.request(_withHistory(_knowledgeRetryPayload(q, toolQuery)), myCancellable, (errK, resK) => {
+                                            if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                                            if (errK) {
+                                                const nk = _normalizeProviderError(errK);
+                                                if (nk.code === 'cancelled') return;
+                                                return _deliverError(myGen, myCancellable, callbacks, nk.code, nk.message, { stage: nk.stage, status: nk.status, name: nk.name });
+                                            }
+                                            if (!resK || resK.type !== 'answer' || typeof resK.text !== 'string' || !String(resK.text).trim()) {
+                                                return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
+                                            }
+                                            return _deliverAnswer(myGen, myCancellable, callbacks, resK.text, [], _metaOf(resK));
+                                        });
+                                    } catch (e) {
+                                        const n = _normalizeProviderError(e);
+                                        return _deliverError(myGen, myCancellable, callbacks, n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
+                                    }
+                                    return;
+                                }
+                            }
                             if (wErr) {
-                                const n2 = _normalizeWebError(wErr);
+                                const n2 = outage || _normalizeWebError(wErr);
                                 if (n2.code === 'cancelled') return;
                                 return _deliverError(myGen, myCancellable, callbacks, n2.code, n2.message, { stage: n2.stage || wErr.stage || wErr._stage || 'web_search_request', status: n2.status || wErr.status });
                             }
@@ -623,16 +774,45 @@ function createAISearchEngine(deps) {
                     : { query: q, maxResults: 5 };
                 webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
                     if (settled || _staleS() || _isCancelled(myCancellable) || destroyed) return;
-                    if (wErr) {
-                        const n2 = _normalizeWebError(wErr);
-                        if (n2.code === 'cancelled') return;
-                        emitError(n2.code, n2.message, { stage: n2.stage || wErr.stage || wErr._stage || 'web_search_request', status: n2.status || wErr.status });
+                    const outage = wErr ? _normalizeWebError(wErr) : null;
+                    const emptyResults = !wErr && !!wResults && wResults.type === 'tool_result' && Array.isArray(wResults.sources) && wResults.sources.length === 0;
+                    if (outage && outage.code === 'cancelled') return;
+                    if (outage || emptyResults) {
+                        // structured live data (weather/stocks/news)? ground from its keyless direct API
+                        const altP3 = _liveDataFallbackSources(q, myCancellable);
+                        if (altP3) { altP3.then((altSources) => {
+                            if (settled || _staleS() || _isCancelled(myCancellable) || destroyed) return;
+                            if (altSources) {
+                                try { if (typeof global !== 'undefined' && global.log) global.log('[QuickSearch AI] web search unavailable -> live-data direct API grounding (structured query)'); } catch (e) {}
+                                groundedSources = altSources;
+                                _prepareGroundingContext(myGen, myCancellable, q, altSources, q, (ctxInfo) => {
+                                    if (settled || _staleS() || _isCancelled(myCancellable) || destroyed) return;
+                                    accumulatedText = '';
+                                    try {
+                                        provider.streamRequest(
+                                            _withHistory(_groundedPayload(q, ctxInfo.groundingContext, ctxInfo.groundingContextObj, altSources)),
+                                            myCancellable,
+                                            handleSecondStreamEvent
+                                        );
+                                    } catch (e) {
+                                        const n = _normalizeProviderError(e);
+                                        emitError(n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
+                                    }
+                                });
+                                return;
+                            }
+                            emitError(outage ? (outage.code || 'web_search_unavailable') : 'no_results',
+                                (outage && outage.message) || ERROR_MESSAGES.no_results,
+                                outage ? { stage: outage.stage || 'web_search_request', status: outage.status } : { stage: 'web_search_normalize' });
+                        });
+                        } else {
+                            emitError(outage ? (outage.code || 'web_search_unavailable') : 'no_results',
+                                (outage && outage.message) || ERROR_MESSAGES.no_results,
+                                outage ? { stage: outage.stage || 'web_search_request', status: outage.status } : { stage: 'web_search_normalize' });
+                        }
                         return;
                     }
-                    if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources)) {
-                        emitError('invalid_response', ERROR_MESSAGES.invalid_response);
-                        return;
-                    }
+                    if (wErr) return;
                     const sources = wResults.sources;
                     _logWebSearchSources((wResults && wResults.query) || q, sources);
                     if (sources.length === 0) {
@@ -665,10 +845,16 @@ function createAISearchEngine(deps) {
 
         function emitComplete(finalText, sources, metaExtra) {
             if (settled || _staleS() || _isCancelled(myCancellable) || destroyed) return;
-            settled = true;
             const effectiveText = typeof finalText === 'string' ? finalText : accumulatedText;
             // groundedSources non-null <=> this text came from a grounded (numbered-evidence) leg
             const displayText = (groundedSources !== null) ? _cleanAnswerText(effectiveText) : effectiveText;
+            // 9router reasoning models sometimes finish with EMPTY content (reasoning-only
+            // stream). An empty answer must surface as an error, never as a blank bubble.
+            if (!String(displayText || '').trim()) {
+                emitError('invalid_response', ERROR_MESSAGES.invalid_response, { stage: 'provider_stream' });
+                return;
+            }
+            settled = true;
             // Source retention: prefer provider sources if they yield >=1 valid after AI-5 canonicalization,
             // else fallback to grounded canonical sources. Never overwrite valid grounded with invalid/empty.
             let effectiveSources = [];
@@ -817,9 +1003,61 @@ function createAISearchEngine(deps) {
                         : { query: toolQuery, maxResults: 5 };
                     webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
                         if (_staleS() || _isCancelled(myCancellable) || destroyed || settled) return;
+                        // Availability outage (no healthy upstream) or zero results: answer from
+                        // model knowledge when the question does not need live data — a search
+                        // outage must not kill the whole AI request (2026-09-13).
+                    const outage = wErr ? _normalizeWebError(wErr) : null;
+                    const emptyResults = !wErr && !!wResults && wResults.type === 'tool_result' && Array.isArray(wResults.sources) && wResults.sources.length === 0;
+                    if (outage && outage.code === 'cancelled') return;
+                        if ((outage && outage.code !== 'invalid_query') || emptyResults) {
+                            // structured live data (weather/stocks/news)? ground from its keyless direct API
+                            if (_isLiveIntent(toolQuery)) {
+                                const altP4 = _liveDataFallbackSources(toolQuery, myCancellable);
+                                if (altP4) { altP4.then((altSources) => {
+                                    if (_staleS() || _isCancelled(myCancellable) || destroyed || settled) return;
+                                    if (altSources) {
+                                        try { if (typeof global !== 'undefined' && global.log) global.log('[QuickSearch AI] web search unavailable -> live-data direct API grounding (structured query)'); } catch (e) {}
+                                        groundedSources = altSources;
+                                        _prepareGroundingContext(myGen, myCancellable, q, altSources, toolQuery, (ctxInfo) => {
+                                            if (_staleS() || _isCancelled(myCancellable) || destroyed || settled) return;
+                                            accumulatedText = '';
+                                            try {
+                                                provider.streamRequest(
+                                                    _withHistory(_groundedPayload(q, ctxInfo.groundingContext, ctxInfo.groundingContextObj, altSources)),
+                                                    myCancellable,
+                                                    handleSecondStreamEvent
+                                                );
+                                            } catch (e) {
+                                                const n = _normalizeProviderError(e);
+                                                emitError(n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
+                                            }
+                                        });
+                                        return;
+                                    }
+                                    emitError(outage ? (outage.code || 'web_search_unavailable') : 'no_results',
+                                        (outage && outage.message) || ERROR_MESSAGES.no_results,
+                                        outage ? { stage: outage.stage || 'web_search_request', status: outage.status } : { stage: 'web_search_normalize' });
+                                });
+                                } else {
+                                    emitError(outage ? (outage.code || 'web_search_unavailable') : 'no_results',
+                                        (outage && outage.message) || ERROR_MESSAGES.no_results,
+                                        outage ? { stage: outage.stage || 'web_search_request', status: outage.status } : { stage: 'web_search_normalize' });
+                                }
+                                return;
+                            }
+                            if (!_isLiveIntent(toolQuery)) {
+                                accumulatedText = '';
+                                try {
+                                    provider.streamRequest(_withHistory(_knowledgeRetryPayload(q, toolQuery)), myCancellable, handleSecondStreamEvent);
+                                } catch (e) {
+                                    const n = _normalizeProviderError(e);
+                                    emitError(n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
+                                }
+                                return;
+                            }
+                        }
                         if (wErr) {
-                            const n2 = _normalizeWebError(wErr);
-                            if (n2.code === 'cancelled') return;
+                            const n2 = outage || _normalizeWebError(wErr);
                             emitError(n2.code, n2.message, { stage: n2.stage || wErr.stage || wErr._stage || 'web_search_request', status: n2.status || wErr.status });
                             return;
                         }

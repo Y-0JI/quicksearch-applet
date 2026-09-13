@@ -125,21 +125,22 @@ test('C loop guard: Provider2 returns tool_call -> no second WebSearch, no Provi
     assert.equal(err.code, 'invalid_response');
 });
 
-// D — Empty sources
-test('D empty sources: tool_result sources [] -> no Provider2, no_results, no fake context', () => {
-    const provider = captureProvider((payload, _c, cb, calls) => {
-        if (calls === 1) return cb(null, { type: 'tool_call', tool: 'web_search', arguments: { query: 'x' } });
-        assert.fail('Provider2 must not be called on empty sources');
+// D — Empty sources, LIVE query: the pre-search leg returns zero sources -> no_results with
+// an explicit stage (regression: never Stage: unknown). No provider call happens at all —
+// live queries run web search BEFORE any generation.
+test('D empty sources, live query: tool_result sources [] -> no_results, zero provider calls', () => { // liveDataFallback: false
+    const provider = captureProvider((payload, _c, cb) => {
+        assert.fail('provider must never run: pre-search precedes generation for live queries');
     });
     const tool = captureTool((req, _c, cb) => {
         const tr = Gt.createToolResult(req.query, []);
         assert.equal(tr.sources.length, 0);
         cb(null, tr);
     });
-    const engine = createAISearchEngine({ provider, webSearchTool: tool, enableGrounding: true });
+    const engine = createAISearchEngine({ provider, webSearchTool: tool, enableGrounding: true, liveDataFallback: false });
     let err = null, got = null;
-    engine.search('q', { onAnswer: d => { got = d; }, onError: e => { err = e; } });
-    assert.equal(provider._calls(), 1, 'Provider2 not called');
+    engine.search('harga bitcoin terbaru', { onAnswer: d => { got = d; }, onError: e => { err = e; } });
+    assert.equal(provider._calls(), 0, 'no knowledge/grounded generation for live queries');
     assert.equal(tool._calls(), 1);
     assert.equal(got, null, 'no grounded answer');
     assert.ok(err, 'deterministic no_results error');
@@ -149,17 +150,22 @@ test('D empty sources: tool_result sources [] -> no Provider2, no_results, no fa
     assert.equal(err._stage, 'web_search_normalize');
 });
 
-// D2 — Empty sources on the STREAMING tool-call path also carries a stage
-test('D2 empty sources streaming: tool_result sources [] -> no_results with web_search_normalize stage, no second stream', () => {
-    let stream1Cb = null, stream2Calls = 0;
+// D2a — Empty sources on the STREAMING tool-call path, non-live query: falls back to a
+// tool-less knowledge stream (2026-09-13 policy) instead of failing the whole request.
+test('D2a empty sources streaming, non-live query: knowledge fallback stream, no grounded stream, no error', () => {
+    let firstLegCb = null, knowledgeStreams = 0, groundedStreams = 0;
     const provider = {
         request() { throw new Error('non-streaming must not be used'); },
         streamRequest(payload, cancellable, onEvent) {
             if (!payload.groundingContext) {
-                stream1Cb = onEvent;
+                if (!firstLegCb) { firstLegCb = onEvent; return; }
+                knowledgeStreams++;
+                onEvent({ type: 'start' });
+                onEvent({ type: 'delta', text: 'kb answer' });
+                onEvent({ type: 'complete', result: { text: 'kb answer', sources: [] } });
                 return;
             }
-            stream2Calls++;
+            groundedStreams++;
         }
     };
     const tool = captureTool((_req, _c, cb) => {
@@ -169,10 +175,49 @@ test('D2 empty sources streaming: tool_result sources [] -> no_results with web_
     });
     const engine = createAISearchEngine({ provider, webSearchTool: tool, enableGrounding: true });
     let err = null, got = null;
+    const deltas = [];
+    engine.searchStream('q', { onDelta: (c, full) => deltas.push(full), onComplete: d => { got = d; }, onError: e => { err = e; } });
+    assert.ok(firstLegCb, 'first stream pending');
+    firstLegCb({ type: 'tool_call', tool: 'web_search', arguments: { query: 'x' } });
+    assert.equal(tool._calls(), 1);
+    assert.equal(groundedStreams, 0, 'no grounded stream on empty sources');
+    assert.equal(knowledgeStreams, 1, 'exactly one knowledge fallback stream');
+    assert.ok(err === null, 'no error: outage/empty degrades to knowledge answer');
+    assert.ok(got, 'knowledge answer delivered');
+    assert.equal(got.text, 'kb answer');
+    assert.equal(got.sources.length, 0, 'no sources claimed');
+    assert.ok(deltas.length >= 1 && deltas[deltas.length - 1] === 'kb answer', 'fallback deltas streamed');
+});
+
+// D2b — Empty sources on the STREAMING tool-call path, LIVE query still errors with an
+// explicit stage (regression: never Stage: unknown) — live questions cannot be answered
+// from stale model knowledge.
+test('D2b empty sources streaming, live query: no_results with web_search_normalize stage, no fallback', () => {
+    let firstLegSeen = false, knowledgeStreams = 0, groundedStreams = 0;
+    const provider = {
+        request() { throw new Error('non-streaming must not be used'); },
+        streamRequest(payload, cancellable, onEvent) {
+            if (!payload.groundingContext) {
+                if (!firstLegSeen) {
+                    firstLegSeen = true;
+                    onEvent({ type: 'tool_call', tool: 'web_search', arguments: { query: 'harga bitcoin terbaru' } });
+                    return;
+                }
+                knowledgeStreams++;
+                return;
+            }
+            groundedStreams++;
+        }
+    };
+    const tool = captureTool((_req, _c, cb) => {
+        cb(null, Gt.createToolResult('harga bitcoin terbaru', []));
+    });
+    const engine = createAISearchEngine({ provider, webSearchTool: tool, enableGrounding: true, liveDataFallback: false });
+    let err = null, got = null;
     engine.searchStream('q', { onComplete: d => { got = d; }, onError: e => { err = e; } });
-    assert.ok(stream1Cb, 'first stream pending');
-    stream1Cb({ type: 'tool_call', tool: 'web_search', arguments: { query: 'x' } });
-    assert.equal(stream2Calls, 0, 'no second stream on empty sources');
+    assert.ok(firstLegSeen, 'first stream ran');
+    assert.equal(knowledgeStreams, 0, 'no knowledge fallback for live queries');
+    assert.equal(groundedStreams, 0, 'no grounded stream on empty sources');
     assert.equal(got, null, 'no grounded complete');
     assert.ok(err, 'deterministic no_results error');
     assert.equal(err.code, 'no_results');
@@ -180,25 +225,51 @@ test('D2 empty sources streaming: tool_result sources [] -> no_results with web_
     assert.equal(err._stage, 'web_search_normalize');
 });
 
-// E — Web search error
-test('E web search error: Provider2 not called, no grounded answer, error via existing path', () => {
+// Ea — Web search outage, non-live query: knowledge fallback answer (2026-09-13 policy)
+test('Ea web search outage, non-live query: tool-less knowledge answer, no grounded retry, no error', () => {
     const provider = captureProvider((payload, _c, cb, calls) => {
         if (calls === 1) return cb(null, { type: 'tool_call', tool: 'web_search', arguments: { query: 'x' } });
-        assert.fail('Provider2 must not run after webSearch error');
+        assert.ok(!payload.groundingContext, 'knowledge retry payload must not carry groundingContext');
+        assert.ok(!payload.tools || payload.tools.length === 0, 'knowledge retry payload must not offer tools');
+        return cb(null, { type: 'answer', text: 'knowledge answer' });
     });
     const tool = captureTool((_req, _c, cb) => {
-        const e = new Error('fail');
-        e.code = 'web_search_unavailable';
+        const e = new Error('no healthy upstream (engines: brave, google cse)');
+        e.code = 'upstream_unavailable';
         cb(e);
     });
     const engine = createAISearchEngine({ provider, webSearchTool: tool, enableGrounding: true });
     let err = null, got = null;
     engine.search('q', { onAnswer: d => { got = d; }, onError: e => { err = e; } });
-    assert.equal(provider._calls(), 1);
+    assert.equal(provider._calls(), 2, 'provider 1 (tool_call) + 1 (knowledge retry)');
+    assert.equal(tool._calls(), 1, 'no second web search attempt');
+    assert.equal(err, null, 'outage degrades to knowledge answer');
+    assert.ok(got, 'knowledge answer delivered');
+    assert.equal(got.text, 'knowledge answer');
+    assert.equal(got.grounded, false);
+    assert.equal(got.sources.length, 0, 'no sources claimed on knowledge fallback');
+});
+
+// Eb — Web search outage on a LIVE query still errors (stale knowledge would mislead).
+// Live queries run the pre-search leg BEFORE any provider call, so a tool outage surfaces
+// without any provider generation at all.
+test('Eb web search outage, live query: error surfaces, no knowledge fallback, zero provider calls', () => { // liveDataFallback: false
+    const provider = captureProvider((payload, _c, cb) => {
+        assert.fail('provider must never run: outage hits the pre-search leg for live queries');
+    });
+    const tool = captureTool((_req, _c, cb) => {
+        const e = new Error('no healthy upstream');
+        e.code = 'upstream_unavailable';
+        cb(e);
+    });
+    const engine = createAISearchEngine({ provider, webSearchTool: tool, enableGrounding: true, liveDataFallback: false });
+    let err = null, got = null;
+    engine.search('harga bitcoin terbaru', { onAnswer: d => { got = d; }, onError: e => { err = e; } });
+    assert.equal(provider._calls(), 0, 'no provider call on pre-search outage');
     assert.equal(tool._calls(), 1);
     assert.equal(got, null);
     assert.ok(err);
-    assert.equal(err.code, 'web_search_unavailable');
+    assert.equal(err.code, 'upstream_unavailable');
 });
 
 // F — Invalid canonical results

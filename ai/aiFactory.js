@@ -109,6 +109,66 @@ function _makeAuthErrorProvider() { return _makeErrorProvider('auth_error', 'AI 
 
 function _makeProviderErrorProvider() { return _makeErrorProvider('provider_error', 'AI provider error'); }
 
+// Some reasoning endpoints (observed on 9router 2026-09-13) occasionally finish a stream
+// with EMPTY content (reasoning-only, no answer deltas). Wrap the internally-constructed
+// provider so an empty first attempt is retried ONCE, transparently: the engine/UI has
+// seen no content yet, so the retry is invisible. If the retry is also empty (or content
+// already streamed), events pass through unchanged — the engine's empty-answer guard has
+// the final say. Injected providers (tests) are never wrapped.
+function _withEmptyAnswerRetry(provider) {
+    if (!provider || typeof provider.request !== 'function' && typeof provider.streamRequest !== 'function') return provider;
+    function _cancelled(c) { try { return !!(c && typeof c.is_cancelled === 'function' && c.is_cancelled()); } catch (e) { return false; } }
+    function _log(m) { try { global.log("[quicksearch@yoji] " + m); } catch (e) {} }
+    const wrapped = Object.create(provider);
+    if (typeof provider.request === 'function') {
+        wrapped.request = function (payload, cancellable, cb) {
+            if (typeof cancellable === 'function' && cb === undefined) { cb = cancellable; cancellable = null; }
+            let retried = false;
+            const attempt = () => provider.request.call(provider, payload, cancellable, (err, res) => {
+                if (err) return cb(err);
+                const empty = res && res.type === 'answer' && !String((res && res.text) || '').trim();
+                if (empty && !retried && !_cancelled(cancellable)) {
+                    retried = true;
+                    _log("empty AI answer -> transparent retry (1x)");
+                    return attempt();
+                }
+                return cb(null, res);
+            });
+            return attempt();
+        };
+    }
+    if (typeof provider.streamRequest === 'function') {
+        wrapped.streamRequest = function (payload, cancellable, onEvent) {
+            if (typeof cancellable === 'function' && onEvent === undefined) { onEvent = cancellable; cancellable = null; }
+            let retried = false;
+            let sawContent = false;
+            const attempt = () => provider.streamRequest.call(provider, payload, cancellable, (evt) => {
+                if (!evt || typeof evt !== 'object') return onEvent(evt);
+                if (evt.type === 'delta' && String(evt.text || '')) sawContent = true;
+                if (evt.type === 'complete' && !sawContent && !retried && !_cancelled(cancellable)) {
+                    const txt = evt.result && typeof evt.result.text === 'string' ? evt.result.text : '';
+                    if (!String(txt).trim()) {
+                        retried = true;
+                        _log("empty AI stream -> transparent retry (1x)");
+                        return attempt();
+                    }
+                }
+                return onEvent(evt);
+            });
+            return attempt();
+        };
+    }
+    // delegate the remaining provider API (destroy/cancel/etc.) with correct `this`
+    try {
+        for (const k of Object.keys(provider)) {
+            if (wrapped[k] !== undefined) continue;
+            if (typeof provider[k] === 'function') wrapped[k] = provider[k].bind(provider);
+            else wrapped[k] = provider[k];
+        }
+    } catch (e) {}
+    return wrapped;
+}
+
 function createAiEngine(opts) {
     opts = opts || {};
     let provider = opts.provider || null;
@@ -138,6 +198,7 @@ function createAiEngine(opts) {
                 provider = _makeProviderErrorProvider();
             }
         }
+        provider = _withEmptyAnswerRetry(provider);
     }
 
     if (!aiSearchEngineMod || typeof aiSearchEngineMod.createAISearchEngine !== 'function') {
@@ -211,6 +272,7 @@ function createAiEngine(opts) {
     if (webSearchTool !== undefined) engineOpts.webSearchTool = webSearchTool;
     if (opts.debug || opts.debugMode) engineOpts.debug = true; // AI Debug Mode (source expansion diagnostics)
     const engine = aiSearchEngineMod.createAISearchEngine(engineOpts);
+    try { engine.__emptyRetryWrapped = (typeof opts.provider !== 'object' || !opts.provider); } catch (e) {}
     if (webSearchToolInitError && enableGrounding) {
         try { engine.__webSearchInitError = webSearchToolInitError; } catch (e) {}
     }
