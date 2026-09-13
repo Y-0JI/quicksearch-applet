@@ -1945,14 +1945,17 @@ class QuickSearchApplet extends Applet.IconApplet {
                         if (!ok) {
                             try { codeLbl.set_text(codeText); } catch (e2) {}
                         }
-                        const codeHeader = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-md-code-header" });
+                        // Copy button shares the code's own row: text left, button pinned to
+                        // the codebox's right border (beside the first line), never on a
+                        // separate header row above the text.
+                        const codeRow = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-md-code-row" });
                         const copyBtn = this._buildIconActionButton(["edit-copy-symbolic", "edit-copy"], _("Copy code"), "quicksearch-ai-md-code-copy", () => {
                             this._copyUserMessageToClipboard(codeText);
                         });
                         try { copyBtn.add_style_class_name("quicksearch-ai-action-icon-btn"); } catch (e) {}
-                        try { codeHeader.add(copyBtn, { x_align: St.Align.END }); } catch (e) {}
-                        try { codeBox.add(codeHeader); } catch (e) {}
-                        try { codeBox.add(codeLbl); } catch (e) { try { codeBox.add_child(codeLbl); } catch (e2) {} }
+                        try { codeRow.add(codeLbl, { expand: true, x_fill: true, y_align: St.Align.MIDDLE }); } catch (e) { try { codeRow.add_child(codeLbl); } catch (e2) {} }
+                        try { codeRow.add(copyBtn, { x_align: St.Align.END, y_align: St.Align.START }); } catch (e) { try { codeRow.add_child(copyBtn); } catch (e2) {} }
+                        try { codeBox.add(codeRow); } catch (e) { try { codeBox.add_child(codeRow); } catch (e2) {} }
                         box.add_child(codeBox);
                     } catch (e) {}
                     continue;

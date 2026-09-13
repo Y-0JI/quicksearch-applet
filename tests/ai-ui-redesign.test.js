@@ -434,9 +434,12 @@ test('P2-3: long code lines contained without a nested scrollview', () => {
     const codeSection = APPLET_SRC.slice(codeIdx, codeIdx + 3000);
     assert.ok(!codeSection.includes('new St.ScrollView'), 'no nested ScrollView in code blocks (empty-viewport bug)');
     assert.ok(!codeSection.includes('quicksearch-ai-md-code-scroll'), 'scroll container class removed');
-    assert.ok(codeSection.includes('codeBox.add(codeLbl)') || codeSection.includes('codeBox.add_child(codeLbl)'), 'code label is a direct child of the codebox');
+    assert.ok(!codeSection.includes('codeHeader'), 'no header row above the code text');
     assert.ok(codeSection.includes('Pango.WrapMode.CHAR'), 'long lines hard-wrap by character');
     assert.ok(codeSection.includes('set_line_wrap(true)'), 'wrap enabled');
     assert.ok(codeSection.includes('quicksearch-ai-md-code-copy'), 'copy button still present');
-    assert.ok(codeSection.includes('codeHeader.add(copyBtn'), 'copy stays above the code text (visible + clickable)');
+    assert.ok(codeSection.includes('codeRow.add(codeLbl'), 'code label sits on the shared row (text left)');
+    assert.ok(codeSection.includes("x_align: St.Align.END"), 'copy button pinned to the codebox right border');
+    assert.ok(codeSection.includes('codeRow.add(copyBtn'), 'copy button shares the code row, right of the text');
+    assert.ok(codeSection.includes('codeBox.add(codeRow)'), 'row is the single child of the codebox');
 });
