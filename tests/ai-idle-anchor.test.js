@@ -26,11 +26,10 @@ test('AI idle branch re-asserts the pill anchor inside _syncContentGeometry', ()
     assert.ok(aiBranch.includes('set_margin_top(needTop)'), 'AI idle re-asserts the same anchor');
 });
 
-test('Search switch refocuses via guarded helper; AI switch focuses the composer', () => {
-    // 2026-09-14 redesign: in AI mode the bottom composer is ALWAYS the live input
-    // (empty state + chat), so _goToAiMode focuses the composer via
-    // _activateComposerInput() instead of the top entry; Search keeps the guarded
-    // _refocusTopEntry helper (no unconditional key-focus reset).
+test('Search switch refocuses via guarded helper; AI idle stays on the pill', () => {
+    // 2026-09-14 input hand-off: idle AI shows the bare top pill (guarded
+    // _refocusTopEntry, same as Search); the composer only takes over once a
+    // conversation exists. No raw key-focus resets on either path.
     assert.ok(APPLET_SRC.includes('_refocusTopEntry() {'), 'guard helper exists');
     const goIdx = APPLET_SRC.indexOf('_goToAiMode() {');
     const sIdx = APPLET_SRC.indexOf('_goToSearchMode() {');
@@ -39,6 +38,6 @@ test('Search switch refocuses via guarded helper; AI switch focuses the composer
     const search = APPLET_SRC.slice(sIdx, sEnd);
     assert.ok(search.includes('_refocusTopEntry()'), 'Search switch uses guarded refocus');
     assert.ok(!search.includes('set_key_focus(this._overlay._entry)'), 'no raw refocus on search path');
-    assert.ok(ai.includes('_activateComposerInput()'), 'AI switch focuses the always-live composer');
+    assert.ok(ai.includes('_refocusTopEntry()'), 'AI switch focuses the idle pill via guarded refocus');
     assert.ok(!ai.includes('set_key_focus(this._overlay._entry)'), 'no raw refocus on AI path');
 });

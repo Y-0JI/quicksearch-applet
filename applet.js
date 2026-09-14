@@ -295,34 +295,8 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         // _aiScroll) packed between the chat header and the composer. It is never the
         // search results scroll: no reparenting between regions, so mode/state changes
         // cannot detach or re-insert actors and cannot shift the layout.
-        // Reference-aligned empty state: centered ✦ mark + greeting + suggestion
-        // prompts while the conversation is still empty (ai-input state). Pure
-        // presentation — clicking a suggestion routes through the normal AI submit.
-        this._aiEmptyState = new St.BoxLayout({ style_class: "quicksearch-ai-empty", vertical: true, visible: false });
-        try {
-            const _emptyMark = new St.Label({ text: "\u2726", style_class: "quicksearch-ai-empty-mark" });
-            this._aiEmptyState.add(_emptyMark);
-            const _emptyTitle = new St.Label({ text: _("Bagaimana saya bisa membantu?"), style_class: "quicksearch-ai-empty-title" });
-            this._aiEmptyState.add(_emptyTitle);
-            const _suggestions = [
-                "Ringkas berita teknologi hari ini",
-                "Jelaskan perbedaan SSD NVMe dan SATA",
-                "Buatkan rencana belajar Python 7 hari"
-            ];
-            this._aiEmptySuggestions = [];
-            const _sgWrap = new St.BoxLayout({ style_class: "quicksearch-ai-empty-suggestions", vertical: true });
-            for (const _s of _suggestions) {
-                const sBtn = new St.Button({ style_class: "quicksearch-ai-empty-chip", can_focus: false, reactive: true, track_hover: true });
-                sBtn.set_child(new St.Label({ text: _s, style_class: "quicksearch-ai-empty-chip-label" }));
-                sBtn.connect("clicked", () => {
-                    try { this._applet._submitAIQuery(_s); } catch (e) {}
-                    return Clutter.EVENT_STOP;
-                });
-                this._aiEmptySuggestions.push(sBtn);
-                _sgWrap.add(sBtn, { x_fill: false, x_align: St.Align.MIDDLE });
-            }
-            this._aiEmptyState.add(_sgWrap);
-        } catch (e) { try { global.log("[quicksearch@yoji] ai empty state init failed: " + e); } catch (e2) {} }
+        // (2026-09-14: the decorative idle/empty-state box was removed per feedback —
+        // ai-input now shows the composer alone.)
         this.aiResultsBox = new St.BoxLayout({ vertical: true });
         this._aiScroll = new St.ScrollView({
             style_class: "quicksearch-results",
@@ -338,7 +312,6 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         // no clip on the pane itself: a pane-level clip chops painted children
         // (borders/shadows/text edges) and makes content look cut off.
         try { this._aiPane.add(this._aiHeader, { x_fill: true }); } catch (e) {}
-        try { this._aiPane.add(this._aiEmptyState, { x_fill: true }); } catch (e) {}
         try { this._aiPane.add(this._aiScroll, { x_fill: true }); } catch (e) {}
         try { this._aiPane.add(this._aiComposer, { x_fill: true }); } catch (e) {}
         this._aiView = this._aiPane;
@@ -1210,10 +1183,11 @@ class QuickSearchApplet extends Applet.IconApplet {
         const st = this._uiState;
         const isAi = this._mode === 'ai';
         const hasConv = this._hasConversation();
-        // AI input never uses the centered idle shell anymore: the chat pane owns a
-        // real empty state (greeting + suggestions + composer) below the pinned pill.
+        // AI input never uses the centered idle shell: idle AI shows the bare pill
+        // (same pinned anchor as search); once a conversation exists the chat pane takes
+        // over and the pill hides — the two question boxes are never visible together.
         const idleCenter = !isAi && st === 'idle-search';
-        try { ov._entryRow.visible = true; } catch (e) {}
+        try { ov._entryRow.visible = !(isAi && hasConv); } catch (e) {}
         try {
             if (idleCenter) {
                 ov.contentLayout.add_style_class_name("quicksearch-content-idle");
@@ -1244,13 +1218,12 @@ class QuickSearchApplet extends Applet.IconApplet {
             this._autoRows = [];
         }
         try { if (ov._searchView) ov._searchView.visible = !isAi; } catch (e) {}
-        // the AI pane (incl. its empty state + always-live composer) is visible whenever
-        // AI mode is on — with or without a conversation
-        try { if (ov._aiView) ov._aiView.visible = isAi; } catch (e) {}
-        try { if (ov._aiPane) ov._aiPane.visible = isAi; } catch (e) {}
+        // input hand-off (2026-09-14): the AI pane + composer only exist once a
+        // conversation is under way; the top pill covers the idle state alone.
+        try { if (ov._aiView) ov._aiView.visible = isAi && hasConv; } catch (e) {}
+        try { if (ov._aiPane) ov._aiPane.visible = isAi && hasConv; } catch (e) {}
         try { if (ov._aiHeader) ov._aiHeader.visible = isAi && hasConv; } catch (e) {}
-        try { if (ov._aiComposer) ov._aiComposer.visible = isAi; } catch (e) {}
-        try { if (ov._aiEmptyState) ov._aiEmptyState.visible = isAi && !hasConv; } catch (e) {}
+        try { if (ov._aiComposer) ov._aiComposer.visible = isAi && hasConv; } catch (e) {}
         try { if (ov._aiEditRow) ov._aiEditRow.visible = isAi && hasConv && this._aiEditId != null; } catch (e) {}
         try { this._updateHints(); } catch (e) {}
         try { this._syncRegionGeometry(); } catch (e) {}
@@ -1300,8 +1273,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._renderAIState();
         try { this._syncRegionGeometry(); } catch (e) {}
         try { this._scheduleAILayoutSync(); } catch (e) {}
-        // composer is always live in AI mode → focus it in both idle and chat states
-        try { this._activateComposerInput(); } catch (e) {}
+        // input hand-off: idle AI shows the bare pill — focus the TOP entry; the
+        // composer only takes over once the first question creates a conversation.
+        try { this._refocusTopEntry(); } catch (e) {}
     }
 
     // AI → Search. Safe under every AI state: an active/streaming request is stopped
@@ -1436,9 +1410,10 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!ov || !ov._stopButton) return;
         const isAi = this._mode === 'ai';
         const hasConv = this._hasConversation();
-        // composer + Stop/Send slot live whenever AI mode is on (empty input included);
-        // New Chat only makes sense when there is something to reset.
-        const composerActive = isAi;
+        // Stop/Send live with the composer, which exists only when a conversation is
+        // under way (input hand-off: idle AI shows the bare pill instead); New Chat
+        // only makes sense when there is something to reset.
+        const composerActive = isAi && hasConv;
         const active = !!this._aiLoading || !!this._aiStreaming ||
             (convMod && this._conversation ? !!convMod.hasActive(this._conversation) : false);
         // single action slot: Stop while loading/streaming, Send otherwise (§5/§6)
@@ -1460,23 +1435,21 @@ class QuickSearchApplet extends Applet.IconApplet {
     _syncAIComposerState() {
         const ov = this._overlay;
         if (!ov || !ov._composerEntry) return;
-        // Reference layout: the follow-up composer is ALWAYS visible in AI mode (it is
-        // the main input before the first question, not just a follow-up row). Header,
-        // pane and empty state follow the conversation-presence rules below.
-        const composerActive = this._mode === 'ai';
+        // Input hand-off (2026-09-14): the composer exists only WITH a conversation —
+        // it replaces the top pill as the single question input (the pill hides while
+        // the composer is up, so the two are never stacked).
+        const composerActive = this._mode === 'ai' && this._hasConversation();
         const hasConv = this._hasConversation();
         try { ov._aiComposer.visible = composerActive; } catch (e) {}
         try { if (ov._aiHeader) ov._aiHeader.visible = composerActive && hasConv; } catch (e) {}
         try { if (ov._aiPane) ov._aiPane.visible = composerActive; } catch (e) {}
         try {
-            ov._entryRow.visible = true;
+            ov._entryRow.visible = !composerActive;
             ov._entry.reactive = true;
             ov._entry.can_focus = true;
         } catch (e) {}
         const editing = composerActive && hasConv && this._aiEditId != null;
         try { if (ov._aiEditRow) ov._aiEditRow.visible = !!editing; } catch (e) {}
-        // empty state owns the pane body while there is nothing to converse about yet
-        try { if (ov._aiEmptyState) ov._aiEmptyState.visible = composerActive && !hasConv; } catch (e) {}
         if (editing && ov._aiEditLabel) {
             try {
                 const m = convMod.findMessage(this._conversation, this._aiEditId);
@@ -1491,12 +1464,27 @@ class QuickSearchApplet extends Applet.IconApplet {
     _activateComposerInput() {
         const ov = this._overlay;
         if (!ov || !ov._composerEntry) return;
+        // input hand-off: with a conversation the composer REPLACES the top pill
+        // (pill hidden — the two question boxes are never visible together); without
+        // one, this helper only ensures the pill is up and returns.
+        if (!this._hasConversation()) {
+            try { ov._aiComposer.visible = false; } catch (e) {}
+            try { if (ov._aiHeader) ov._aiHeader.visible = false; } catch (e) {}
+            try { if (ov._aiPane) ov._aiPane.visible = false; } catch (e) {}
+            try { if (ov._aiScroll) ov._aiScroll.visible = false; } catch (e) {}
+            try { ov._entryRow.visible = true; } catch (e) {}
+            return;
+        }
+        // visibility flips relayout the scroll viewport → adjustment events; guard them
+        // so the sticky follow-scroll never reads them as a user scroll (that froze the
+        // follow mid-stream and clipped the question bubble)
+        try { this._beginAutoScrollGuard(); } catch (e) {}
         try { ov._aiComposer.visible = true; } catch (e) {}
         try { if (ov._aiHeader) ov._aiHeader.visible = true; } catch (e) {}
         try { if (ov._aiPane) ov._aiPane.visible = true; } catch (e) {}
-        try { if (ov._aiScroll) ov._aiScroll.visible = this._hasConversation(); } catch (e) {}
+        try { if (ov._aiScroll) ov._aiScroll.visible = true; } catch (e) {}
         try {
-            ov._entryRow.visible = true;
+            ov._entryRow.visible = false;
             ov._entry.reactive = true;
             ov._entry.can_focus = true;
         } catch (e) {}
@@ -1540,7 +1528,6 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { if (ov._aiComposer) ov._aiComposer.remove_style_class_name("quicksearch-ai-composer-focused"); } catch (e) {}
         try { if (ov._aiHeader) ov._aiHeader.visible = false; } catch (e) {}
         try { if (ov._aiPane) ov._aiPane.visible = false; } catch (e) {}
-        try { if (ov._aiEmptyState) ov._aiEmptyState.visible = false; } catch (e) {}
         try { if (ov._aiScroll) ov._aiScroll.visible = false; } catch (e) {}
         try { if (ov._composerEntry) ov._composerEntry.set_text(''); } catch (e) {}
         try {
@@ -1806,8 +1793,8 @@ class QuickSearchApplet extends Applet.IconApplet {
                 // a render/resize (allocation lags the paint) — re-check a few times
                 // and re-apply the bottom anchor so the newest turn never paints over
                 // the user's bubble.
-                if (++pass < 4) {
-                    self._aiScrollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 90, _tick);
+                if (++pass < 6) {
+                    self._aiScrollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 80, _tick);
                     return GLib.SOURCE_REMOVE;
                 }
             } catch (e) {}
@@ -2110,8 +2097,6 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._selIdx = -1;
         this._sortedResults = [];
         this._aiMsgActors = {};
-
-        // Phase 8 §1/§2: render the full conversation from the message model — never
         // just the latest answer. Each assistant message owns its content + sources (§10)
         // and its status (streaming/complete/cancelled/error) (§5/§8/§9).
         const messages = (convMod && this._conversation) ? convMod.getMessages(this._conversation) : [];
@@ -2154,7 +2139,38 @@ class QuickSearchApplet extends Applet.IconApplet {
                     if (editing) try { block.add_style_class_name("quicksearch-ai-user-editing"); } catch (e) {}
                     const bubble = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-user-bubble" });
                     const lbl = new St.Label({ text: String(msg.content || ''), style_class: "quicksearch-ai-user" });
-                    try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+                    try {
+                        const ct = lbl.get_clutter_text();
+                        ct.set_line_wrap(true);
+                        // word wrap with char fallback: a single long token can never
+                        // outgrow the clamped bubble width below
+                        if (typeof ct.set_line_wrap_mode === 'function') ct.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR);
+                    } catch (e) {}
+                    try {
+                        // Deterministic bubble width: pin BOTH the label and the painted
+                        // bubble. An unconstrained wrapping label negotiates its width
+                        // against siblings — once the wide AI answer lands, the layout pass
+                        // re-allocates the bubble narrower (clamping only the label left
+                        // the PAINTED surface negotiable, so the background shrank under
+                        // the text). With explicit widths on both, nothing in the chain is
+                        // negotiable anymore: bubble = min(natural label + padding, clamp).
+                        const bubblePadX = 24; // CSS: 12px left + 12px right bubble padding
+                        const innerW = Math.max(200, (Math.round(Number(this._lastPanelWidth) || 0) || 620) - 20);
+                        const maxBubbleW = Math.max(140, Math.round(innerW * 0.78));
+                        const [, natW] = lbl.get_preferred_width(-1);
+                        const labelW = Math.min(Math.max(1, Math.round(Number(natW) || 0)) || Math.max(1, maxBubbleW - bubblePadX), Math.max(1, maxBubbleW - bubblePadX));
+                        lbl.set_width(labelW);
+                        bubble.set_width(Math.min(labelW + bubblePadX, maxBubbleW));
+                        try {
+                            // Lock the label height at this width too: the diag caught the
+                            // bubble flip-flopping 19px <-> 32px (a 2-line allocation while
+                            // the text paints 1 line) — preferred height is measured at a
+                            // stale width during the same allocation pass. An explicit
+                            // height makes the painted bubble deterministic.
+                            const [, natH] = lbl.get_preferred_height(labelW);
+                            if (Number(natH) > 0) lbl.set_height(Math.round(natH));
+                        } catch (e) {}
+                    } catch (e) {}
                     bubble.add(lbl);
                     block.add(bubble);
                     const uid = msg.id;
@@ -2310,11 +2326,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 const f = global.stage.get_key_focus();
                 topFocused = (f === ov._entry.clutter_text) || (f === ov._entry);
             }
-            if (this._mode === 'ai' && !topFocused) this._activateComposerInput();
-        } catch (e) {}
-        // friendly empty state inside the chat pane (before the first question)
-        try {
-            if (ov._aiEmptyState) ov._aiEmptyState.visible = messages.length === 0;
+            if (this._mode === 'ai' && this._hasConversation() && !topFocused) this._activateComposerInput();
         } catch (e) {}
         try { ov._aiScroll.visible = messages.length > 0; } catch (e) {}
         try { this._syncAIFooter(); } catch (e) {}
@@ -2324,8 +2336,10 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { this._updateHints(); } catch (e) {}
         if (messages.length > 0) {
             try { this._ensureScrollTracking(); } catch (e) {}
-            try { this._scheduleAIScroll(false); } catch (e) {}
+            // geometry FIRST, then the bottom-lock chain — the lock must verify against
+            // the post-resize viewport or the newest turn clips the user's bubble
             try { this._scheduleAILayoutSync(); } catch (e) {}
+            try { this._scheduleAIScroll(false); } catch (e) {}
         }
     }
 
@@ -2457,8 +2471,11 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiStreaming = false;
         this._aiStickBottom = true;
         this._renderAIState();
-        // a conversation now exists → the bottom follow-up composer owns the input (§5)
+        // a conversation now exists → the composer takes over as the single question
+        // input; the top pill hides at the next sync (input hand-off, never stacked)
         try { this._activateComposerInput(); } catch (e) {}
+        try { this._syncShell(); } catch (e) {}
+        try { this._syncRegionGeometry(); } catch (e) {}
         if (!this._aiEngine) this._createAiEngine();
         if (!this._aiEngine) {
             if (myGen !== this._aiGen || this._mode !== 'ai') return;
@@ -2615,9 +2632,11 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._cancelAIScroll();
         if (convMod && this._conversation) { try { convMod.reset(this._conversation); } catch (e) {} }
         try { this._renderAIState(); } catch (e) {}
-        // New Chat returns to the friendly empty state: the composer stays live and
-        // focused (it owns the first question), the pane shows greeting + suggestions.
-        try { this._activateComposerInput(); } catch (e) {}
+        // New Chat → back to AI idle: composer goes away, the top pill returns as the
+        // single question input (input hand-off) and takes the focus.
+        try { this._syncShell(); } catch (e) {}
+        try { this._syncRegionGeometry(); } catch (e) {}
+        try { this._refocusTopEntry(); } catch (e) {}
         const ov = this._overlay;
         try { if (ov && ov._entry) ov._entry.set_text(''); } catch (e) {}
     }
@@ -3173,9 +3192,13 @@ class QuickSearchApplet extends Applet.IconApplet {
                 } catch (e) {}
                 try { if (ov._scroll) ov._scroll.set_size(w, 0); } catch (e) {}
                 try { if (ov._aiScroll) ov._aiScroll.set_size(w, 0); } catch (e) {}
-                // ai-input state is NOT an empty shell anymore: the chat pane shows the
-                // empty state (greeting + suggestions) + the always-live composer.
-                try { this._syncAiPaneGeometry(); } catch (e) {}
+                // input hand-off: ai-input = the bare pill alone (pane hidden); the
+                // dialog collapses to pill height like search idle — no second box.
+                try {
+                    const dlgH0 = Math.max(0, 0 + 70);
+                    try { ov.dialogLayout.set_height(dlgH0); } catch (e) {}
+                    try { ov.dialogLayout.set_size(w, dlgH0); } catch (e) {}
+                } catch (e) {}
                 return;
             }
             // OFFSIDE GUARD: the search results scroll is a sibling of the AI pane inside
@@ -3242,6 +3265,9 @@ class QuickSearchApplet extends Applet.IconApplet {
     _syncAiPaneGeometry() {
         const ov = this._overlay;
         if (!ov || !ov._aiPane) return;
+        // chat state only — the pane (with the composer) exists once a conversation is
+        // under way; idle AI is the bare pill and never reaches the pane math below
+        if (!this._hasConversation()) return;
         try {
             const w = Math.max(240, Math.round(Number(this._lastPanelWidth) || 0) || 620);
             // children live INSIDE the pane's 10px padding — measure/size them with the
@@ -3261,13 +3287,6 @@ class QuickSearchApplet extends Applet.IconApplet {
                     fixedH += Math.max(1, Math.round(Number(h) || 0));
                 }
             } catch (e) { fixedH += 48; }
-            // empty state contributes its own natural height when there is no conversation
-            try {
-                if (ov._aiEmptyState && ov._aiEmptyState.visible && !this._hasConversation()) {
-                    const [, eh] = ov._aiEmptyState.get_preferred_height(innerW);
-                    fixedH += Math.max(1, Math.round(Number(eh) || 0));
-                }
-            } catch (e) {}
             let natH = 0;
             if (ov._aiScroll && ov.aiResultsBox) {
                 try {
@@ -3283,12 +3302,21 @@ class QuickSearchApplet extends Applet.IconApplet {
             }
             // Same pinned-pill math as search: the AI pane starts below the fixed pill
             // and never exceeds `bottomPad` px before the bottom of the monitor work area.
+            // Input hand-off: in chat state the pill is HIDDEN — a hidden actor carries a
+            // stale/zero transformed position, so never trust it there; use the same
+            // pinned-anchor formula instead (keeps the viewport height deterministic,
+            // otherwise the scroll ends up short and the newest turn clips the bubble).
             const bottomLimit = Math.max(0, this._workAreaH() - LAYOUT.bottomPad);
-            let pillBottom = LAYOUT.topPad + LAYOUT.pillH + (ov._entryRow.margin_top || 0);
+            let pillBottom = null;
             try {
-                const tf = ov._entryRow.get_transformed_position();
-                pillBottom = (tf[1] || LAYOUT.topPad) + (ov._entryRow.get_transformed_size()[1] || LAYOUT.pillH);
+                if (ov._entryRow && ov._entryRow.visible) {
+                    const tf = ov._entryRow.get_transformed_position();
+                    pillBottom = (tf[1] || LAYOUT.topPad) + (ov._entryRow.get_transformed_size()[1] || LAYOUT.pillH);
+                }
             } catch (e) {}
+            if (pillBottom == null) {
+                pillBottom = LAYOUT.topPad + LAYOUT.pillH + ((ov._entryRow && ov._entryRow.margin_top) || 0);
+            }
             const avail = Math.max(0, bottomLimit - pillBottom - fixedH - 16);
             const scrollH = Math.max(0, Math.min(natH, LAYOUT.maxResultsH, avail));
             if (ov._aiScroll) {

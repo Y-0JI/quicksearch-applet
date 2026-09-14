@@ -459,7 +459,7 @@
     padding: 6px 8px 6px 14px;
     background-color: rgba(21, 28, 36, 0.98);
     border: 1px solid rgba(255, 255, 255, 0.10);
-    border-radius: 24px;
+    border-radius: 14px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.18);
 }
 
@@ -506,44 +506,8 @@
     background-color: rgba(255, 255, 255, 0.08);
     opacity: 0.45;
 }
-/* friendly empty state (before the first question) */
-.quicksearch-ai-empty {
-    padding: 26px 18px 18px 18px;
-    spacing: 8px;
-    x-align: CENTER;
-}
-.quicksearch-ai-empty-mark {
-    font-size: 22pt;
-    color: rgba(140, 180, 255, 0.90);
-    text-align: center;
-}
-.quicksearch-ai-empty-title {
-    font-size: 12pt;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.82);
-    text-align: center;
-    padding-bottom: 4px;
-}
-.quicksearch-ai-empty-suggestions {
-    spacing: 6px;
-    padding-top: 6px;
-    x-align: CENTER;
-}
-.quicksearch-ai-empty-chip {
-    padding: 6px 14px;
-    border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    background-color: rgba(255, 255, 255, 0.05);
-    x-align: CENTER;
-}
-.quicksearch-ai-empty-chip:hover {
-    background-color: rgba(255, 255, 255, 0.10);
-    border-color: rgba(140, 180, 255, 0.35);
-}
-.quicksearch-ai-empty-chip-label {
-    font-size: 9pt;
-    color: rgba(226, 231, 240, 0.80);
-}
+/* friendly empty state (removed 2026-09-14 per feedback — rules kept empty; the
+   ai-input surface is the composer alone now) */
 
 .quicksearch-ai-error {
     margin: 2px 8px 6px 8px;
