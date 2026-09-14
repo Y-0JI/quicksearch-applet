@@ -50,6 +50,7 @@
 
     function createLiveDataFallback(opts) {
         opts = opts || {};
+        // ponytail: tanpa transport Soup sendiri — httpGet injeksi (default: webSearchTool.defaultHttpGet via engine liveDataHttpGet) atau node fallback. Transport ganda dihapus: GBytes fetch-nya crash GC Cinnamon (core 3x 2026-09-14).
         const doGet = (typeof opts.httpGet === 'function')
             ? (url, canc, cb) => opts.httpGet(url, canc, cb)
             : (url, canc, cb) => _nodeHttpGet(url, cb);
@@ -146,6 +147,30 @@
                 return httpGetJson(fUrl, cancellable).then((f) => {
                     const c = f.current || {};
                     const d = (f.daily || {});
+                    // structured snapshot for the UI weather card (rendered as a native
+                    // widget above the AI text — plain sources only carry the flat text)
+                    const data = {
+                        kind: 'weather',
+                        place: hit.name || place,
+                        country: hit.country || null,
+                        current: {
+                            temperature: Number(c.temperature_2m),
+                            humidity: Number(c.relative_humidity_2m),
+                            wind: Number(c.wind_speed_10m),
+                            code: Number(c.weather_code)
+                        },
+                        daily: []
+                    };
+                    if (d.time) {
+                        for (let i = 0; i < Math.min(3, d.time.length); i++) {
+                            data.daily.push({
+                                date: String(d.time[i] || ''),
+                                min: Number((d.temperature_2m_min || [])[i]),
+                                max: Number((d.temperature_2m_max || [])[i]),
+                                code: Number((d.weather_code || [])[i])
+                            });
+                        }
+                    }
                     const lines = [];
                     lines.push('Cuaca ' + (hit.name || place) + (hit.country ? ', ' + hit.country : '') + ' saat ini: ' + _wmo(c.weather_code) +
                         ', suhu ' + c.temperature_2m + '°C, kelembapan ' + c.relative_humidity_2m + '%, angin ' + c.wind_speed_10m + ' km/j.');
@@ -154,7 +179,7 @@
                             lines.push(d.time[i] + ': ' + _wmo((d.weather_code || [])[i]) + ', ' + (d.temperature_2m_min || [])[i] + '–' + (d.temperature_2m_max || [])[i] + '°C.');
                         }
                     }
-                    return [{ title: 'Cuaca ' + (hit.name || place) + ' — Open-Meteo', url: 'https://open-meteo.com/', snippet: lines.join(' ') }];
+                    return { structured: data, sources: [{ title: 'Cuaca ' + (hit.name || place) + ' — Open-Meteo', url: 'https://open-meteo.com/', snippet: lines.join(' ') }] };
                 });
             });
         }
@@ -251,7 +276,14 @@
             const p = domain === 'weather' ? fetchWeather(query, cancellable)
                 : domain === 'stock' ? fetchStock(query, cancellable)
                 : fetchNews(query, cancellable);
-            return p.then((sources) => ({ domain: domain, sources: sources }));
+            // weather returns { structured, sources } (the card data rides along); the
+            // other domains still return a plain sources array (no cards yet)
+            return p.then((r) => {
+                if (domain === 'weather' && r && r.structured) {
+                    return { domain: domain, sources: r.sources, structured: r.structured };
+                }
+                return { domain: domain, sources: r };
+            });
         }
 
         return { detectDomain: detectDomain, fetch: fetch, __backends: { weather: 'open-meteo', stock: 'yahoo-finance', news: 'rss' } };

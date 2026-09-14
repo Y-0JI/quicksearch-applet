@@ -333,6 +333,37 @@ function createAISearchEngine(deps) {
     // Used when the general web search backend is down (upstream outage / zero results):
     // instead of failing a live-data question, ground it from its canonical free API.
     let _liveData = null;
+    let _lastStructuredData = null; // weather card snapshot from the most recent live-data grounding
+
+    // Weather-card pre-fetch: when a query is a live-data weather question, fetch the
+    // structured Open-Meteo snapshot in PARALLEL with web search (2026-09-14). The card
+    // must not depend on web search failing — a successful SearXNG search used to leave
+    // payload.data empty, so the UI weather card never appeared (text-only answers).
+    function _prefetchStructuredData(query, myCancellable) {
+        if (deps.liveDataFallback === false) return;
+        if (!_isLiveIntent(query)) return;
+        if (!liveDataMod || typeof liveDataMod.createLiveDataFallback !== 'function') return;
+        if (!_liveData) {
+            try { _liveData = liveDataMod.createLiveDataFallback({ httpGet: deps.liveDataHttpGet || null }); } catch (e) { return; }
+        }
+        let domain = null;
+        try { domain = _liveData.detectDomain(query); } catch (e) { domain = null; }
+        if (domain !== 'weather') return;
+        const myPrefetchGen = gen; // capture; a newer request invalidates this fetch
+        _liveData.fetch(query, myCancellable).then((r) => {
+            if (myPrefetchGen !== gen) return; // stale/cancelled: drop silently, never clobber newer data
+            if (r && r.structured && Array.isArray(r.sources) && r.sources.length > 0) {
+                _lastStructuredData = r.structured;
+                try { if (typeof global !== 'undefined' && global.log) global.log('[AI Search] weather card: structured snapshot pre-fetched in parallel with web search'); } catch (e) {}
+            }
+        }).catch(() => {});
+    }
+
+    function _consumeStructuredData() {
+        const d = _lastStructuredData;
+        _lastStructuredData = null;
+        return d || null;
+    }
     function _liveDataFallbackSources(query, cancellable) {
         // null (sync) = unavailable -> caller falls through synchronously; a Promise = async fetch
         if (deps.liveDataFallback === false) return null;
@@ -344,6 +375,8 @@ function createAISearchEngine(deps) {
             .then((r) => {
                 const sources = (r && Array.isArray(r.sources) && r.sources.length) ? r.sources : null;
                 try { if (typeof global !== 'undefined' && global.log) global.log('[AI Search] live-data fallback: domain=' + (r && r.domain) + ' sources=' + (sources ? sources.length : 'none')); } catch (e) {}
+                // structured card data (weather snapshot) rides along for the UI
+                if (sources && r && r.structured) _lastStructuredData = r.structured;
                 return sources;
             })
             .catch(() => null);
@@ -353,6 +386,7 @@ function createAISearchEngine(deps) {
         if (_stale(myGen) || _isCancelled(cancellable) || destroyed) return;
         // sources is the numbered evidence of the grounded leg -> its text may carry [n] markers
         const finalText = (Array.isArray(sources) && sources.length > 0) ? _cleanAnswerText(text) : text;
+        const structuredData = (Array.isArray(sources) && sources.length > 0) ? _consumeStructuredData() : null;
         let payload;
         if (Gt && typeof Gt.createGroundedAnswer === 'function') {
             payload = Gt.createGroundedAnswer(finalText, sources || [], meta || null);
@@ -363,6 +397,7 @@ function createAISearchEngine(deps) {
             if (meta && meta.finishReason) payload.finishReason = meta.finishReason;
             payload.truncated = !!(meta && meta.truncated);
         }
+        if (structuredData) { try { payload.data = structuredData; } catch (e) {} }
         if (typeof callbacks === 'function') return callbacks(null, payload);
         if (callbacks && typeof callbacks.onAnswer === 'function') return callbacks.onAnswer(payload);
         if (callbacks && typeof callbacks.onDone === 'function') return callbacks.onDone(null, payload);
@@ -428,6 +463,12 @@ function createAISearchEngine(deps) {
             _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
             return;
         }
+        // Weather card (2026-09-14): drop any snapshot left over from an earlier request, then
+        // pre-fetch this query's snapshot in PARALLEL with web search. The UI card must appear
+        // even when web search SUCCEEDS — previously it only ever appeared when web search
+        // failed and the live-data fallback leg ran, so successful searches stayed text-only.
+        _lastStructuredData = null;
+        _prefetchStructuredData(q, myCancellable);
 
         let systemPrompt = _buildRequestSystemPrompt(promptBuilder, false, q);
 
@@ -745,6 +786,13 @@ function createAISearchEngine(deps) {
             return;
         }
 
+        // Weather card (2026-09-14): drop any snapshot left over from an earlier request, then
+        // pre-fetch this query's snapshot in PARALLEL with web search. The UI card must appear
+        // even when web search SUCCEEDS — previously it only ever appeared when web search
+        // failed and the live-data fallback leg ran, so successful searches stayed text-only.
+        _lastStructuredData = null;
+        _prefetchStructuredData(q, myCancellable);
+
         let systemPrompt = _buildRequestSystemPrompt(promptBuilder, false, q);
 
         // Phase 8 §3: bounded conversation history (validated) attached to every provider payload.
@@ -890,6 +938,12 @@ function createAISearchEngine(deps) {
                     payload = { type: 'answer', text: displayText, grounded: normalizedSources.length > 0, sources: normalizedSources };
                     if (metaExtra && metaExtra.finishReason) payload.finishReason = metaExtra.finishReason;
                     payload.truncated = !!(metaExtra && metaExtra.truncated);
+                }
+                // structured card data (weather) rides along when the grounding came
+                // from the live-data direct API
+                if (effectiveSources.length > 0) {
+                    const sd = _consumeStructuredData();
+                    if (sd) { try { payload.data = sd; } catch (e) {} }
                 }
                 callbacks.onComplete(payload);
             }

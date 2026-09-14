@@ -270,6 +270,9 @@ function createAiEngine(opts) {
     if (opts.generationStrategy && typeof opts.generationStrategy === 'object') engineOpts.generationStrategy = opts.generationStrategy;
     if (sourceContentExpander) engineOpts.sourceContentExpander = sourceContentExpander;
     if (webSearchTool !== undefined) engineOpts.webSearchTool = webSearchTool;
+    // ponytail: live-data (kartu cuaca) pakai SATU transport HTTP terbukti (webSearchTool) — tanpa transport Soup kedua. Naikkan bila perlu opsi sendiri.
+    if (typeof opts.liveDataHttpGet === 'function') engineOpts.liveDataHttpGet = opts.liveDataHttpGet;
+    else if (webSearchToolMod && typeof webSearchToolMod.defaultHttpGet === 'function') engineOpts.liveDataHttpGet = webSearchToolMod.defaultHttpGet;
     if (opts.debug || opts.debugMode) engineOpts.debug = true; // AI Debug Mode (source expansion diagnostics)
     const engine = aiSearchEngineMod.createAISearchEngine(engineOpts);
     try { engine.__emptyRetryWrapped = (typeof opts.provider !== 'object' || !opts.provider); } catch (e) {}

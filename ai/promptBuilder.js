@@ -67,7 +67,8 @@ const INTENT_GUIDANCE = {
     ].join(' '),
     current: [
         'Lead with the current value or status, then what changed, then the important supporting context.',
-        'Do not present older or different-time data as if it were current.'
+        'Do not present older or different-time data as if it were current.',
+        'If a visual data card (weather/stock/news) accompanies the answer, mention it once at the end.'
     ].join(' ')
 };
 
