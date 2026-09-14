@@ -149,3 +149,18 @@ msgstr ""
 #: applet.js
 msgid "Hapus"
 msgstr ""
+
+msgid "QuickSearch AI"
+msgstr ""
+
+msgid "Bagaimana saya bisa membantu?"
+msgstr ""
+
+msgid "Ringkas berita teknologi hari ini"
+msgstr ""
+
+msgid "Jelaskan perbedaan SSD NVMe dan SATA"
+msgstr ""
+
+msgid "Buatkan rencana belajar Python 7 hari"
+msgstr ""

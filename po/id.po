@@ -113,3 +113,18 @@ msgstr "Enter Tanya · Esc Tutup"
 
 msgid "Hapus"
 msgstr "Hapus"
+
+msgid "QuickSearch AI"
+msgstr "QuickSearch AI"
+
+msgid "Bagaimana saya bisa membantu?"
+msgstr "Bagaimana saya bisa membantu?"
+
+msgid "Ringkas berita teknologi hari ini"
+msgstr "Ringkas berita teknologi hari ini"
+
+msgid "Jelaskan perbedaan SSD NVMe dan SATA"
+msgstr "Jelaskan perbedaan SSD NVMe dan SATA"
+
+msgid "Buatkan rencana belajar Python 7 hari"
+msgstr "Buatkan rencana belajar Python 7 hari"

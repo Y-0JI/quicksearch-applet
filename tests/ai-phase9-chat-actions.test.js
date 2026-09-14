@@ -176,7 +176,11 @@ test('applet wires the bottom follow-up composer', () => {
     assert.ok(APPLET_SRC.includes('Ask a follow-up'), 'composer hint present');
     assert.ok(APPLET_SRC.includes('_activateComposerInput') && APPLET_SRC.includes('_deactivateComposerInput'), 'input-mode switchers present');
     assert.ok(APPLET_SRC.includes('ov._entryRow.visible = true'), 'top search row stays visible (unified shell)');
-    assert.ok(APPLET_SRC.includes('ov._aiHeader.visible = composerActive'), 'chat header tied to conversation state');
+    assert.ok(APPLET_SRC.includes('ov._aiHeader.visible = composerActive && hasConv'), 'chat header tied to conversation state');
+    // 2026-09-14: composer is the always-live AI input (owns the first question too);
+    // New Chat only makes sense while a conversation exists.
+    assert.ok(APPLET_SRC.includes('ov._aiComposer.visible = composerActive'), 'composer visible in AI mode (empty or chat)');
+    assert.ok(APPLET_SRC.includes('ov._resetButton.visible = composerActive && hasConv'), 'New Chat gated on conversation');
 });
 
 // ---- Phase 9 §conditional-resend: per-message user→assistant pairing ----
@@ -359,8 +363,9 @@ test('source-row click is runtime-safe: no global URL dependency', () => {
 
 test('action row keeps a clear consistent gap below every user text', () => {
     const actionsCss = CSS_SRC.slice(CSS_SRC.indexOf('.quicksearch-ai-msg-actions'), CSS_SRC.indexOf('.quicksearch-ai-msg-actions') + 400);
-    assert.ok(actionsCss.includes('padding: 5px 0 3px 10px;'), 'explicit 5px top gap between text and action row');
+    assert.ok(actionsCss.includes('padding: 4px 6px 3px 10px;'), 'explicit 4px top gap between bubble and action row');
     assert.ok(actionsCss.includes('spacing: 4px;'), '4px horizontal gap between action icons');
+    assert.ok(actionsCss.includes('x-align: END;'), 'actions align with the right-side user bubble');
 });
 
 test('chat layout + message-action styling exists', () => {

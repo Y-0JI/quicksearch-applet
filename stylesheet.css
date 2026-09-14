@@ -174,8 +174,8 @@
 .quicksearch-ai-error { color: rgba(255,120,120,0.90); }
 
 .quicksearch-ai-sources-button {
-    margin-top: 8px;
-    padding: 3px 10px;
+    margin-top: 4px;
+    padding: 3px 9px;
     border-radius: 12px;
     border: none;
     background: none;
@@ -221,35 +221,64 @@
     color: rgba(255,255,255,0.45);
 }
 
-.quicksearch-ai-user {
-    padding: 2px 4px 0 4px;
-    font-size: 9.5pt;
-    font-weight: bold;
-    color: rgba(255, 255, 255, 0.78);
-}
-
+/* ── AI chat: reference-aligned message layout ────────────────────────────
+   User messages = right-aligned filled bubbles (like ChatGPT). Assistant
+   messages = plain left-aligned text under an avatar + model name row.
+   The thread reads as one continuous conversation, no per-turn cards. */
 .quicksearch-ai-user-block {
     padding: 2px 6px 0 6px;
-    border-radius: 8px;
+    border-radius: 14px;
     background-color: rgba(255, 255, 255, 0.0);
+    x-align: END;
 }
 
 .quicksearch-ai-user-block:hover {
     background-color: rgba(255, 255, 255, 0.03);
 }
 
+/* the bubble itself: filled accent surface, max readability, rounded like
+   modern chat apps (sharp corner toward the sender side) */
+.quicksearch-ai-user-bubble {
+    padding: 7px 12px 8px 12px;
+    background-color: rgba(38, 84, 158, 0.92);
+    border-radius: 16px 16px 4px 16px;
+    x-align: END;
+}
+
+.quicksearch-ai-user {
+    padding: 0;
+    font-size: 10pt;
+    font-weight: normal;
+    color: rgba(255, 255, 255, 0.97);
+}
+
 .quicksearch-ai-user-editing {
     background-color: rgba(255, 196, 0, 0.07);
-    border-radius: 8px;
+    border-radius: 14px;
 }
 
 .quicksearch-ai-user-editing:hover {
     background-color: rgba(255, 196, 0, 0.10);
 }
 
+.quicksearch-ai-user-editing .quicksearch-ai-user-bubble {
+    background-color: rgba(122, 92, 20, 0.85);
+    border-radius: 16px 16px 4px 16px;
+}
+
+/* utility actions hover in under the bubble, right-aligned (user side) */
 .quicksearch-ai-msg-actions {
     spacing: 4px;
-    padding: 5px 0 3px 10px;
+    padding: 4px 6px 3px 10px;
+    x-align: END;
+}
+
+/* answer footer row — pinned to the right edge under the answer: Sources (n)
+   sits first, Copy button right beside it in the same row */
+.quicksearch-ai-answer-actions {
+    spacing: 6px;
+    padding: 2px 8px 4px 10px;
+    x-align: END;
 }
 
 .quicksearch-ai-action-icon-btn {
@@ -410,13 +439,13 @@
 }
 
 .quicksearch-ai-stop, .quicksearch-ai-reset {
-    padding: 3px 12px;
-    border-radius: 12px;
+    padding: 4px 13px;
+    border-radius: 999px;
     border: none;
-    background-color: rgba(255, 255, 255, 0.06);
+    background-color: rgba(255, 255, 255, 0.07);
 }
 
-.quicksearch-ai-stop-label { font-size: 8.5pt; color: rgba(255,120,120,0.95); }
+.quicksearch-ai-stop-label { font-size: 8.5pt; color: rgba(255,140,140,0.95); }
 .quicksearch-ai-stop:hover { background-color: rgba(255,80,80,0.16); }
 .quicksearch-ai-reset-label { font-size: 8.5pt; color: rgba(226,231,240,0.80); }
 .quicksearch-ai-reset:hover { background-color: rgba(255,255,255,0.12); }
@@ -427,17 +456,17 @@
 
 .quicksearch-ai-composer-well {
     spacing: 8px;
-    padding: 6px 6px 6px 12px;
-    background-color: rgba(21, 28, 36, 0.96);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 6px 8px 6px 14px;
+    background-color: rgba(21, 28, 36, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 24px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.18);
 }
 
 .quicksearch-ai-composer-entry {
-    padding: 6px 8px;
+    padding: 8px 8px;
     font-size: 11pt;
-    color: rgba(255, 255, 255, 0.95);
+    color: rgba(255, 255, 255, 0.96);
     background-color: rgba(0, 0, 0, 0);
     border: none;
     border-radius: 0;
@@ -448,12 +477,14 @@
 }
 
 .quicksearch-ai-send {
-    width: 36px;
-    height: 36px;
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    min-height: 34px;
     padding: 0;
     border-radius: 999px;
     border: none;
-    background-color: rgba(25, 83, 169, 1.0);
+    background-color: rgba(46, 104, 200, 1.0);
 }
 
 .quicksearch-ai-send-content { spacing: 0; }
@@ -468,22 +499,97 @@
 }
 
 .quicksearch-ai-send:hover {
-    background-color: rgba(35, 100, 195, 1.0);
+    background-color: rgba(64, 125, 220, 1.0);
 }
 
 .quicksearch-ai-send-disabled {
     background-color: rgba(255, 255, 255, 0.08);
-    opacity: 0.55;
+    opacity: 0.45;
 }
+/* friendly empty state (before the first question) */
+.quicksearch-ai-empty {
+    padding: 26px 18px 18px 18px;
+    spacing: 8px;
+    x-align: CENTER;
+}
+.quicksearch-ai-empty-mark {
+    font-size: 22pt;
+    color: rgba(140, 180, 255, 0.90);
+    text-align: center;
+}
+.quicksearch-ai-empty-title {
+    font-size: 12pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.82);
+    text-align: center;
+    padding-bottom: 4px;
+}
+.quicksearch-ai-empty-suggestions {
+    spacing: 6px;
+    padding-top: 6px;
+    x-align: CENTER;
+}
+.quicksearch-ai-empty-chip {
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    background-color: rgba(255, 255, 255, 0.05);
+    x-align: CENTER;
+}
+.quicksearch-ai-empty-chip:hover {
+    background-color: rgba(255, 255, 255, 0.10);
+    border-color: rgba(140, 180, 255, 0.35);
+}
+.quicksearch-ai-empty-chip-label {
+    font-size: 9pt;
+    color: rgba(226, 231, 240, 0.80);
+}
+
+.quicksearch-ai-error {
+    margin: 2px 8px 6px 8px;
+    padding: 8px 12px;
+    font-size: 9.5pt;
+    color: rgba(255, 140, 140, 0.95);
+    background-color: rgba(190, 40, 40, 0.12);
+    border: 1px solid rgba(255, 90, 90, 0.22);
+    border-radius: 10px;
+}
+
 .quicksearch-ai-truncated {
-    padding: 6px 8px;
+    margin: 0 8px 6px 8px;
+    padding: 5px 12px;
     font-size: 8.5pt;
     font-style: italic;
     color: rgba(255, 220, 120, 0.90);
+    background-color: rgba(190, 140, 20, 0.10);
+    border-radius: 8px;
+}
+
+/* assistant turn: avatar + model name above plain flowing answer text */
+.quicksearch-ai-assistant-header {
+    spacing: 7px;
+    padding: 6px 8px 2px 8px;
+    x-align: START;
+}
+
+.quicksearch-ai-avatar {
+    font-size: 11pt;
+    color: rgba(140, 180, 255, 0.95);
+}
+
+.quicksearch-ai-assistant-name {
+    font-size: 9pt;
+    font-weight: bold;
+    color: rgba(226, 231, 240, 0.62);
+    padding-top: 2px;
+}
+
+.quicksearch-ai-answer-block {
+    x-align: START;
 }
 
 .quicksearch-ai-answer-md {
-    padding: 8px 8px 12px 8px;
+    padding: 2px 8px 10px 8px;
     spacing: 4px;
 }
 .quicksearch-ai-md-text,
@@ -493,9 +599,11 @@
 }
 .quicksearch-ai-md-text {
     padding: 0 8px;
+    color: rgba(242, 243, 245, 0.94);
 }
 .quicksearch-ai-md-list {
     padding-left: 10px;
+    color: rgba(242, 243, 245, 0.94);
 }
 .quicksearch-ai-md-code {
     font-family: monospace;
@@ -663,7 +771,7 @@
 }
 
 /* Thinking-only: compact inline row, no timer/animation (static dots). */
-.quicksearch-ai-thinking { spacing: 8px; padding: 10px 14px; }
+.quicksearch-ai-thinking { spacing: 7px; padding: 8px 10px; }
 .quicksearch-ai-thinking-icon { font-size: 10pt; color: rgba(196,181,253,0.95); padding: 0; }
 .quicksearch-ai-thinking-label { font-size: 9.5pt; font-style: italic; color: rgba(255,255,255,0.55); padding: 1px 0 0 0; }
 .quicksearch-ai-thinking-dots { spacing: 3px; padding: 2px 0 0 4px; }
@@ -673,7 +781,7 @@
 .quicksearch-ai-thinking-dot-3 { color: rgba(255,255,255,0.22); }
 
 .quicksearch-ai-md-codebox {
-    background-color: rgba(0, 0, 0, 0.26);
+    background-color: rgba(0, 0, 0, 0.32);
     border: 1px solid rgba(255, 255, 255, 0.07);
     border-radius: 12px;
     margin: 4px 8px 6px 8px;
@@ -701,70 +809,9 @@
 }
 
 .quicksearch-ai-sources-wrap {
-    spacing: 8px;
-    padding: 10px 10px 6px 10px;
-}
-.quicksearch-ai-sources-headerrow {
     spacing: 6px;
-    padding: 0 2px;
-}
-.quicksearch-ai-sources-cards {
-    spacing: 8px;
-}
-.quicksearch-ai-source-card {
-    padding: 10px 12px;
-    border-radius: 14px;
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    background-color: rgba(255, 255, 255, 0.045);
-    min-width: 160px;
-    max-width: 200px;
-}
-.quicksearch-ai-source-card:hover {
-    background-color: rgba(25, 83, 169, 0.14);
-    border-color: rgba(25, 83, 169, 0.22);
-}
-.quicksearch-ai-source-card-row { spacing: 10px; }
-.quicksearch-ai-source-card-icon { color: rgba(76, 127, 195, 0.95); }
-.quicksearch-ai-source-card-texts { spacing: 2px; }
-.quicksearch-ai-source-card-title {
-    font-size: 9pt;
-    font-weight: 600;
-    color: rgba(255,255,255,0.92);
-}
-.quicksearch-ai-source-card-domain {
-    font-size: 8pt;
-    color: rgba(255,255,255,0.45);
-}
-.quicksearch-ai-source-pill {
-    padding: 2px 9px;
-    border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background-color: rgba(255, 255, 255, 0.03);
-    max-width: 200px;
-}
-.quicksearch-ai-source-pill-label {
-    font-size: 8pt;
-    color: rgba(226, 231, 240, 0.60);
-    max-width: 180px;
-}
-.quicksearch-ai-source-pill:hover {
-    background-color: rgba(120, 160, 235, 0.10);
-}
-.quicksearch-ai-source-pill:hover .quicksearch-ai-source-pill-label {
-    color: rgba(255, 255, 255, 0.90);
-}
-.quicksearch-ai-sources-button-viewmore {
-    padding: 2px 10px;
-    border-radius: 12px;
-    border: none;
-    background: none;
-}
-.quicksearch-ai-sources-button-viewmore:hover {
-    background-color: rgba(255, 255, 255, 0.06);
-}
-.quicksearch-ai-sources-viewmore-label {
-    font-size: 8pt;
-    color: rgba(76, 127, 195, 0.95);
+    padding: 0 0 0 0;
+    x-align: START;
 }
 
 .quicksearch-ai-composer-plus {

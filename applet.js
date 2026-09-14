@@ -295,6 +295,34 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         // _aiScroll) packed between the chat header and the composer. It is never the
         // search results scroll: no reparenting between regions, so mode/state changes
         // cannot detach or re-insert actors and cannot shift the layout.
+        // Reference-aligned empty state: centered ✦ mark + greeting + suggestion
+        // prompts while the conversation is still empty (ai-input state). Pure
+        // presentation — clicking a suggestion routes through the normal AI submit.
+        this._aiEmptyState = new St.BoxLayout({ style_class: "quicksearch-ai-empty", vertical: true, visible: false });
+        try {
+            const _emptyMark = new St.Label({ text: "\u2726", style_class: "quicksearch-ai-empty-mark" });
+            this._aiEmptyState.add(_emptyMark);
+            const _emptyTitle = new St.Label({ text: _("Bagaimana saya bisa membantu?"), style_class: "quicksearch-ai-empty-title" });
+            this._aiEmptyState.add(_emptyTitle);
+            const _suggestions = [
+                "Ringkas berita teknologi hari ini",
+                "Jelaskan perbedaan SSD NVMe dan SATA",
+                "Buatkan rencana belajar Python 7 hari"
+            ];
+            this._aiEmptySuggestions = [];
+            const _sgWrap = new St.BoxLayout({ style_class: "quicksearch-ai-empty-suggestions", vertical: true });
+            for (const _s of _suggestions) {
+                const sBtn = new St.Button({ style_class: "quicksearch-ai-empty-chip", can_focus: false, reactive: true, track_hover: true });
+                sBtn.set_child(new St.Label({ text: _s, style_class: "quicksearch-ai-empty-chip-label" }));
+                sBtn.connect("clicked", () => {
+                    try { this._applet._submitAIQuery(_s); } catch (e) {}
+                    return Clutter.EVENT_STOP;
+                });
+                this._aiEmptySuggestions.push(sBtn);
+                _sgWrap.add(sBtn, { x_fill: false, x_align: St.Align.MIDDLE });
+            }
+            this._aiEmptyState.add(_sgWrap);
+        } catch (e) { try { global.log("[quicksearch@yoji] ai empty state init failed: " + e); } catch (e2) {} }
         this.aiResultsBox = new St.BoxLayout({ vertical: true });
         this._aiScroll = new St.ScrollView({
             style_class: "quicksearch-results",
@@ -310,6 +338,7 @@ class QuickSearchOverlay extends ModalDialog.ModalDialog {
         // no clip on the pane itself: a pane-level clip chops painted children
         // (borders/shadows/text edges) and makes content look cut off.
         try { this._aiPane.add(this._aiHeader, { x_fill: true }); } catch (e) {}
+        try { this._aiPane.add(this._aiEmptyState, { x_fill: true }); } catch (e) {}
         try { this._aiPane.add(this._aiScroll, { x_fill: true }); } catch (e) {}
         try { this._aiPane.add(this._aiComposer, { x_fill: true }); } catch (e) {}
         this._aiView = this._aiPane;
@@ -924,6 +953,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._aiStickBottom = true;
         this._aiLayoutId = 0;
         this._aiScrollId = 0;
+        this._aiAutoScrolling = false;
+        this._aiAutoScrollClearId = 0;
         this._aiScrollAdjIds = [];
         this._aiScrollBound = false;
         this._aiTooltips = [];
@@ -1179,7 +1210,9 @@ class QuickSearchApplet extends Applet.IconApplet {
         const st = this._uiState;
         const isAi = this._mode === 'ai';
         const hasConv = this._hasConversation();
-        const idleCenter = (!isAi && st === 'idle-search') || (isAi && st === 'ai-input');
+        // AI input never uses the centered idle shell anymore: the chat pane owns a
+        // real empty state (greeting + suggestions + composer) below the pinned pill.
+        const idleCenter = !isAi && st === 'idle-search';
         try { ov._entryRow.visible = true; } catch (e) {}
         try {
             if (idleCenter) {
@@ -1211,11 +1244,14 @@ class QuickSearchApplet extends Applet.IconApplet {
             this._autoRows = [];
         }
         try { if (ov._searchView) ov._searchView.visible = !isAi; } catch (e) {}
-        try { if (ov._aiView) ov._aiView.visible = isAi && hasConv; } catch (e) {}
-        try { if (ov._aiPane) ov._aiPane.visible = isAi && hasConv; } catch (e) {}
+        // the AI pane (incl. its empty state + always-live composer) is visible whenever
+        // AI mode is on — with or without a conversation
+        try { if (ov._aiView) ov._aiView.visible = isAi; } catch (e) {}
+        try { if (ov._aiPane) ov._aiPane.visible = isAi; } catch (e) {}
         try { if (ov._aiHeader) ov._aiHeader.visible = isAi && hasConv; } catch (e) {}
-        try { if (ov._aiComposer) ov._aiComposer.visible = isAi && hasConv; } catch (e) {}
-        try { if (ov._aiEditRow) ov._aiEditRow.visible = hasConv && this._aiEditId != null; } catch (e) {}
+        try { if (ov._aiComposer) ov._aiComposer.visible = isAi; } catch (e) {}
+        try { if (ov._aiEmptyState) ov._aiEmptyState.visible = isAi && !hasConv; } catch (e) {}
+        try { if (ov._aiEditRow) ov._aiEditRow.visible = isAi && hasConv && this._aiEditId != null; } catch (e) {}
         try { this._updateHints(); } catch (e) {}
         try { this._syncRegionGeometry(); } catch (e) {}
     }
@@ -1264,11 +1300,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._renderAIState();
         try { this._syncRegionGeometry(); } catch (e) {}
         try { this._scheduleAILayoutSync(); } catch (e) {}
-        if (this._hasConversation()) {
-            try { this._activateComposerInput(); } catch (e) {}
-        } else {
-            try { this._refocusTopEntry(); } catch (e) {}
-        }
+        // composer is always live in AI mode → focus it in both idle and chat states
+        try { this._activateComposerInput(); } catch (e) {}
     }
 
     // AI → Search. Safe under every AI state: an active/streaming request is stopped
@@ -1403,16 +1436,18 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!ov || !ov._stopButton) return;
         const isAi = this._mode === 'ai';
         const hasConv = this._hasConversation();
-        const composerActive = isAi && hasConv;
+        // composer + Stop/Send slot live whenever AI mode is on (empty input included);
+        // New Chat only makes sense when there is something to reset.
+        const composerActive = isAi;
         const active = !!this._aiLoading || !!this._aiStreaming ||
             (convMod && this._conversation ? !!convMod.hasActive(this._conversation) : false);
         // single action slot: Stop while loading/streaming, Send otherwise (§5/§6)
         try { ov._stopButton.visible = composerActive && active; } catch (e) {}
         try { ov._composerSend.visible = composerActive && !active; } catch (e) {}
         // + New Chat: pinned top-right of the chat panel while a conversation exists (§3)
-        try { if (ov._resetButton) ov._resetButton.visible = composerActive; } catch (e) {}
+        try { if (ov._resetButton) ov._resetButton.visible = composerActive && hasConv; } catch (e) {}
         // edit-in-progress hint row inside the composer (§6)
-        try { if (ov._aiEditRow) ov._aiEditRow.visible = composerActive && this._aiEditId != null; } catch (e) {}
+        try { if (ov._aiEditRow) ov._aiEditRow.visible = composerActive && hasConv && this._aiEditId != null; } catch (e) {}
         try { this._syncComposerSendState(); } catch (e) {}
     }
 
@@ -1425,17 +1460,23 @@ class QuickSearchApplet extends Applet.IconApplet {
     _syncAIComposerState() {
         const ov = this._overlay;
         if (!ov || !ov._composerEntry) return;
-        const composerActive = this._mode === 'ai' && this._hasConversation();
+        // Reference layout: the follow-up composer is ALWAYS visible in AI mode (it is
+        // the main input before the first question, not just a follow-up row). Header,
+        // pane and empty state follow the conversation-presence rules below.
+        const composerActive = this._mode === 'ai';
+        const hasConv = this._hasConversation();
         try { ov._aiComposer.visible = composerActive; } catch (e) {}
-        try { if (ov._aiHeader) ov._aiHeader.visible = composerActive; } catch (e) {}
+        try { if (ov._aiHeader) ov._aiHeader.visible = composerActive && hasConv; } catch (e) {}
         try { if (ov._aiPane) ov._aiPane.visible = composerActive; } catch (e) {}
         try {
             ov._entryRow.visible = true;
             ov._entry.reactive = true;
             ov._entry.can_focus = true;
         } catch (e) {}
-        const editing = composerActive && this._aiEditId != null;
+        const editing = composerActive && hasConv && this._aiEditId != null;
         try { if (ov._aiEditRow) ov._aiEditRow.visible = !!editing; } catch (e) {}
+        // empty state owns the pane body while there is nothing to converse about yet
+        try { if (ov._aiEmptyState) ov._aiEmptyState.visible = composerActive && !hasConv; } catch (e) {}
         if (editing && ov._aiEditLabel) {
             try {
                 const m = convMod.findMessage(this._conversation, this._aiEditId);
@@ -1463,10 +1504,28 @@ class QuickSearchApplet extends Applet.IconApplet {
             const ct = ov._composerEntry.clutter_text;
             if (ct && typeof ct.set_cursor_visible === 'function') ct.set_cursor_visible(true);
         } catch (e) {}
+        try {
+            // subtle type-to-focus: when the composer loses focus while AI is idle
+            // (e.g. after clicking a suggestion chip), route Enter back to the pill
+            // so keyboard-only flow still works.
+            if (!this._hasConversation() && global.stage && typeof global.stage.set_key_focus === 'function') {
+                const focusActor = global.stage.get_key_focus ? global.stage.get_key_focus() : null;
+                if (!focusActor) global.stage.set_key_focus(ov._entry);
+            }
+        } catch (e) {}
         try { this._syncAIFooter(); } catch (e) {}
         try { this._syncComposerSendState(); } catch (e) {}
         try {
-            if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(ov._composerEntry);
+            // guarded refocus: set_key_focus on the ALREADY-focused composer resets the
+            // pill margin_top for one frame (same effect documented on _refocusTopEntry),
+            // and _renderAIState runs on every streaming delta — only move focus when it
+            // is actually somewhere else.
+            let needFocus = true;
+            if (global.stage && typeof global.stage.get_key_focus === 'function') {
+                const f = global.stage.get_key_focus();
+                needFocus = !(f === ov._composerEntry || f === ov._composerEntry.clutter_text);
+            }
+            if (needFocus && global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(ov._composerEntry);
             if (ov._startCaretBlink) ov._startCaretBlink(ov._composerEntry);
             try { ov._aiComposer.add_style_class_name("quicksearch-ai-composer-focused"); } catch (e2) {}
         } catch (e) {}
@@ -1481,6 +1540,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { if (ov._aiComposer) ov._aiComposer.remove_style_class_name("quicksearch-ai-composer-focused"); } catch (e) {}
         try { if (ov._aiHeader) ov._aiHeader.visible = false; } catch (e) {}
         try { if (ov._aiPane) ov._aiPane.visible = false; } catch (e) {}
+        try { if (ov._aiEmptyState) ov._aiEmptyState.visible = false; } catch (e) {}
         try { if (ov._aiScroll) ov._aiScroll.visible = false; } catch (e) {}
         try { if (ov._composerEntry) ov._composerEntry.set_text(''); } catch (e) {}
         try {
@@ -1499,7 +1559,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         const active = !!this._aiLoading || !!this._aiStreaming ||
             (convMod && this._conversation ? !!convMod.hasActive(this._conversation) : false);
         // Send is only meaningful while idle; during a request the Stop slot owns the row.
-        const enabled = this._mode === 'ai' && this._hasConversation() && !active && !!String(text).trim();
+        // First question also goes through the bottom composer (AI mode = always active).
+        const enabled = this._mode === 'ai' && !active && !!String(text).trim();
         try {
             ov._composerSend.reactive = enabled;
             if (enabled) ov._composerSend.remove_style_class_name('quicksearch-ai-send-disabled');
@@ -1531,8 +1592,8 @@ class QuickSearchApplet extends Applet.IconApplet {
     _onComposerSend() {
         const ov = this._overlay;
         if (!ov || !ov._composerEntry) return;
-        if (this._mode !== 'ai' || !this._hasConversation()) {
-            // conversation was cleared while the composer was visible → back to top input
+        if (this._mode !== 'ai') {
+            // mode left while the composer was visible → back to top input
             try { this._deactivateComposerInput(); } catch (e) {}
             return;
         }
@@ -1554,7 +1615,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         } catch (e) {}
         // keep the composer focused for the next follow-up
         try {
-            if (this._mode === 'ai' && this._hasConversation()) {
+            if (this._mode === 'ai') {
                 if (global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(ov._composerEntry);
                 if (ov._startCaretBlink) ov._startCaretBlink(ov._composerEntry);
             }
@@ -1663,6 +1724,30 @@ class QuickSearchApplet extends Applet.IconApplet {
             try { GLib.source_remove(this._aiScrollId); } catch (e) {}
             this._aiScrollId = 0;
         }
+        if (this._aiAutoScrollClearId) {
+            try { GLib.source_remove(this._aiAutoScrollClearId); } catch (e) {}
+            this._aiAutoScrollClearId = 0;
+        }
+        this._aiAutoScrolling = false;
+    }
+
+    // Suppress the user-scroll tracker for a short window while WE drive the
+    // adjustment (programmatic set_value) or resize the scroll viewport — the
+    // resulting 'changed'/'notify::value' events are NOT user scrolls and must
+    // never flip _aiStickBottom off (that froze the follow-scroll mid-stream,
+    // leaving the latest answer painting over the user's question bubble).
+    _beginAutoScrollGuard(ms) {
+        this._aiAutoScrolling = true;
+        if (this._aiAutoScrollClearId) {
+            try { GLib.source_remove(this._aiAutoScrollClearId); } catch (e) {}
+            this._aiAutoScrollClearId = 0;
+        }
+        const self = this;
+        this._aiAutoScrollClearId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms || 200, () => {
+            self._aiAutoScrolling = false;
+            self._aiAutoScrollClearId = 0;
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _ensureScrollTracking() {
@@ -1674,8 +1759,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             if (!adj || typeof adj.connect !== 'function') return;
             const handler = () => {
                 try { this._onAIUserScroll(); } catch (e) {}
-            };
-            // St.Adjustment signal naming varies across Cinnamon/GJS versions — bind every
+            };            // St.Adjustment signal naming varies across Cinnamon/GJS versions — bind every
             // candidate; whichever exists drives the sticky-scroll state.
             for (const sig of ['notify::value', 'value-changed', 'changed']) {
                 try { this._aiScrollAdjIds.push(adj.connect(sig, handler)); } catch (e) {}
@@ -1685,6 +1769,7 @@ class QuickSearchApplet extends Applet.IconApplet {
     }
 
     _onAIUserScroll() {
+        if (this._aiAutoScrolling) return; // programmatic scroll/resize, not the user
         const ov = this._overlay;
         if (!ov || !ov._aiScroll) return;
         try {
@@ -1704,7 +1789,8 @@ class QuickSearchApplet extends Applet.IconApplet {
         if (!force && !this._aiStickBottom) return;
         this._cancelAIScroll();
         const self = this;
-        this._aiScrollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 20, () => {
+        let pass = 0;
+        function _tick() {
             self._aiScrollId = 0;
             try {
                 const ov2 = self._overlay;
@@ -1713,11 +1799,21 @@ class QuickSearchApplet extends Applet.IconApplet {
                 const adj = vbar.get_adjustment();
                 const upper = Number(adj.upper) || 0;
                 const ps = Number(adj.page_size) || 0;
+                self._beginAutoScrollGuard();
                 adj.set_value(Math.max(Number(adj.lower) || 0, upper - ps));
                 self._aiStickBottom = true;
+                // verification passes: the document height keeps settling right after
+                // a render/resize (allocation lags the paint) — re-check a few times
+                // and re-apply the bottom anchor so the newest turn never paints over
+                // the user's bubble.
+                if (++pass < 4) {
+                    self._aiScrollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 90, _tick);
+                    return GLib.SOURCE_REMOVE;
+                }
             } catch (e) {}
             return GLib.SOURCE_REMOVE;
-        });
+        }
+        this._aiScrollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 20, _tick);
     }
 
     _scrollAIMessageIntoView(id) {
@@ -1917,7 +2013,7 @@ class QuickSearchApplet extends Applet.IconApplet {
             if (mdMod && typeof mdMod.parseMarkdownBlocks === 'function') {
                 try { blocks = mdMod.parseMarkdownBlocks(text); } catch (e) { blocks = null; }
             }
-            const box = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-answer-md" });
+            const box = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-answer-md quicksearch-ai-answer-block" });
             const arr = (blocks && blocks.length) ? blocks :
                 [{ kind: 'paragraph', lines: text.split('\n').map(l => ({ spans: [{ style: 'plain', text: l }] })) }];
             for (const block of arr) {
@@ -2021,18 +2117,46 @@ class QuickSearchApplet extends Applet.IconApplet {
         const messages = (convMod && this._conversation) ? convMod.getMessages(this._conversation) : [];
         const diagOn = !!this.ai_debug_mode;
 
+        // Reference-aligned chat presentation: every message is an avatar row —
+        // user bubble right-aligned (filled accent), assistant left-aligned with the
+        // ✦ avatar + name and plain flowing answer text below, like ChatGPT/Claude.
+        const _aiAvatarLabel = (text, cls) => {
+            try {
+                const av = new St.Label({ text: text, style_class: cls });
+                return av;
+            } catch (e) { return null; }
+        };
+        // dual-layout alignment (same belt & suspenders as the sources button): legacy
+        // St.BoxLayout honors add() props; the Clutter-based one needs child_set_property
+        const _alignChild = (container, child, align) => {
+            try { container.add(child, { x_align: align, x_fill: false }); } catch (e) { try { container.add_child(child); } catch (e2) {} }
+            try {
+                if (container.layout_manager && typeof container.layout_manager.child_set_property === 'function') {
+                    container.layout_manager.child_set_property(container, child, 'x-fill', false);
+                    container.layout_manager.child_set_property(container, child, 'x-align', align === St.Align.END ? Clutter.ActorAlign.END : (align === St.Align.MIDDLE ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START));
+                }
+            } catch (e) {}
+        };
+        const _assistantHeaderRow = () => {
+            const row = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-assistant-header" });
+            try { row.add(_aiAvatarLabel("\u2726", "quicksearch-ai-avatar")); } catch (e) {}
+            try { row.add(_aiAvatarLabel(_("QuickSearch AI"), "quicksearch-ai-assistant-name")); } catch (e2) {}
+            return row;
+        };
         for (const msg of messages) {
             if (!msg) continue;
             if (msg.role === 'user') {
                 try {
-                    // ChatGPT-style message: content first, then a small utility action
-                    // row BELOW it — never a big right-side cluster inside the card.
+                    // ChatGPT-style: right-aligned filled bubble; the utility action row
+                    // appears UNDER the bubble and is right-aligned too.
                     const block = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-user-block" });
                     const editing = this._aiEditId === msg.id;
                     if (editing) try { block.add_style_class_name("quicksearch-ai-user-editing"); } catch (e) {}
-                    const lbl = new St.Label({ text: _("You") + ": " + String(msg.content || ''), style_class: "quicksearch-ai-user" });
+                    const bubble = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-user-bubble" });
+                    const lbl = new St.Label({ text: String(msg.content || ''), style_class: "quicksearch-ai-user" });
                     try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
-                    block.add(lbl);
+                    bubble.add(lbl);
+                    block.add(bubble);
                     const uid = msg.id;
                     // Resend is CONDITIONAL: only when THIS message's own paired assistant
                     // answer actually failed (status 'error'). Success, cancellation,
@@ -2059,23 +2183,18 @@ class QuickSearchApplet extends Applet.IconApplet {
                             this._resendUserMessage(uid);
                         }, tipBucket));
                     }
-                    block.add(actionsRow);
-                    ov.aiResultsBox.add_child(block);
+                    try { block.add(actionsRow, { x_align: St.Align.END }); } catch (e) { try { block.add_child(actionsRow); } catch (e2) {} }
+                    _alignChild(ov.aiResultsBox, block, St.Align.END);
                     if (this._aiMsgActors) this._aiMsgActors[uid] = block;
                 } catch (e) {}
             } else if (msg.role === 'assistant') {
-                // UI-3: small "✨ AI Answer" heading marks every answer surface — it is
-                // re-created per render (streaming deltas rebuild it), never duplicated.
-                const addAnswerHeading = () => {
-                    try {
-                        const h = new St.Label({ text: _("\u2728 AI Answer"), style_class: "quicksearch-ai-answer-heading" });
-                        ov.aiResultsBox.add_child(h);
-                    } catch (e) {}
-                };
+                // Assistant surface header is added by the shared _assistantHeaderRow()
+                // builder above (avatar + model name) — re-created per render (streaming
+                // deltas rebuild it), never duplicated.
+                try { ov.aiResultsBox.add_child(_assistantHeaderRow()); } catch (e) {}
                 if (msg.status === 'streaming') {
                     if (msg.content) {
                         try {
-                            addAnswerHeading();
                             const actor = this._buildAiAnswerActor(String(msg.content));
                             if (actor) ov.aiResultsBox.add_child(actor);
                         } catch (e) {}
@@ -2087,7 +2206,6 @@ class QuickSearchApplet extends Applet.IconApplet {
                     }
                 } else if (msg.status === 'complete') {
                     try {
-                        addAnswerHeading();
                         const actor = this._buildAiAnswerActor(String(msg.content || ''));
                         if (actor) ov.aiResultsBox.add_child(actor);
                     } catch (e) {}
@@ -2098,14 +2216,42 @@ class QuickSearchApplet extends Applet.IconApplet {
                             ov.aiResultsBox.add_child(tLbl);
                         } catch (e) {}
                     }
-                    if (Array.isArray(msg.sources) && msg.sources.length > 0) {
-                        this._renderSourcesForMessage(ov, msg.sources, msg.id);
-                    }
+                    // Single right-aligned footer row under the answer:
+                    // [Sources (n)] [Copy] [Resend] — Copy sits NEXT TO Sources (same
+                    // row, not stacked). Edit lives only under the user bubble (it was
+                    // duplicated here); Resend only on the LATEST completed answer
+                    // whose paired user turn resolves to THIS answer.
+                    try {
+                        const ansTip = (!this._aiLoading && !this._aiStreaming) ? this._aiMsgTooltips : null;
+                        const ansRow = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-msg-actions quicksearch-ai-answer-actions" });
+                        if (Array.isArray(msg.sources) && msg.sources.length > 0) {
+                            const sw = this._renderSourcesForMessage(ov, msg.sources, msg.id);
+                            if (sw) ansRow.add(sw);
+                        }
+                        ansRow.add(this._buildIconActionButton(["edit-copy-symbolic", "edit-copy"], ansTip ? _("Copy answer") : '', "quicksearch-ai-action-icon-btn", () => {
+                            this._copyUserMessageToClipboard(String(msg.content || ''));
+                        }, ansTip));
+                        const isLastAssistant = (() => {
+                            let last = null;
+                            for (const m2 of messages) { if (m2 && m2.role === 'assistant') last = m2; }
+                            return last && last.id === msg.id;
+                        })();
+                        if (isLastAssistant) {
+                            let lastUser = null;
+                            for (const m2 of messages) { if (m2 && m2.role === 'user') lastUser = m2; }
+                            const pairMsg = (convMod && lastUser) ? convMod.getAssistantForUserMessage(this._conversation, lastUser.id) : null;
+                            if (lastUser && pairMsg && pairMsg.id === msg.id) {
+                                ansRow.add(this._buildIconActionButton(["view-refresh-symbolic", "reload-symbolic"], ansTip ? _("Resend message") : '', "quicksearch-ai-action-icon-btn", () => {
+                                    try { this._resendUserMessage(lastUser.id); } catch (e2) {}
+                                }, ansTip));
+                            }
+                        }
+                        _alignChild(ov.aiResultsBox, ansRow, St.Align.END);
+                    } catch (e) {}
                 } else if (msg.status === 'cancelled') {
                     // §8: partial content remains visible, status shown, request inactive
                     if (msg.content) {
                         try {
-                            addAnswerHeading();
                             const actor = this._buildAiAnswerActor(String(msg.content));
                             if (actor) ov.aiResultsBox.add_child(actor);
                         } catch (e) {}
@@ -2137,7 +2283,6 @@ class QuickSearchApplet extends Applet.IconApplet {
                                 : (diagOn ? this._buildAiDiagnosticText(msg.error) : _("Unable to get an AI response."));
                     if (msg.content) {
                         try {
-                            addAnswerHeading();
                             const actor = this._buildAiAnswerActor(String(msg.content));
                             if (actor) ov.aiResultsBox.add_child(actor);
                         } catch (e) {}
@@ -2155,6 +2300,22 @@ class QuickSearchApplet extends Applet.IconApplet {
             }
         }
 
+        // Reference layout: the bottom composer is ALWAYS live in AI mode (it owns the
+        // first question too). Renders re-assert composer focus ONLY when the user is
+        // not actively typing in the top pill, and never outside AI mode (a rebuild
+        // while mode === 'search' must not force the AI pane visible).
+        try {
+            let topFocused = false;
+            if (ov._entry && global.stage && typeof global.stage.get_key_focus === 'function') {
+                const f = global.stage.get_key_focus();
+                topFocused = (f === ov._entry.clutter_text) || (f === ov._entry);
+            }
+            if (this._mode === 'ai' && !topFocused) this._activateComposerInput();
+        } catch (e) {}
+        // friendly empty state inside the chat pane (before the first question)
+        try {
+            if (ov._aiEmptyState) ov._aiEmptyState.visible = messages.length === 0;
+        } catch (e) {}
         try { ov._aiScroll.visible = messages.length > 0; } catch (e) {}
         try { this._syncAIFooter(); } catch (e) {}
         try { this._syncRegionGeometry(); } catch (e) {}
@@ -2222,100 +2383,41 @@ class QuickSearchApplet extends Applet.IconApplet {
         // Gio path retained via _openSourceUrl: launch_default_for_uri_async(trimmed
         if (!ov || !Array.isArray(sources) || sources.length === 0) return;
         try {
-            const count = sources.length;
-            // UI-3: inline compact sources — up to 3 clickable pills, metadata only.
-            // P2 (final): layout is three stacked rows — 🔗 Sources label, then pills in
-            // a WRAPPING flow container (narrow panels / DPI / font scaling wrap to
-            // multiple lines instead of overflowing), then "View more" on its own line.
-            // Pills open the source directly (structural http(s) gate in _openSourceUrl);
-            // View more toggles the full popover kept from the previous UI.
-            void 'St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-row"'; void 'flowBox.add_actor(pill)'; void 'flowBox.add_child(pill)'; void 'wrap.add(moreBtn)'; void 'title.length > 28'; void 'set_ellipsize(Pango.EllipsizeMode.END)';
-            let moreBtn = null;
+            // UI (2026-09-14): one compact "Sources (n)" button shares the right-aligned
+            // answer-footer row with Copy (Sources first, Copy beside it — same row) and
+            // opens the sources popover with the full clickable list — popover rows
+            // launch URLs via _openSourceUrl.
+            const capturedSources = sources.slice();
+            const capturedId = msgId || String(sources.length) + "-" + String(capturedSources[0] && capturedSources[0].url || "");
             const wrap = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-sources-wrap" });
-            const headRow = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-headerrow", x_expand: true });
+            const btn = new St.Button({ style_class: "quicksearch-ai-sources-button", reactive: true, track_hover: true, can_focus: false });
+            const btnRow = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-button-content" });
             try {
                 const icon = new St.Icon({ icon_name: "text-x-generic-symbolic", icon_size: 11, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-sources-button-icon" });
-                headRow.add(icon);
+                btnRow.add(icon);
             } catch (e) {}
             try {
-                const label = new St.Label({ text: _("Sources"), style_class: "quicksearch-ai-sources-button-label" });
-                headRow.add(label);
+                const label = new St.Label({ text: _("Sources") + " (" + capturedSources.length + ")", style_class: "quicksearch-ai-sources-button-label" });
+                btnRow.add(label);
             } catch (e) {}
-            if (count > 3) {
-                const vm = new St.Button({ style_class: "quicksearch-ai-sources-button-viewmore", reactive: true, track_hover: true, can_focus: false });
-                const vmLbl = new St.Label({ text: _("View more"), style_class: "quicksearch-ai-sources-viewmore-label" });
-                try { vm.set_child(vmLbl); } catch (e) {}
-                const capturedSources = sources.slice();
-                const capturedId = msgId || String(count) + "-" + String(sources[0] && sources[0].url || "");
-                vm.connect("clicked", () => {
-                    try { this._toggleSourcesPopover(capturedSources, vm, capturedId); } catch (e) {}
-                    return Clutter.EVENT_STOP;
-                });
-                const spacer = new St.Widget({ x_expand: true });
-                try { headRow.add(spacer, { expand: true }); } catch (e) {}
-                try { headRow.add(vm); } catch (e) {}
-                moreBtn = vm;
-            }
-            try { wrap.add(headRow); } catch (e) {}
-            let flowBox = null;
+            try { btn.set_child(btnRow); } catch (e) {}
+            btn.connect("clicked", () => {
+                try { this._toggleSourcesPopover(capturedSources, btn, capturedId); } catch (e) {}
+                return Clutter.EVENT_STOP;
+            });
+            try { wrap.add(btn, { x_fill: false, x_align: St.Align.START, y_fill: false }); } catch (e) { try { wrap.add(btn); } catch (e2) {} }
+            // belt & suspenders for Clutter.BoxLayout: kill cross-axis fill so the button
+            // hugs its text ("Sources (n)") inside the shared answer-footer row
             try {
-                flowBox = new St.Widget({
-                    style_class: "quicksearch-ai-sources-cards",
-                    x_expand: true,
-                    layout_manager: new Clutter.FlowLayout({
-                        orientation: Clutter.Orientation.HORIZONTAL,
-                        homogeneous: false,
-                        column_spacing: 8,
-                        row_spacing: 8
-                    })
-                });
-            } catch (e) { flowBox = null; }
-            if (!flowBox) {
-                flowBox = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-cards quicksearch-ai-sources-row", x_expand: false });
-            }
-            const MAX_INLINE = 3;
-            for (let i = 0; i < Math.min(count, MAX_INLINE); i++) {
-                const src = sources[i];
-                if (!src || typeof src.url !== 'string' || !src.url) continue;
-                const titleRaw = typeof src.title === 'string' && src.title.trim() ? src.title.trim() : (src.domain || src.url);
-                const domainRaw = typeof src.domain === 'string' && src.domain.trim() ? src.domain.trim() : '';
-                let title = titleRaw.length > 28 ? titleRaw.slice(0, 28) + '\u2026' : titleRaw;
-                const domain = domainRaw || (function(u) { try { return String(u).replace(/^https?:\/\//, '').split('/')[0]; } catch (e) { return u; } })(src.url);
-                void 'quicksearch-ai-source-pill';
-                const card = new St.Button({ style_class: "quicksearch-ai-source-card quicksearch-ai-source-pill", reactive: true, track_hover: true, can_focus: false });
-                const cardRow = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-source-card-row" });
-                try {
-                    const favIcon = new St.Icon({ icon_name: "web-browser-symbolic", icon_size: 18, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-source-card-icon" });
-                    cardRow.add(favIcon);
-                } catch (e) {}
-                const cardTexts = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-source-card-texts" });
-                const cardTitle = new St.Label({ text: title, style_class: "quicksearch-ai-source-card-title" });
-                try {
-                    const ct = cardTitle.get_clutter_text();
-                    ct.set_line_wrap(false);
-                    if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.END);
-                } catch (e) {}
-                const cardDomain = new St.Label({ text: domain, style_class: "quicksearch-ai-source-card-domain" });
-                try {
-                    const ct2 = cardDomain.get_clutter_text();
-                    ct2.set_line_wrap(false);
-                    if (typeof ct2.set_ellipsize === 'function') ct2.set_ellipsize(Pango.EllipsizeMode.END);
-                } catch (e) {}
-                try { cardTexts.add(cardTitle); } catch (e) {}
-                try { cardTexts.add(cardDomain); } catch (e) {}
-                try { cardRow.add(cardTexts, { expand: true }); } catch (e) {}
-                try { card.set_child(cardRow); } catch (e) {}
-                const url = src.url;
-                card.connect("clicked", () => {
-                    try { this._openSourceUrl(url); } catch (e) {}
-                    return Clutter.EVENT_STOP;
-                });
-                try { flowBox.add_actor(card); } catch (e) { try { flowBox.add_child(card); } catch (e2) {} }
-            }
-            try { wrap.add(flowBox); } catch (e) {}
-            void 'wrap.add(moreBtn)';
-            ov.aiResultsBox.add_child(wrap);
-        } catch (e) {}
+                if (wrap.layout_manager && typeof wrap.layout_manager.child_set_property === 'function') {
+                    wrap.layout_manager.child_set_property(wrap, btn, 'x-fill', false);
+                    wrap.layout_manager.child_set_property(wrap, btn, 'x-align', Clutter.ActorAlign.START);
+                }
+            } catch (e) {}
+            // The wrap is placed by the caller inside the right-aligned answer footer
+            // (next to Copy) — return it instead of appending directly to the thread.
+            return wrap;
+        } catch (e) { return null; }
     }
 
     // Phase 8 §12 + Phase 9 §3/§4 staging. `opts`:
@@ -2513,16 +2615,11 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._cancelAIScroll();
         if (convMod && this._conversation) { try { convMod.reset(this._conversation); } catch (e) {} }
         try { this._renderAIState(); } catch (e) {}
-        try { this._deactivateComposerInput(); } catch (e) {}
-        // back to the initial-chat state: top input visible and focused (§1/§5)
+        // New Chat returns to the friendly empty state: the composer stays live and
+        // focused (it owns the first question), the pane shows greeting + suggestions.
+        try { this._activateComposerInput(); } catch (e) {}
         const ov = this._overlay;
-        try {
-            if (ov && ov._entry && global.stage && typeof global.stage.set_key_focus === 'function') {
-                ov._entry.set_text('');
-                global.stage.set_key_focus(ov._entry);
-                if (ov._startCaretBlink) ov._startCaretBlink();
-            }
-        } catch (e) {}
+        try { if (ov && ov._entry) ov._entry.set_text(''); } catch (e) {}
     }
 
     _applySearchEngineSetting() {
@@ -2606,8 +2703,10 @@ class QuickSearchApplet extends Applet.IconApplet {
             const bin = this._overlay._backgroundBin;
             if (dlg && bin) {
                 const doPos = () => {
-                    const st = this._uiState;
-                    const isIdle = (! (this._mode === 'ai') && st === 'idle-search') || (this._mode === 'ai' && st === 'ai-input');
+                const st = this._uiState;
+                // only Search idle is a centered empty shell now; AI input owns the
+                // chat pane with its empty state, so it uses the top-anchored layout
+                const isIdle = !(this._mode === 'ai') && st === 'idle-search';
                     try { this._overlay.dialogLayout.set_height(-1); } catch (e) {}
                     try {
                         if (isIdle) { this._overlay.contentLayout.add_style_class_name("quicksearch-content-idle"); this._overlay.add_style_class_name("quicksearch-dialog-idle"); }
@@ -3019,6 +3118,17 @@ class QuickSearchApplet extends Applet.IconApplet {
         try { ov._hintsLabel.visible = false; } catch (e) {}
     }
 
+    // Enter in the top pill during AI idle: route the first question through the bottom
+    // composer (single input path), so the conversation starts exactly like a follow-up.
+    _submitAIFromTopEntry() {
+        const ov = this._overlay;
+        const text = ov ? String(ov.getText ? ov.getText() : (ov._entry ? ov._entry.get_text() : '')) : '';
+        const q = String(text || '').trim();
+        if (!q) return;
+        try { if (ov && ov._entry) ov._entry.set_text(''); } catch (e) {}
+        this._submitAIQuery(q);
+    }
+
     // REBUILD: AI chat geometry — the pane packs header / dedicated conversation scroll /
     // composer naturally (BoxLayout vertical). The ONLY manual number is the conversation
     // scroll height, capped so the whole pane fits the screen: compact when the content is
@@ -3061,20 +3171,11 @@ class QuickSearchApplet extends Applet.IconApplet {
                 try {
                     if (ov._entryRow && Math.round(ov._entryRow.margin_top) !== needTop) ov._entryRow.set_margin_top(needTop);
                 } catch (e) {}
-                try { ov._contentArea.set_size(w, 0); } catch (e) {}
-                try { if (ov._aiView) ov._aiView.set_size(w, 0); } catch (e) {}
-                try { if (ov._aiPane) ov._aiPane.set_size(w, 0); } catch (e) {}
                 try { if (ov._scroll) ov._scroll.set_size(w, 0); } catch (e) {}
                 try { if (ov._aiScroll) ov._aiScroll.set_size(w, 0); } catch (e) {}
-                // ponytail: same empty-shell size as search idle (h=0 -> dlgH2=70) so the
-                // pill does not re-measure one frame shorter when switching modes.
-                try {
-                    const dlgH2 = Math.max(0, 0 + 70);
-                    try { ov.dialogLayout.set_height(dlgH2); } catch (e) {}
-                    try { ov.dialogLayout.set_size(w, dlgH2); } catch (e) {}
-                    try { ov.dialogLayout.queue_relayout(); } catch (e) {}
-                    try { ov.contentLayout.queue_relayout(); } catch (e) {}
-                } catch (e) {}
+                // ai-input state is NOT an empty shell anymore: the chat pane shows the
+                // empty state (greeting + suggestions) + the always-live composer.
+                try { this._syncAiPaneGeometry(); } catch (e) {}
                 return;
             }
             // OFFSIDE GUARD: the search results scroll is a sibling of the AI pane inside
@@ -3160,6 +3261,13 @@ class QuickSearchApplet extends Applet.IconApplet {
                     fixedH += Math.max(1, Math.round(Number(h) || 0));
                 }
             } catch (e) { fixedH += 48; }
+            // empty state contributes its own natural height when there is no conversation
+            try {
+                if (ov._aiEmptyState && ov._aiEmptyState.visible && !this._hasConversation()) {
+                    const [, eh] = ov._aiEmptyState.get_preferred_height(innerW);
+                    fixedH += Math.max(1, Math.round(Number(eh) || 0));
+                }
+            } catch (e) {}
             let natH = 0;
             if (ov._aiScroll && ov.aiResultsBox) {
                 try {
@@ -3190,6 +3298,9 @@ class QuickSearchApplet extends Applet.IconApplet {
                 // same clipping as the search results scroll (plain scroll clip —
                 // no extra clip on the pane itself, which chopped painted children)
                 try { ov._aiScroll.set_clip_to_allocation(true); } catch (e) {}
+                // viewport resize fires adjustment 'changed' events — those are OUR
+                // resize, not a user scroll; guard so _aiStickBottom is not clobbered
+                try { this._beginAutoScrollGuard(); } catch (e) {}
             }
             const totalH = Math.min(fixedH + scrollH, Math.max(0, bottomLimit - pillBottom));
             try { ov._aiPane.set_size(w, Math.max(0, totalH)); } catch (e) {}
@@ -3354,7 +3465,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                         if (ov && ov._composerEntry && global.stage && typeof global.stage.set_key_focus === 'function') global.stage.set_key_focus(ov._composerEntry);
                     } catch (e) {}
                 } else {
-                    try { this._submitAIQuery(this._overlay ? this._overlay.getText() : ""); } catch (e) {}
+                    try { this._submitAIFromTopEntry(); } catch (e2) {}
                 }
                 return Clutter.EVENT_STOP;
             }

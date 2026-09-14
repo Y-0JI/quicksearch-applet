@@ -285,10 +285,15 @@ test('UI-3: AI Mode stays strictly separated from search UI', () => {
     assert.ok(!aiSection.includes('_buildLocals'), 'AI renderer never builds local launcher rows');
 });
 
-test('UI-3: AI Answer heading + markdown presentation', () => {
-    assert.ok(APPLET_SRC.includes('quicksearch-ai-answer-heading'), 'answer heading class');
-    assert.ok(APPLET_SRC.includes('_("\\u2728 AI Answer")') || APPLET_SRC.includes('_("✨ AI Answer")'), 'heading translated');
-    assert.ok(CSS_SRC.includes('.quicksearch-ai-answer-heading'), 'heading styled');
+test('UI-3: assistant identity header + markdown presentation', () => {
+    // 2026-09-14 redesign: the per-turn "✨ AI Answer" heading is replaced by a
+    // ChatGPT/Claude-style assistant row (✦ avatar + model name) rendered once per
+    // assistant turn, with the answer flowing below as plain text.
+    assert.ok(APPLET_SRC.includes('quicksearch-ai-assistant-header'), 'assistant header row class');
+    assert.ok(APPLET_SRC.includes('quicksearch-ai-avatar'), 'avatar class');
+    assert.ok(APPLET_SRC.includes('_("QuickSearch AI")'), 'assistant name translated');
+    assert.ok(CSS_SRC.includes('.quicksearch-ai-assistant-header'), 'assistant header styled');
+    assert.ok(CSS_SRC.includes('.quicksearch-ai-avatar'), 'avatar styled');
     const mdText = CSS_SRC.slice(CSS_SRC.indexOf('.quicksearch-ai-md-text {'), CSS_SRC.indexOf('.quicksearch-ai-md-text {') + 200);
     assert.ok(mdText.includes('padding'), 'paragraph spacing added for readability');
 });
@@ -306,18 +311,22 @@ test('UI-3: code blocks get a distinct surface with a FUNCTIONAL copy action', (
     assert.ok(APPLET_SRC.includes('St.Clipboard.get_default()'), 'copy uses the runtime-safe clipboard path');
 });
 
-test('UI-3: sources render inline (pills + View more) while keeping the popover', () => {
-    assert.ok(APPLET_SRC.includes('quicksearch-ai-source-pill'), 'source pill class');
-    assert.ok(APPLET_SRC.includes('_("View more")'), 'View more translated');
+test('UI-3: sources render as one popup button below the answer, popover kept', () => {
+    // 2026-09-13 redesign: no inline source cards — a single "Sources (n)" button that
+    // opens the existing popover with the full clickable list.
+    assert.ok(APPLET_SRC.includes('_("Sources") + " (" + capturedSources.length + ")"') || APPLET_SRC.includes('_("Sources") + " ("'), 'Sources (n) button label');
     assert.ok(APPLET_SRC.includes('_toggleSourcesPopover'), 'full popover still reachable');
-    assert.ok(APPLET_SRC.includes('quicksearch-ai-sources-button-viewmore'), 'view more class');
-    assert.ok(CSS_SRC.includes('.quicksearch-ai-source-pill'), 'pills styled');
+    assert.ok(APPLET_SRC.includes('quicksearch-ai-sources-button"'), 'single sources button class');
+    // inline cards/pills are gone
+    assert.ok(!APPLET_SRC.includes('quicksearch-ai-source-pill'), 'no inline source pills');
+    assert.ok(!APPLET_SRC.includes('_("View more")'), 'no View more — button opens the popover directly');
+    assert.ok(CSS_SRC.includes('.quicksearch-ai-sources-button {'), 'button styled');
+    assert.ok(CSS_SRC.includes('.quicksearch-sources-popover'), 'popover styled');
     // runtime-safe click path: no global URL API, structural gate + Gio launch intact
     const start = APPLET_SRC.indexOf('_renderSourcesForMessage(ov, sources) {');
     assert.ok(start !== -1, 'compat definition marker preserved');
     const section = APPLET_SRC.slice(start, start + 2600);
     assert.ok(!section.includes('new URL('), 'no global URL dependency');
-    assert.ok(section.includes('if (!/^https?:'), 'structural http(s) gate present');
     assert.ok(section.includes('launch_default_for_uri_async(trimmed'), 'Gio launch path intact');
 });
 
@@ -381,23 +390,19 @@ test('P1-2: roomCap is hard-bounded by actual available screen space, no dead mi
     }
 });
 
-test('P2-2: sources stay inline-compact — wrapping pills, label + View more on own lines', () => {
+test('P2-2: sources stay compact — one popup button under the answer, nothing inline', () => {
     assert.ok(APPLET_SRC.includes('quicksearch-ai-sources-wrap'), 'vertical wrap container');
     const srcIdx = APPLET_SRC.indexOf('_renderSourcesForMessage(ov, sources) {');
     const srcSection = APPLET_SRC.slice(srcIdx, srcIdx + 5000);
-    // P2 (final): pills live in a WRAPPING flow container so narrow panels / DPI /
-    // font scaling wrap to multiple lines instead of overflowing the panel
-    assert.ok(srcSection.includes('Clutter.FlowLayout'), 'pills use a wrapping flow layout');
-    assert.ok(srcSection.includes('orientation: Clutter.Orientation.HORIZONTAL'), 'flow wraps horizontally');
-    assert.ok(srcSection.includes('flowBox.add_actor(pill)') || srcSection.includes('flowBox.add_child(pill)'), 'pills added to the flow container');
-    assert.ok(srcSection.includes('flowBox = null') && srcSection.includes('St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-sources-row"'), 'safe fallback to a plain row when FlowLayout is unavailable');
-    assert.ok(srcSection.includes('wrap.add(headRow)'), '🔗 Sources label on its own line above the pills');
-    assert.ok(srcSection.includes('wrap.add(moreBtn)'), 'View more added BELOW the pills');
-    assert.ok(srcSection.includes('set_ellipsize(Pango.EllipsizeMode.END)'), 'pill labels ellipsize');
-    assert.ok(srcSection.includes('title.length > 28'), 'JS caps source titles');
-    assert.ok(CSS_SRC.includes('max-width: 180px'), 'pill label width capped in CSS');
+    // 2026-09-13: single button below the answer opens the popover; no inline cards,
+    // no flow layout, no per-source widgets in the chat body.
+    assert.ok(srcSection.includes('wrap.add(btn)'), 'Sources button added below the answer');
+    assert.ok(srcSection.includes('_toggleSourcesPopover'), 'button opens the sources popover');
+    assert.ok(!srcSection.includes('Clutter.FlowLayout'), 'no flow layout needed anymore');
+    assert.ok(!srcSection.includes('quicksearch-ai-source-card'), 'no inline source cards');
     assert.ok(CSS_SRC.includes('.quicksearch-ai-sources-wrap'), 'wrap styled');
-    // still metadata, never a search-results list / sidebar / big card
+    assert.ok(!CSS_SRC.includes('.quicksearch-ai-source-card'), 'card styles removed');
+    // still metadata, never a search-results list / sidebar
     assert.ok(!srcSection.includes('_buildRow'), 'sources never build launcher rows');
     assert.ok(!srcSection.includes('sidebar'), 'no sidebar');
 });

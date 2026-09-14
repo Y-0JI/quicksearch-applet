@@ -10,7 +10,11 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const APPLET_SRC = fs.readFileSync(path.join(ROOT, 'applet.js'), 'utf8');
 
-test('AI idle sizes dialogLayout exactly like search idle (no pill jump)', () => {
+test('AI idle sizes the chat pane (empty state + composer), not an empty shell', () => {
+    // 2026-09-14 redesign: ai-input is no longer a collapsed shell — the AI pane shows
+    // the empty state (greeting + suggestions) + the always-live composer, so the AI
+    // idle branch delegates to _syncAiPaneGeometry like the chat path. The pill anchor
+    // itself stays pinned (margin_top re-assert) and the dialog auto-sizes (-1).
     const geoIdx = APPLET_SRC.indexOf('_syncContentGeometry() {');
     assert.ok(geoIdx !== -1, 'syncContentGeometry exists');
     const geo = APPLET_SRC.slice(geoIdx, geoIdx + 6000);
@@ -19,7 +23,8 @@ test('AI idle sizes dialogLayout exactly like search idle (no pill jump)', () =>
     const retIdx = geo.indexOf('return;', aiIdx);
     assert.ok(retIdx !== -1 && retIdx > aiIdx, 'AI no-conversation early return exists');
     const aiBranch = geo.slice(aiIdx, retIdx);
-    assert.ok(aiBranch.includes('dialogLayout.set_height'), 'AI idle sets dialog height like search idle');
-    assert.ok(aiBranch.includes('dialogLayout.set_size'), 'AI idle sets dialog size like search idle');
-    assert.ok(aiBranch.includes('queue_relayout'), 'AI idle queues relayout like search idle');
+    assert.ok(aiBranch.includes('_syncAiPaneGeometry()'), 'AI idle sizes the pane (empty state + composer)');
+    assert.ok(aiBranch.includes('set_margin_top(needTop)'), 'pill anchor re-assert kept (no pill jump)');
+    assert.ok(aiBranch.includes('ov._aiScroll.set_size(w, 0)'), 'conversation scroll stays zeroed in ai-input');
+    assert.ok(!aiBranch.includes('ov._aiPane.set_size(w, 0)'), 'pane is NOT collapsed to an empty shell anymore');
 });

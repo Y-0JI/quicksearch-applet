@@ -107,6 +107,36 @@ test('live-data fallback: streaming outage + live stock query -> grounded stream
     assert.ok(groundedStream, 'grounded (second) stream ran');
 });
 
+test('live-data fallback: generic no-ticker stock query ("harga saham") -> IDX market snapshot', async () => {
+    // regression: a generic stock question without a ticker used to die with invalid_query;
+    // now it grounds from a snapshot of IHSG + major liquid IDX stocks, tolerant of
+    // individual quote failures.
+    const syms = [];
+    const provider = groundedAnswerProvider();
+    const engine = createAISearchEngine({
+        provider,
+        webSearchTool: failingTool(),
+        enableGrounding: true,
+        liveDataFallback: true,
+        liveDataHttpGet: (url, canc, cb) => {
+            const m = /\/chart\/([^?]+)/.exec(url);
+            const sym = m ? decodeURIComponent(m[1]) : '?';
+            syms.push(sym);
+            if (sym === 'ASII.JK') return setTimeout(() => cb(new Error('quote failed')), 1); // tolerance check
+            const body = JSON.stringify({ chart: { result: [{ meta: { symbol: sym, regularMarketPrice: 1000, chartPreviousClose: 990, currency: 'IDR', shortName: sym } }] } });
+            setTimeout(() => cb(null, body, { status: 200 }), 1);
+        }
+    });
+    const out = await new Promise((resolve) => {
+        engine.search('harga saham hari ini', { onAnswer: (d) => resolve({ got: d }), onError: (e) => resolve({ err: e }) });
+    });
+    assert.ok(out.got, 'answer delivered via market snapshot, got: ' + JSON.stringify(out.err || {}));
+    assert.equal(out.got.grounded, true, 'snapshot counts as grounding');
+    assert.equal(out.got.sources.length, 4, '5 quotes attempted, 1 fails -> 4 sources');
+    assert.ok(syms.indexOf('^JKSE') >= 0, 'IHSG included in the snapshot');
+    assert.ok(out.got.sources.some((s) => /JKSE/.test(s.title)), 'IHSG source present');
+});
+
 test('live-data fallback: API also fails -> honest outage error remains', async () => {
     const provider = groundedAnswerProvider();
     const engine = createAISearchEngine({

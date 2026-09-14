@@ -160,9 +160,14 @@
         }
 
         // ── stocks / crypto / fx (Yahoo chart API, keyless) ─────────────────────
-        function fetchStock(q, cancellable) {
-            const sym = _extractSymbol(q);
-            if (!sym) throw _makeError('no symbol in query', 'invalid_query');
+        // Generic stock question without a ticker ("harga saham hari ini") -> market snapshot
+        // of the IDX composite + major liquid IDX stocks, so the AI can still summarize real data.
+        const IDX_WATCHLIST = ['BBRI.JK', 'BBCA.JK', 'TLKM.JK', 'ASII.JK'];
+        // allSettled-like helper (Promise.allSettled may be missing in older GJS)
+        function _settleAll(promises) {
+            return Promise.all(promises.map((p) => p.then((v) => ({ ok: true, v: v })).catch((e) => ({ ok: false, e: e }))));
+        }
+        function _quoteSymbol(sym, cancellable) {
             const url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(sym) + '?interval=1d&range=5d';
             return httpGetJson(url, cancellable).then((j) => {
                 const r = j && j.chart && j.chart.result && j.chart.result[0];
@@ -178,8 +183,20 @@
                     snippet += ' (' + (diff >= 0 ? '+' : '') + diff.toFixed(2) + ', ' + (diff >= 0 ? '+' : '') + pct + '% vs penutupan sebelumnya ' + prev + ')';
                 }
                 if (meta.regularMarketTime) snippet += ' | data per: ' + new Date(meta.regularMarketTime * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
-                return [{ title: (meta.shortName || meta.longName || sym) + ' (' + sym + ') — Yahoo Finance', url: 'https://finance.yahoo.com/quote/' + encodeURIComponent(sym), snippet: snippet }];
+                return { title: (meta.shortName || meta.longName || sym) + ' (' + sym + ') — Yahoo Finance', url: 'https://finance.yahoo.com/quote/' + encodeURIComponent(sym), snippet: snippet };
             });
+        }
+        function fetchStock(q, cancellable) {
+            const sym = _extractSymbol(q);
+            if (!sym) {
+                // no ticker mentioned -> market snapshot: IHSG + liquid IDX blue chips
+                return _settleAll(['^JKSE'].concat(IDX_WATCHLIST).map((s) => _quoteSymbol(s, cancellable))).then((out) => {
+                    const sources = out.filter((o) => o.ok).map((o) => o.v);
+                    if (!sources.length) throw _makeError('yahoo finance unavailable', 'backend_unavailable');
+                    return sources;
+                });
+            }
+            return _quoteSymbol(sym, cancellable).then((src) => [src]);
         }
 
         // ── news (RSS, keyless) ──────────────────────────────────────────────────
