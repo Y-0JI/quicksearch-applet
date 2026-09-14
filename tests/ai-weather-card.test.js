@@ -24,12 +24,15 @@ test('live-data fallback: weather fetch returns structured snapshot + sources', 
                 cb(null, JSON.stringify({ results: [{ name: 'Bandung', country: 'Indonesia', latitude: -6.9, longitude: 107.6 }] }));
             } else {
                 cb(null, JSON.stringify({
-                    current: { temperature_2m: 23.4, relative_humidity_2m: 78, weather_code: 61, wind_speed_10m: 9.2 },
+                    current: { temperature_2m: 23.4, relative_humidity_2m: 78, apparent_temperature: 25.1, precipitation: 0.2, weather_code: 61, wind_speed_10m: 9.2, wind_direction_10m: 135, wind_gusts_10m: 14.5 },
                     daily: {
                         time: ['2026-09-14', '2026-09-15', '2026-09-16'],
                         temperature_2m_max: [31, 30, 29],
                         temperature_2m_min: [22, 22, 21],
-                        weather_code: [61, 80, 3]
+                        weather_code: [61, 80, 3],
+                        precipitation_probability_max: [40, 70, 10],
+                        sunrise: ['2026-09-14T05:58', '2026-09-15T05:58', '2026-09-16T05:59'],
+                        sunset: ['2026-09-14T17:52', '2026-09-15T17:51', '2026-09-16T17:50']
                     }
                 }));
             }
@@ -46,6 +49,12 @@ test('live-data fallback: weather fetch returns structured snapshot + sources', 
         assert.equal(d.daily.length, 3);
         assert.equal(d.daily[0].max, 31);
         assert.equal(d.daily[2].code, 3);
+        assert.equal(d.current.feelsLike, 25.1);
+        assert.equal(d.current.windDir, 135);
+        assert.equal(d.current.gusts, 14.5);
+        assert.equal(d.daily[0].precipProb, 40);
+        assert.equal(d.sunrise, '05:58');
+        assert.equal(d.sunset, '17:52');
     });
 });
 
@@ -80,6 +89,8 @@ test('applet: weather card renderer + sparkline + WMO icon mapping exist', () =>
     assert.ok(APPLET_SRC.includes('_wmoIconName(code)'), 'WMO icon mapper present');
     assert.ok(APPLET_SRC.includes('weather-clear-symbolic') && APPLET_SRC.includes('weather-storm-symbolic'), 'symbolic icon names mapped');
     assert.ok(APPLET_SRC.includes('quicksearch-ai-weather-spark-col') && APPLET_SRC.includes('St.Bin'), 'sparkline: pure-CSS bars (St widgets only)');
+    assert.ok(APPLET_SRC.includes('_windDirName(deg)'), 'wind compass mapper present');
+    assert.ok(APPLET_SRC.includes('precipProb') && APPLET_SRC.includes('sunrise'), 'card renders rain chance + sun times');
     assert.ok(!APPLET_SRC.includes('$dispose'), 'no $dispose anywhere: boxed ownership games SIGSEGV/SIGABRT Cinnamon at GC');
     assert.ok(!APPLET_SRC.includes('get_context') && !APPLET_SRC.includes('DrawingArea'), 'no cairo drawing surface in applet');
     // card renders ABOVE the answer text inside the answer actor
@@ -135,13 +146,15 @@ test('live-data fallback: single shared HTTP transport (no second Soup stack)', 
                 cb(null, JSON.stringify({ results: [{ name: 'Bandung', country: 'Indonesia', latitude: -6.9, longitude: 107.6 }] }));
             } else {
                 cb(null, JSON.stringify({
-                    current: { temperature_2m: 23.4, relative_humidity_2m: 78, weather_code: 61, wind_speed_10m: 9.2 },
-                    daily: { time: ['2026-09-14'], temperature_2m_max: [31], temperature_2m_min: [22], weather_code: [61] }
+                    current: { temperature_2m: 23.4, relative_humidity_2m: 78, apparent_temperature: 25.1, precipitation: 0, weather_code: 61, wind_speed_10m: 9.2, wind_direction_10m: 90, wind_gusts_10m: 12 },
+                    daily: { time: ['2026-09-14'], temperature_2m_max: [31], temperature_2m_min: [22], weather_code: [61], precipitation_probability_max: [20], sunrise: ['2026-09-14T05:58'], sunset: ['2026-09-14T17:52'] }
                 }));
             }
         }
     });
     return inst.fetch('cuaca di Bandung', null).then((r) => {
         assert.ok(r && r.structured && r.structured.kind === 'weather', 'structured snapshot via injected transport');
+        assert.equal(r.structured.current.feelsLike, 25.1, 'feels-like rides along');
+        assert.equal(r.structured.daily[0].precipProb, 20, 'daily rain chance rides along');
     });
 });

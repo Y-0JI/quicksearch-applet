@@ -143,7 +143,7 @@
                 const hit = geo && geo.results && geo.results[0];
                 if (!hit) throw _makeError('location not found: ' + place, 'no_results');
                 const fUrl = 'https://api.open-meteo.com/v1/forecast?latitude=' + hit.latitude + '&longitude=' + hit.longitude +
-                    '&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,weather_code&forecast_days=3&timezone=auto';
+                    '&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,sunrise,sunset&forecast_days=3&timezone=auto';
                 return httpGetJson(fUrl, cancellable).then((f) => {
                     const c = f.current || {};
                     const d = (f.daily || {});
@@ -155,10 +155,16 @@
                         country: hit.country || null,
                         current: {
                             temperature: Number(c.temperature_2m),
+                            feelsLike: Number(c.apparent_temperature),
                             humidity: Number(c.relative_humidity_2m),
                             wind: Number(c.wind_speed_10m),
+                            windDir: Number(c.wind_direction_10m),
+                            gusts: Number(c.wind_gusts_10m),
+                            precip: Number(c.precipitation),
                             code: Number(c.weather_code)
                         },
+                        sunrise: String((d.sunrise || [])[0] || '').slice(11, 16) || null,
+                        sunset: String((d.sunset || [])[0] || '').slice(11, 16) || null,
                         daily: []
                     };
                     if (d.time) {
@@ -167,16 +173,17 @@
                                 date: String(d.time[i] || ''),
                                 min: Number((d.temperature_2m_min || [])[i]),
                                 max: Number((d.temperature_2m_max || [])[i]),
-                                code: Number((d.weather_code || [])[i])
+                                code: Number((d.weather_code || [])[i]),
+                                precipProb: Number((d.precipitation_probability_max || [])[i])
                             });
                         }
                     }
                     const lines = [];
                     lines.push('Cuaca ' + (hit.name || place) + (hit.country ? ', ' + hit.country : '') + ' saat ini: ' + _wmo(c.weather_code) +
-                        ', suhu ' + c.temperature_2m + '°C, kelembapan ' + c.relative_humidity_2m + '%, angin ' + c.wind_speed_10m + ' km/j.');
+                        ', suhu ' + c.temperature_2m + '°C, terasa ' + c.apparent_temperature + '°C, kelembapan ' + c.relative_humidity_2m + '%, angin ' + c.wind_speed_10m + ' km/j.');
                     if (d.time) {
                         for (let i = 0; i < Math.min(3, d.time.length); i++) {
-                            lines.push(d.time[i] + ': ' + _wmo((d.weather_code || [])[i]) + ', ' + (d.temperature_2m_min || [])[i] + '–' + (d.temperature_2m_max || [])[i] + '°C.');
+                            lines.push(d.time[i] + ': ' + _wmo((d.weather_code || [])[i]) + ', ' + (d.temperature_2m_min || [])[i] + '–' + (d.temperature_2m_max || [])[i] + '°C, peluang hujan ' + ((d.precipitation_probability_max || [])[i] != null ? (d.precipitation_probability_max || [])[i] : '-') + '%.');
                         }
                     }
                     return { structured: data, sources: [{ title: 'Cuaca ' + (hit.name || place) + ' — Open-Meteo', url: 'https://open-meteo.com/', snippet: lines.join(' ') }] };

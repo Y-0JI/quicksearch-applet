@@ -2006,6 +2006,13 @@ class QuickSearchApplet extends Applet.IconApplet {
         return "weather-overcast-symbolic";
     }
 
+    // Weather card: wind degrees -> 8-point Indonesian compass, pure JS.
+    _windDirName(deg) {
+        const d = Number(deg);
+        if (!isFinite(d)) return "";
+        return ["U", "TL", "T", "TG", "S", "BD", "B", "BL"][Math.round(((d % 360) + 360) % 360 / 45) % 8];
+    }
+
     // Weather card: temperature range chart built from PURE-CSS bars (2026-09-14).
     // No cairo, no Clutter.Canvas, no manual boxed disposal anywhere: both crash dumps (SIGSEGV on
     // a cairo boxed, then SIGABRT GBytes heap corruption) trace back to native boxed
@@ -2068,10 +2075,20 @@ class QuickSearchApplet extends Applet.IconApplet {
                 main.add(col);
             } catch (e) {}
             box.add(main);
-            // meta row: humidity + wind
+            // meta rows: humidity + feels-like + rain chance, wind + gusts, sun times
             try {
-                const meta = new St.Label({ text: "\ud83d\udca7 " + (isFinite(Number(cur.humidity)) ? Math.round(Number(cur.humidity)) : "--") + "%   \ud83c\udf00 " + (isFinite(Number(cur.wind)) ? Math.round(Number(cur.wind)) : "--") + " km/j", style_class: "quicksearch-ai-weather-meta" });
-                box.add(meta);
+                const todayProb = (Array.isArray(data.daily) && data.daily[0] && data.daily[0].precipProb);
+                let line1 = "\ud83d\udca7 " + (isFinite(Number(cur.humidity)) ? Math.round(Number(cur.humidity)) : "--") + "%";
+                if (isFinite(Number(cur.feelsLike))) line1 += "  \u2022  Terasa " + Math.round(Number(cur.feelsLike)) + "\u00b0";
+                if (isFinite(Number(todayProb))) line1 += "  \u2022  \ud83c\udf27 " + Math.round(Number(todayProb)) + "%";
+                box.add(new St.Label({ text: line1, style_class: "quicksearch-ai-weather-meta" }));
+                const dir = this._windDirName(cur.windDir);
+                let line2 = "\ud83d\udca8 " + (isFinite(Number(cur.wind)) ? Math.round(Number(cur.wind)) : "--") + " km/j" + (dir ? " " + dir : "");
+                if (isFinite(Number(cur.gusts))) line2 += "  \u2022  Kencang " + Math.round(Number(cur.gusts)) + " km/j";
+                box.add(new St.Label({ text: line2, style_class: "quicksearch-ai-weather-meta" }));
+                if (data.sunrise || data.sunset) {
+                    box.add(new St.Label({ text: "\ud83c\udf05 " + (data.sunrise || "--:--") + "   \ud83c\udf07 " + (data.sunset || "--:--"), style_class: "quicksearch-ai-weather-meta" }));
+                }
             } catch (e) {}
             // 3-day strip + sparkline
             const daily = Array.isArray(data.daily) ? data.daily : [];
@@ -2089,6 +2106,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                         col.add(new St.Label({ text: dayName || String(dItem.date || "").slice(5), style_class: "quicksearch-ai-weather-day-name" }));
                         try { col.add(new St.Icon({ icon_name: this._wmoIconName(dItem.code), icon_size: 18, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-weather-day-icon" })); } catch (e2) {}
                         col.add(new St.Label({ text: (isFinite(Number(dItem.min)) ? Math.round(Number(dItem.min)) : "--") + "\u2013" + (isFinite(Number(dItem.max)) ? Math.round(Number(dItem.max)) : "--") + "\u00b0", style_class: "quicksearch-ai-weather-day-temp" }));
+                        if (isFinite(Number(dItem.precipProb))) col.add(new St.Label({ text: "\ud83c\udf27" + Math.round(Number(dItem.precipProb)) + "%", style_class: "quicksearch-ai-weather-day-name" }));
                         strip.add(col);
                     }
                     box.add(strip);
