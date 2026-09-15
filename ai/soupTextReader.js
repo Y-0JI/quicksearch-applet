@@ -9,6 +9,14 @@
 // Single contract: readSoupMessageText(env, session, msg, cancellable, cb)
 //   env: { GLib, Gio } (passed in — this module imports no gi itself, stays node-safe)
 //   cb(err, text) exactly once. 10MB body cap. No UI, no provider coupling.
+//
+// setSoupRequestBodyFromText(env, msg, contentType, bodyStr) -> boolean
+//   Boxed-free REQUEST body (2026-09-15): msg.set_request_body_from_bytes needs GLib.Bytes
+//   (boxed) and finalizing that proxy SEGVs Cinnamon at GC (BoxedInstanceD2Ev, core 11:02 +
+//   11:19 — the LLM POST rides this path on EVERY query, weather included). We instead write
+//   the body through Gio.File (GObject, refcount-safe) and hand Soup an owned GInputStream via
+//   set_request_body — no boxed type ever lands on the JS heap. Returns true on success; on
+//   false the caller MUST abort the request (no Bytes fallback — that is the crash).
 (function (globalThis) {
     'use strict';
 
@@ -66,7 +74,52 @@
         } catch (e) { finish(e); }
     }
 
-    const mod = { readSoupMessageText: readSoupMessageText, MAX_BODY_CHARS: MAX_BODY_CHARS };
+    function setSoupRequestBodyFromText(env, msg, contentType, bodyStr) {
+        try {
+            const GLib = (env && env.GLib) || null;
+            const Gio = (env && env.Gio) || null;
+            if (!msg) return false;
+            if (!Gio || !Gio.File) return false;
+            if (typeof msg.set_request_body !== 'function') return false;
+            const text = String(bodyStr || '');
+            if (!text) return false;
+            let bytes = null;
+            try {
+                if (typeof TextEncoder !== 'undefined') bytes = new TextEncoder().encode(text);
+                else if (typeof imports !== 'undefined' && imports.byteArray && typeof imports.byteArray.fromString === 'function') bytes = imports.byteArray.fromString(text);
+                else { bytes = new Uint8Array(text.length); for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xFF; }
+            } catch (e) { bytes = null; }
+            if (!bytes || bytes.length === 0) return false;
+            let tmpPath = '/tmp/qs-body-' + Date.now() + '-' + Math.floor(Math.random() * 1e9) + '.tmp';
+            let file = null;
+            try { file = Gio.File.new_for_path(tmpPath); } catch (e) { return false; }
+            if (!file) return false;
+            let flags = 0;
+            try { flags = (Gio.FileCreateFlags && Gio.FileCreateFlags.REPLACE_DESTINATION) ? Gio.FileCreateFlags.REPLACE_DESTINATION : 0; } catch (e) {}
+            let ok = false;
+            try { const r = file.replace_contents(bytes, null, false, flags, null); ok = Array.isArray(r) ? !!r[0] : !!r; } catch (e) { ok = false; }
+            if (!ok) return false;
+            let stream = null;
+            try { stream = file.read(null); } catch (e) { try { file.delete(null); } catch (e2) {} return false; }
+            if (!stream) { try { file.delete(null); } catch (e) {} return false; }
+            try { msg.set_request_body(contentType, stream, bytes.length); }
+            catch (e) { try { stream.close(null); } catch (e2) {} try { file.delete(null); } catch (e3) {} return false; }
+            // Keep the stream reachable until Soup has sent the body, then close + delete.
+            try { msg._qsBodyStream = stream; msg._qsBodyFile = file; msg._qsBodyPath = tmpPath; } catch (e) {}
+            try {
+                const doCleanup = () => {
+                    try { stream.close(null); } catch (e) {}
+                    try { Gio.File.new_for_path(tmpPath).delete(null); } catch (e) {}
+                    return (GLib && GLib.SOURCE_REMOVE != null) ? GLib.SOURCE_REMOVE : false;
+                };
+                if (GLib && typeof GLib.timeout_add === 'function') GLib.timeout_add(GLib.PRIORITY_DEFAULT || 0, 10000, doCleanup);
+                else setTimeout(doCleanup, 10000);
+            } catch (e) {}
+            return true;
+        } catch (e) { return false; }
+    }
+
+    const mod = { readSoupMessageText: readSoupMessageText, setSoupRequestBodyFromText: setSoupRequestBodyFromText, MAX_BODY_CHARS: MAX_BODY_CHARS };
     if (typeof module !== 'undefined' && module.exports) module.exports = mod;
     if (globalThis) globalThis.SoupTextReader = mod;
 })(typeof global !== 'undefined' ? global : this);

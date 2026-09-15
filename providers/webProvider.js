@@ -13,40 +13,14 @@ const soupTextReader = (() => {
     try { return require('ai/soupTextReader.js'); } catch (e) { return null; }
 })();
 function _setRequestBodyBoxedFree(msg, contentType, bodyStr) {
-    try {
-        if (!msg || !bodyStr) return false;
-        if (!Gio || !Gio.File) return false;
-        if (typeof msg.set_request_body !== 'function') return false;
-        let bytes = null;
-        try {
-            if (typeof TextEncoder !== 'undefined') bytes = new TextEncoder().encode(String(bodyStr));
-            else if (typeof imports !== 'undefined' && imports.byteArray && typeof imports.byteArray.fromString === 'function') bytes = imports.byteArray.fromString(String(bodyStr));
-            else { const s = String(bodyStr); bytes = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i) & 0xFF; }
-        } catch (e) { bytes = null; }
-        if (!bytes || bytes.length === 0) return false;
-        let tmpPath = '/tmp/qs-body-' + Date.now() + '-' + Math.floor(Math.random() * 1e9) + '.tmp';
-        let file = null;
-        try { file = Gio.File.new_for_path(tmpPath); } catch (e) { return false; }
-        if (!file) return false;
-        try {
-            let flags = 0;
-            try { flags = Gio.FileCreateFlags && Gio.FileCreateFlags.REPLACE_DESTINATION ? Gio.FileCreateFlags.REPLACE_DESTINATION : 0; } catch (e) {}
-            let ok = false;
-            try { const r = file.replace_contents(bytes, null, false, flags, null); ok = Array.isArray(r) ? !!r[0] : !!r; } catch (e) { ok = false; }
-            if (!ok) return false;
-        } catch (e) { return false; }
-        let stream = null;
-        try { stream = file.read(null); } catch (e) { try { file.delete(null); } catch (e2) {} return false; }
-        if (!stream) { try { file.delete(null); } catch (e) {} return false; }
-        try { msg.set_request_body(contentType, stream, bytes.length); } catch (e) { try { stream.close(null); } catch (e2) {} try { file.delete(null); } catch (e2) {} return false; }
-        try { msg._qsBodyStream = stream; msg._qsBodyFile = file; msg._qsBodyPath = tmpPath; } catch (e) {}
-        try {
-            const doCleanup = () => { try { stream.close(null); } catch (e) {} try { Gio.File.new_for_path(tmpPath).delete(null); } catch (e) {} return GLib ? GLib.SOURCE_REMOVE : false; };
-            if (GLib && typeof GLib.timeout_add === 'function') GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10000, doCleanup);
-            else setTimeout(() => { try { stream.close(null); } catch (e) {} try { Gio.File.new_for_path(tmpPath).delete(null); } catch (e) {} }, 10000);
-        } catch (e) {}
-        return true;
-    } catch (e) { return false; }
+    // Boxed-free request body (2026-09-15): ONE implementation lives in ai/soupTextReader.js
+    // (Gio.File + set_request_body(stream) — GObject only). set_request_body_from_bytes needs
+    // GLib.Bytes (boxed) and its finalizer SEGVs Cinnamon at GC, so there is deliberately NO
+    // fallback: if the boxed-free path fails, the request aborts with an error instead.
+    if (soupTextReader && typeof soupTextReader.setSoupRequestBodyFromText === 'function') {
+        return soupTextReader.setSoupRequestBodyFromText({ GLib: GLib, Gio: Gio }, msg, contentType, bodyStr);
+    }
+    return false;
 }
 
 const REQUEST_TIMEOUT_MS = 4000;
@@ -329,13 +303,8 @@ function createWebProvider(helpers) {
             const msg = Soup.Message.new('POST', url);
             if (!msg) return onResult(new Error('bad-url'));
             if (!_setRequestBodyBoxedFree(msg, 'application/x-www-form-urlencoded', String(body))) {
-                if (GLib) {
-                    try { msg.set_request_body_from_bytes('application/x-www-form-urlencoded', GLib.Bytes.new(String(body))); }
-                    catch (e) { try { msg.set_request_body_from_bytes('application/x-www-form-urlencoded', new GLib.Bytes(String(body))); } catch (e2) {} }
-                } else {
-                    try { msg.set_request_body_from_bytes('application/x-www-form-urlencoded', new (require('gi.GLib').Bytes)(String(body))); }
-                    catch (e) { }
-                }
+                // No Bytes fallback: boxed GLib.Bytes SEGVs Cinnamon at GC — abort instead.
+                return onResult(new Error('boxed-free request body unavailable'));
             }
             if (!soupTextReader || typeof soupTextReader.readSoupMessageText !== 'function') return onResult(new Error('no crash-free soup reader'));
             soupTextReader.readSoupMessageText({ GLib: GLib, Gio: Gio }, s, msg, cancellable, (err, text) => {
@@ -511,13 +480,10 @@ function createWebProvider(helpers) {
                         msg.request_headers.append('X-API-KEY', googleApiKey);
                         msg.request_headers.append('Content-Type', 'application/json');
                         if (!_setRequestBodyBoxedFree(msg, 'application/json', String(body))) {
-                            if (GLib) {
-                                try { msg.set_request_body_from_bytes('application/json', GLib.Bytes.new(String(body))); }
-                                catch (e) { try { msg.set_request_body_from_bytes('application/json', new GLib.Bytes(String(body))); } catch (e2) {} }
-                            } else {
-                                try { msg.set_request_body_from_bytes('application/json', new (require('gi.GLib').Bytes)(String(body))); }
-                                catch (e) { }
-                            }
+                            // No Bytes fallback: boxed GLib.Bytes SEGVs Cinnamon at GC — abort instead.
+                            serperDone = true; _cancelTimeout(serperTid);
+                            deliver([makeErrorFallback('Google search tidak tersedia', 'Periksa koneksi')]);
+                            return;
                         }
                         let serperDone = false;
                         let serperTid = _scheduleTimeout(REQUEST_TIMEOUT_MS, () => {

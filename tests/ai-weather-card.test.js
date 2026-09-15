@@ -210,6 +210,43 @@ test('crash 2026-09-15 SEGV: message-level GBytes reads eliminated (BoxedInstanc
     }
 });
 
+test('crash 2026-09-15 SEGV (11:02/11:19 cores): boxed GLib.Bytes request bodies eliminated', () => {
+    // The 2026-09-15 morning fix removed boxed GBytes on the RESPONSE side but left
+    // set_request_body_from_bytes(GLib.Bytes...) fallbacks on the REQUEST side. The LLM
+    // POST rides that path on EVERY AI query (weather included): finalizing the boxed
+    // proxy SEGVs Cinnamon at GC (BoxedInstanceD2Ev -> g_mutex_lock). Transports must now
+    // use the shared boxed-free helper and abort the request when it fails.
+    const WST = fs.readFileSync(path.join(ROOT, 'ai/webSearchTool.js'), 'utf8');
+    const NINE = fs.readFileSync(path.join(ROOT, 'ai/nineRouterProvider.js'), 'utf8');
+    const WP = fs.readFileSync(path.join(ROOT, 'providers/webProvider.js'), 'utf8');
+    const reader = require('../ai/soupTextReader.js');
+    assert.equal(typeof reader.setSoupRequestBodyFromText, 'function', 'shared boxed-free request-body helper exported');
+    for (const [name, src] of [['webSearchTool', WST], ['nineRouter', NINE], ['webProvider', WP]]) {
+        assert.ok(!src.includes('GLib.Bytes.new('), name + ': no boxed GLib.Bytes.new');
+        assert.ok(!src.includes('new GLib.Bytes('), name + ': no boxed GLib.Bytes constructor');
+        assert.ok(!src.includes("new (require('gi.GLib').Bytes)("), name + ': no inline gi.GLib Bytes constructor');
+        assert.ok(src.includes("soupTextReader.setSoupRequestBodyFromText"), name + ': request bodies go through the boxed-free helper');
+    }
+    // helper honors the contract on a mocked Gio (node-safe): file body + set_request_body(stream)
+    const calls = { replace: 0, read: 0, set: 0, del: 0, cleanupScheduled: false };
+    const fakeStream = { close: () => {} };
+    const fakeFile = {
+        replace_contents: (bytes) => { calls.replace++; assert.ok(bytes && bytes.length > 0, 'body bytes written'); return [true]; },
+        read: () => { calls.read++; return fakeStream; },
+        delete: () => { calls.del++; }
+    };
+    const fakeGio = {
+        File: { new_for_path: () => fakeFile },
+        FileCreateFlags: { REPLACE_DESTINATION: 0 }
+    };
+    const fakeGLib = { PRIORITY_DEFAULT: 0, timeout_add: () => { calls.cleanupScheduled = true; return 1; }, SOURCE_REMOVE: false };
+    const fakeMsg = { set_request_body: (ct, stream, len) => { calls.set++; assert.equal(ct, 'application/json'); assert.equal(stream, fakeStream); assert.equal(len, Buffer.byteLength('{"q":"cuaca"}')); } };
+    assert.equal(reader.setSoupRequestBodyFromText({ GLib: fakeGLib, Gio: fakeGio }, fakeMsg, 'application/json', '{"q":"cuaca"}'), true, 'boxed-free body set');
+    assert.equal(calls.cleanupScheduled, true, 'body stream cleanup scheduled (no Bytes anywhere)');
+    // missing Gio -> false (caller aborts), never a Bytes fallback
+    assert.equal(reader.setSoupRequestBodyFromText({ GLib: null, Gio: null }, fakeMsg, 'application/json', 'x'), false, 'no Gio -> false');
+});
+
 test('soupTextReader: contract on mocked Soup/Gio (node-safe)', () => {
     const reader = require('../ai/soupTextReader.js');
     assert.equal(typeof reader.readSoupMessageText, 'function', 'exports reader');
