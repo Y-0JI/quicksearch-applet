@@ -48,7 +48,51 @@ let Gio = null, GLib = null, Soup = null;
 try { Gio = require('gi.Gio'); } catch (e) {}
 try { GLib = require('gi.GLib'); } catch (e) {}
 try { Soup = require('gi.Soup'); } catch (e) {}
-function __setGioSoupForTest(g, gl, s) { Gio = g; GLib = gl; Soup = s; }
+const soupTextReader = (() => {
+    try { return require('./soupTextReader.js'); } catch (e) {}
+    try { return require('./ai/soupTextReader.js'); } catch (e) {}
+    try { return require('ai/soupTextReader.js'); } catch (e) { return null; }
+})();
+function __setGioSoupForTest(g, gl, s) { Gio = g; GLib = gl; Soup = s; _sharedSoupSession = null; }
+// Boxed-free request body (2026-09-15): avoid GLib.Bytes boxed SEGV.
+// MemoryInputStream.new_from_data/add_data not introspectable in CJS (DestroyNotify).
+// Use Gio.File (GObject) + set_request_body(stream) — only proven boxed-free path in CJS.
+function _setRequestBodyBoxedFree(msg, contentType, bodyStr) {
+    try {
+        if (!msg || !bodyStr) return false;
+        if (!Gio || !Gio.File) return false;
+        if (typeof msg.set_request_body !== 'function') return false;
+        let bytes = null;
+        try {
+            if (typeof TextEncoder !== 'undefined') bytes = new TextEncoder().encode(String(bodyStr));
+            else if (typeof imports !== 'undefined' && imports.byteArray && typeof imports.byteArray.fromString === 'function') bytes = imports.byteArray.fromString(String(bodyStr));
+            else { const s = String(bodyStr); bytes = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i) & 0xFF; }
+        } catch (e) { bytes = null; }
+        if (!bytes || bytes.length === 0) return false;
+        let tmpPath = '/tmp/qs-body-' + Date.now() + '-' + Math.floor(Math.random() * 1e9) + '.tmp';
+        let file = null;
+        try { file = Gio.File.new_for_path(tmpPath); } catch (e) { return false; }
+        if (!file) return false;
+        try {
+            let flags = 0;
+            try { flags = Gio.FileCreateFlags && Gio.FileCreateFlags.REPLACE_DESTINATION ? Gio.FileCreateFlags.REPLACE_DESTINATION : 0; } catch (e) {}
+            let ok = false;
+            try { const r = file.replace_contents(bytes, null, false, flags, null); ok = Array.isArray(r) ? !!r[0] : !!r; } catch (e) { ok = false; }
+            if (!ok) return false;
+        } catch (e) { return false; }
+        let stream = null;
+        try { stream = file.read(null); } catch (e) { try { file.delete(null); } catch (e2) {} return false; }
+        if (!stream) { try { file.delete(null); } catch (e) {} return false; }
+        try { msg.set_request_body(contentType, stream, bytes.length); } catch (e) { try { stream.close(null); } catch (e2) {} try { file.delete(null); } catch (e2) {} return false; }
+        try { msg._qsBodyStream = stream; msg._qsBodyFile = file; msg._qsBodyPath = tmpPath; } catch (e) {}
+        try {
+            const doCleanup = () => { try { stream.close(null); } catch (e) {} try { Gio.File.new_for_path(tmpPath).delete(null); } catch (e) {} return GLib ? GLib.SOURCE_REMOVE : false; };
+            if (GLib && typeof GLib.timeout_add === 'function') GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10000, doCleanup);
+            else setTimeout(() => { try { stream.close(null); } catch (e) {} try { Gio.File.new_for_path(tmpPath).delete(null); } catch (e) {} }, 10000);
+        } catch (e) {}
+        return true;
+    } catch (e) { return false; }
+}
 const DEFAULT_TIMEOUT_MS = 4000;
 // Runtime version marker — logged when the production tool is created so runtime logs can prove
 // which build of webSearchTool Cinnamon is actually executing (stale applet copies otherwise look
@@ -447,22 +491,53 @@ function createMockWebSearchTool(opts) {
     return { search, __callCount: () => callCount, __backend: backend, __handler: handler };
 }
 
+// ponytail: SATU Soup.Session dipakai ulang semua GET. Session per-request yang dibuang
+// picu crash GC Cinnamon (BoxedInstanceD2Ev/g_bytes_unref, core 5x 2026-09-14).
+// Naikkan ke pool/klien sendiri bila perlu isolasi/timeout berbeda.
+let _sharedSoupSession = null;
+function _sharedSoupSessionGet(Soup, timeoutSecs) {
+    try {
+        if (!_sharedSoupSession) {
+            _sharedSoupSession = new Soup.Session();
+            try { _sharedSoupSession.timeout = timeoutSecs; } catch (e) {}
+        }
+        return _sharedSoupSession;
+    } catch (e) { return null; }
+}
+
 function _defaultHttpGet(url, cancellable, cb) {
     try {
         if (Soup && typeof Soup.Session !== 'undefined') {
-            let session = new Soup.Session();
-            try { session.timeout = Math.ceil(DEFAULT_TIMEOUT_MS / 1000); } catch (e) {}
+            const session = _sharedSoupSessionGet(Soup, Math.ceil(DEFAULT_TIMEOUT_MS / 1000)) || new Soup.Session();
             const msg = Soup.Message.new('GET', url);
             if (!msg) return cb(new Error('bad-url'));
             try { msg.request_headers.append('User-Agent', 'Mozilla/5.0 QuickSearch'); } catch (e) {}
             const resolved = _resolveSoupCancellable(cancellable);
             const soupCancellable = resolved.soupCancellable;
             const bridgeCleanup = resolved.bridgeCleanup;
-            session.send_and_read_async(msg, GLib ? GLib.PRIORITY_DEFAULT : 0, soupCancellable, (sess, res) => {
+            let done = false;
+            const finishOnce = (err, text, meta) => {
+                if (done) return; done = true;
+                try { _cancelTimeout(tid); } catch (e) {}
                 try { bridgeCleanup(); } catch (e) {}
+                if (_isCancelled(cancellable)) { const c = new Error('cancelled'); c.code = 'cancelled'; return cb(c); }
+                return cb(err, text, meta);
+            };
+            const tid = _scheduleTimeout(DEFAULT_TIMEOUT_MS, () => {
+                if (done) return; done = true;
+                try { bridgeCleanup(); } catch (e) {}
+                try { if (soupCancellable && typeof soupCancellable.cancel === 'function') soupCancellable.cancel(); } catch (e) {}
+                const e = new Error('web search timeout'); e.code = 'backend_unavailable'; e.stage = 'web_search_request'; e._stage = 'web_search_request';
+                return cb(e);
+            });
+            const readText = (soupTextReader && typeof soupTextReader.readSoupMessageText === 'function')
+                ? soupTextReader.readSoupMessageText.bind(soupTextReader)
+                : null;
+            if (!readText) return finishOnce(new Error('no crash-free soup reader'));
+            readText({ GLib: GLib, Gio: Gio }, session, msg, soupCancellable, (rErr, text) => {
+                if (done) return;
                 try {
-                    const bytes = sess.send_and_read_finish(res);
-                    const text = new TextDecoder().decode(bytes.get_data());
+                    if (rErr) return finishOnce(rErr);
                     let status = 0;
                     try {
                         if (typeof msg.get_status === 'function') status = msg.get_status();
@@ -486,20 +561,22 @@ function _defaultHttpGet(url, cancellable, cb) {
                         e.contentType = ct;
                         e.stage = 'web_search_request';
                         e._stage = 'web_search_request';
-                        return cb(e);
+                        return finishOnce(e);
                     }
-                    cb(null, text, { status: status, contentType: ct });
-                } catch (e) { cb(e); }
+                    finishOnce(null, text, { status: status, contentType: ct });
+                } catch (e) { finishOnce(e); }
             });
             return;
         }
         if (typeof fetch === 'function') {
             const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
             let timeoutId = null;
+            let fetchDone = false;
             if (ctrl) timeoutId = setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, DEFAULT_TIMEOUT_MS);
             const init = { method: 'GET', headers: { 'User-Agent': 'Mozilla/5.0 QuickSearch' } };
             if (ctrl) init.signal = ctrl.signal;
             fetch(url, init).then(r => r.text().then(t => {
+                if (fetchDone) return; fetchDone = true;
                 if (timeoutId) clearTimeout(timeoutId);
                 if (!r.ok) {
                     const e = new Error('HTTP ' + r.status);
@@ -516,6 +593,7 @@ function _defaultHttpGet(url, cancellable, cb) {
                 try { ctOk = r.headers.get('Content-Type') || ''; } catch (e2) { ctOk = ''; }
                 cb(null, t, { status: r.status, contentType: ctOk });
             })).catch(e => {
+                if (fetchDone) return; fetchDone = true;
                 if (timeoutId) clearTimeout(timeoutId);
                 cb(e);
             });
@@ -693,28 +771,29 @@ function _createProductionBackend(config) {
                 }
                 if (Soup) {
                     try {
-                        let session = new Soup.Session();
-                        try { session.timeout = Math.ceil(DEFAULT_TIMEOUT_MS/1000); } catch(e){}
+                        const session = _sharedSoupSessionGet(Soup, Math.ceil(DEFAULT_TIMEOUT_MS/1000)) || new Soup.Session();
                         const msg = Soup.Message.new('POST', url);
                         if (!msg) { const e=new Error('bad-url'); e.code='backend_unavailable'; return cb(e); }
                         msg.request_headers.append('X-API-KEY', googleApiKey);
                         msg.request_headers.append('Content-Type', 'application/json');
-                        if (GLib) {
-                            try { msg.set_request_body_from_bytes('application/json', GLib.Bytes.new(String(body))); }
-                            catch(e){ msg.set_request_body_from_bytes('application/json', new GLib.Bytes(String(body))); }
+                        if (!_setRequestBodyBoxedFree(msg, 'application/json', body)) {
+                            if (GLib) {
+                                try { msg.set_request_body_from_bytes('application/json', GLib.Bytes.new(String(body))); }
+                                catch(e){ msg.set_request_body_from_bytes('application/json', new GLib.Bytes(String(body))); }
+                            }
                         }
                         const resolvedG = _resolveSoupCancellable(cancellable);
                         const soupCancellableG = resolvedG.soupCancellable;
                         const bridgeCleanupG = resolvedG.bridgeCleanup;
                         let done=false;
                         let tid=_scheduleTimeout(DEFAULT_TIMEOUT_MS, ()=>{ if(done) return; done=true; try { bridgeCleanupG(); } catch(e) {} try { if (soupCancellableG && typeof soupCancellableG.cancel === 'function') soupCancellableG.cancel(); } catch(e) {} const e=new Error('Google request timeout'); e.code='backend_unavailable'; cb(e); });
-                        session.send_and_read_async(msg, GLib?GLib.PRIORITY_DEFAULT:0, soupCancellableG, (sess,res)=>{
+                        if (!soupTextReader || typeof soupTextReader.readSoupMessageText !== 'function') { const e=new Error('no crash-free soup reader'); e.code='backend_unavailable'; return cb(e); }
+                        soupTextReader.readSoupMessageText({ GLib: GLib, Gio: Gio }, session, msg, soupCancellableG, (rErrG, dataStr)=>{
                             try { bridgeCleanupG(); } catch(e) {}
                             if(done) return; done=true; _cancelTimeout(tid);
                             if(_isCancelled(cancellable) || _isCancelled(soupCancellableG)) return;
                             try {
-                                const bytes=sess.send_and_read_finish(res);
-                                const dataStr=new TextDecoder().decode(bytes.get_data());
+                                if (rErrG) { const e2=new Error('Invalid response'); e2.code='invalid_response'; return cb(e2); }
                                 const status=msg.get_status();
                                 if(status===429){ const e=new Error('rate limited'); e.code='backend_unavailable'; return cb(e); }
                                 if(status>=400){ const e=new Error('HTTP '+status); e.code='backend_unavailable'; return cb(e); }

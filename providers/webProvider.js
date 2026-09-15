@@ -6,6 +6,48 @@ let Gio = null, GLib = null, Soup = null;
 try { Gio = require('gi.Gio'); } catch (e) {}
 try { GLib = require('gi.GLib'); } catch (e) {}
 try { Soup = require('gi.Soup'); } catch (e) {}
+const soupTextReader = (() => {
+    try { return require('../ai/soupTextReader.js'); } catch (e) {}
+    try { return require('./soupTextReader.js'); } catch (e) {}
+    try { return require('../ai/ai/soupTextReader.js'); } catch (e) {}
+    try { return require('ai/soupTextReader.js'); } catch (e) { return null; }
+})();
+function _setRequestBodyBoxedFree(msg, contentType, bodyStr) {
+    try {
+        if (!msg || !bodyStr) return false;
+        if (!Gio || !Gio.File) return false;
+        if (typeof msg.set_request_body !== 'function') return false;
+        let bytes = null;
+        try {
+            if (typeof TextEncoder !== 'undefined') bytes = new TextEncoder().encode(String(bodyStr));
+            else if (typeof imports !== 'undefined' && imports.byteArray && typeof imports.byteArray.fromString === 'function') bytes = imports.byteArray.fromString(String(bodyStr));
+            else { const s = String(bodyStr); bytes = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i) & 0xFF; }
+        } catch (e) { bytes = null; }
+        if (!bytes || bytes.length === 0) return false;
+        let tmpPath = '/tmp/qs-body-' + Date.now() + '-' + Math.floor(Math.random() * 1e9) + '.tmp';
+        let file = null;
+        try { file = Gio.File.new_for_path(tmpPath); } catch (e) { return false; }
+        if (!file) return false;
+        try {
+            let flags = 0;
+            try { flags = Gio.FileCreateFlags && Gio.FileCreateFlags.REPLACE_DESTINATION ? Gio.FileCreateFlags.REPLACE_DESTINATION : 0; } catch (e) {}
+            let ok = false;
+            try { const r = file.replace_contents(bytes, null, false, flags, null); ok = Array.isArray(r) ? !!r[0] : !!r; } catch (e) { ok = false; }
+            if (!ok) return false;
+        } catch (e) { return false; }
+        let stream = null;
+        try { stream = file.read(null); } catch (e) { try { file.delete(null); } catch (e2) {} return false; }
+        if (!stream) { try { file.delete(null); } catch (e) {} return false; }
+        try { msg.set_request_body(contentType, stream, bytes.length); } catch (e) { try { stream.close(null); } catch (e2) {} try { file.delete(null); } catch (e2) {} return false; }
+        try { msg._qsBodyStream = stream; msg._qsBodyFile = file; msg._qsBodyPath = tmpPath; } catch (e) {}
+        try {
+            const doCleanup = () => { try { stream.close(null); } catch (e) {} try { Gio.File.new_for_path(tmpPath).delete(null); } catch (e) {} return GLib ? GLib.SOURCE_REMOVE : false; };
+            if (GLib && typeof GLib.timeout_add === 'function') GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10000, doCleanup);
+            else setTimeout(() => { try { stream.close(null); } catch (e) {} try { Gio.File.new_for_path(tmpPath).delete(null); } catch (e) {} }, 10000);
+        } catch (e) {}
+        return true;
+    } catch (e) { return false; }
+}
 
 const REQUEST_TIMEOUT_MS = 4000;
 
@@ -263,20 +305,19 @@ function createWebProvider(helpers) {
     }
 
     // Default transports: session-scoped closures (BUG A fix)
+    // Boxed-free (2026-09-15): send_and_read_finish returns GBytes (boxed → SEGV at GC).
+    // Use soupTextReader (Gio.DataInputStream + read_line_finish_utf8, plain JS string).
     function scopedHttpGet(url, cancellable, onResult) {
-            try {
-                const s = ensureSession();
-                if (!s) return onResult(new Error('no-soup'));
-                const msg = Soup.Message.new('GET', url);
-                if (!msg) return onResult(new Error('bad-url'));
-                // Bing (and some endpoints) reject requests without a User-Agent;
-                // a generic browser UA keeps the no-credential HTML scrape working
-                try { msg.request_headers.append('User-Agent', 'Mozilla/5.0 (X11; Linux x86_64) QuickSearch'); } catch (e) {}
-                s.send_and_read_async(msg, (GLib ? GLib.PRIORITY_DEFAULT : 0), cancellable, (sess, res) => {
-                try {
-                    const bytes = sess.send_and_read_finish(res);
-                    onResult(null, new TextDecoder().decode(bytes.get_data()));
-                } catch (e) { onResult(e); }
+        try {
+            const s = ensureSession();
+            if (!s) return onResult(new Error('no-soup'));
+            const msg = Soup.Message.new('GET', url);
+            if (!msg) return onResult(new Error('bad-url'));
+            try { msg.request_headers.append('User-Agent', 'Mozilla/5.0 (X11; Linux x86_64) QuickSearch'); } catch (e) {}
+            if (!soupTextReader || typeof soupTextReader.readSoupMessageText !== 'function') return onResult(new Error('no crash-free soup reader'));
+            soupTextReader.readSoupMessageText({ GLib: GLib, Gio: Gio }, s, msg, cancellable, (err, text) => {
+                if (err) return onResult(err);
+                onResult(null, String(text || ''));
             });
         } catch (e) { onResult(e); }
     }
@@ -287,18 +328,19 @@ function createWebProvider(helpers) {
             if (!s) return onResult(new Error('no-soup'));
             const msg = Soup.Message.new('POST', url);
             if (!msg) return onResult(new Error('bad-url'));
-            if (GLib) {
-                try { msg.set_request_body_from_bytes('application/x-www-form-urlencoded', GLib.Bytes.new(String(body))); }
-                catch (e) { msg.set_request_body_from_bytes('application/x-www-form-urlencoded', new GLib.Bytes(String(body))); }
-            } else {
-                try { msg.set_request_body_from_bytes('application/x-www-form-urlencoded', new (require('gi.GLib').Bytes)(String(body))); }
-                catch (e) { }
+            if (!_setRequestBodyBoxedFree(msg, 'application/x-www-form-urlencoded', String(body))) {
+                if (GLib) {
+                    try { msg.set_request_body_from_bytes('application/x-www-form-urlencoded', GLib.Bytes.new(String(body))); }
+                    catch (e) { try { msg.set_request_body_from_bytes('application/x-www-form-urlencoded', new GLib.Bytes(String(body))); } catch (e2) {} }
+                } else {
+                    try { msg.set_request_body_from_bytes('application/x-www-form-urlencoded', new (require('gi.GLib').Bytes)(String(body))); }
+                    catch (e) { }
+                }
             }
-            s.send_and_read_async(msg, (GLib ? GLib.PRIORITY_DEFAULT : 0), cancellable, (sess, res) => {
-                try {
-                    const bytes = sess.send_and_read_finish(res);
-                    onResult(null, new TextDecoder().decode(bytes.get_data()));
-                } catch (e) { onResult(e); }
+            if (!soupTextReader || typeof soupTextReader.readSoupMessageText !== 'function') return onResult(new Error('no crash-free soup reader'));
+            soupTextReader.readSoupMessageText({ GLib: GLib, Gio: Gio }, s, msg, cancellable, (err, text) => {
+                if (err) return onResult(err);
+                onResult(null, String(text || ''));
             });
         } catch (e) { onResult(e); }
     }
@@ -468,12 +510,14 @@ function createWebProvider(helpers) {
                         // Set headers for Serper API
                         msg.request_headers.append('X-API-KEY', googleApiKey);
                         msg.request_headers.append('Content-Type', 'application/json');
-                        if (GLib) {
-                            try { msg.set_request_body_from_bytes('application/json', GLib.Bytes.new(String(body))); }
-                            catch (e) { msg.set_request_body_from_bytes('application/json', new GLib.Bytes(String(body))); }
-                        } else {
-                            try { msg.set_request_body_from_bytes('application/json', new (require('gi.GLib').Bytes)(String(body))); }
-                            catch (e) { }
+                        if (!_setRequestBodyBoxedFree(msg, 'application/json', String(body))) {
+                            if (GLib) {
+                                try { msg.set_request_body_from_bytes('application/json', GLib.Bytes.new(String(body))); }
+                                catch (e) { try { msg.set_request_body_from_bytes('application/json', new GLib.Bytes(String(body))); } catch (e2) {} }
+                            } else {
+                                try { msg.set_request_body_from_bytes('application/json', new (require('gi.GLib').Bytes)(String(body))); }
+                                catch (e) { }
+                            }
                         }
                         let serperDone = false;
                         let serperTid = _scheduleTimeout(REQUEST_TIMEOUT_MS, () => {
@@ -483,15 +527,20 @@ function createWebProvider(helpers) {
                             stage('http-done');
                             deliver([makeErrorFallback('Google search timeout', 'Periksa koneksi')]);
                         });
-                        s.send_and_read_async(msg, (GLib ? GLib.PRIORITY_DEFAULT : 0), cancellable, (sess, res) => {
+                        if (!soupTextReader || typeof soupTextReader.readSoupMessageText !== 'function') {
+                            serperDone = true; _cancelTimeout(serperTid);
+                            deliver([makeErrorFallback('Google search tidak tersedia', 'Periksa koneksi')]);
+                            return;
+                        }
+                        soupTextReader.readSoupMessageText({ GLib: GLib, Gio: Gio }, s, msg, cancellable, (rErr, dataStr) => {
                             if (serperDone) return;
                             serperDone = true;
                             _cancelTimeout(serperTid);
                             if (cancellable && cancellable.is_cancelled && cancellable.is_cancelled()) return;
                             stage('http-done');
                             try {
-                                const bytes = sess.send_and_read_finish(res);
-                                const dataStr = new TextDecoder().decode(bytes.get_data());
+                                if (rErr) throw rErr;
+                                dataStr = String(dataStr || '');
                                 // Check for Serper error responses
                                 const status = msg.get_status();
                                 if (status === 429) {

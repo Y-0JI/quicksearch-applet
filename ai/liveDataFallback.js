@@ -76,22 +76,20 @@
             });
         }
 
+        // ponytail: SATU request per feed. Versi lama lewat httpGetJson dulu (fetch +
+        // JSON.parse gagal) lalu fetch ULANG — 2x request Soup + 2x GBytes decode per feed.
         function httpGetText(url, cancellable) {
-            return httpGetJson(url, cancellable).then(() => { throw new Error('unused'); }).catch((e) => {
-                // reuse the fetch path but return raw text: re-request with JSON parse disabled
-                if (e && e.message === 'unused') throw e;
-                return new Promise((resolve, reject) => {
-                    let done = false;
-                    const tid = _timeout(timeoutMs, () => { if (!done) { done = true; reject(_makeError('live data timeout', 'backend_unavailable')); } });
-                    try {
-                        doGet(url, cancellable, (err, body, meta) => {
-                            if (done) return; done = true; clearTimeout(tid);
-                            if (err) return reject(err);
-                            if (meta && meta.status && meta.status >= 400) return reject(_makeError('HTTP ' + meta.status, 'request_failed'));
-                            resolve(String(body || ''));
-                        });
-                    } catch (e2) { if (!done) { done = true; clearTimeout(tid); reject(e2); } }
-                });
+            return new Promise((resolve, reject) => {
+                let done = false;
+                const tid = _timeout(timeoutMs, () => { if (!done) { done = true; reject(_makeError('live data timeout', 'backend_unavailable')); } });
+                try {
+                    doGet(url, cancellable, (err, body, meta) => {
+                        if (done) return; done = true; clearTimeout(tid);
+                        if (err) return reject(err);
+                        if (meta && meta.status && meta.status >= 400) return reject(_makeError('HTTP ' + meta.status, 'request_failed'));
+                        resolve(String(body || ''));
+                    });
+                } catch (e2) { if (!done) { done = true; clearTimeout(tid); reject(e2); } }
             });
         }
 
@@ -102,7 +100,8 @@
 
         function _detectDomain(q) {
             const s = String(q || '').toLowerCase();
-            if (/\b(cuaca|weather|suhu|hujan|badai|temperatur|suhu udara)\b/.test(s)) return 'weather';
+            // ponytail: 'uaca' = typo umum 'cuaca'. Tanpa ini prefetch diam -> jawaban teks saja tanpa kartu.
+            if (/\b(cuaca|uaca|weather|suhu|hujan|badai|temperatur|suhu udara)\b/.test(s)) return 'weather';
             if (/\b(berita|news|kabar|headline|terkini)\b/.test(s)) return 'news';
             if (/\b(saham|kurs|ihsg|stock|crypto|kripto|emas|gold|perak|minyak|dolar|rupiah)\b/.test(s) || COIN_RE.test(s)) return 'stock';
             if (/[A-Z]{4}\.JK\b/.test(String(q || ''))) return 'stock';
@@ -126,7 +125,7 @@
         }
 
         function _extractPlace(q) {
-            const m = /(?:cuaca|weather|suhu)\s+(?:di\s+|untuk\s+|kota\s+)?([a-zA-Z\s]{3,32})/i.exec(String(q || ''));
+            const m = /(?:cuaca|uaca|weather|suhu)\s+(?:di\s+|untuk\s+|kota\s+)?([a-zA-Z\s]{3,32})/i.exec(String(q || ''));
             if (m) return m[1].replace(/\b(hari|ini|besok|sekarang|skrg|gimana|bagaimana|apa|adalah)\b/gi, ' ').replace(/\s+/g, ' ').trim();
             const m2 = /(?:di)\s+([a-zA-Z\s]{3,32})/i.exec(String(q || ''));
             return m2 ? m2[1].replace(/\s+/g, ' ').trim() : '';

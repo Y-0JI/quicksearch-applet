@@ -28,6 +28,11 @@ const wsTool = (() => {
     try { return require('./webSearchTool.js'); } catch (e) {}
     try { return require('ai/webSearchTool.js'); } catch (e) { return null; }
 })();
+const soupTextReader = (() => {
+    try { return require('./ai/soupTextReader.js'); } catch (e) {}
+    try { return require('./soupTextReader.js'); } catch (e) {}
+    try { return require('ai/soupTextReader.js'); } catch (e) { return null; }
+})();
 
 const DEFAULT_TIMEOUT_MS = 6000;
 const DEFAULT_CANCEL_POLL_MS = 150;
@@ -174,6 +179,19 @@ function _cancelTimer(id) {
 // P1-3 default transport: real abort on timeout AND external cancel, with full cleanup.
 // cb(err, text, meta) where meta = { status, contentType, finalUrl } (finalUrl present when a
 // redirect was followed and validated against isSafeFetchUrl by the caller).
+// ponytail: SATU Soup.Session dipakai ulang (lihat webSearchTool — session per-request
+// picu crash GC Cinnamon, core 5x 2026-09-14).
+let _sharedSoupSession = null;
+function _sharedSoupSessionGet(Soup, timeoutSecs) {
+    try {
+        if (!_sharedSoupSession) {
+            _sharedSoupSession = new Soup.Session();
+            try { _sharedSoupSession.timeout = timeoutSecs; } catch (e) {}
+        }
+        return _sharedSoupSession;
+    } catch (e) { return null; }
+}
+
 function _defaultHttpGet(url, cancellable, cb, timeoutMs, cancelPollMs) {
     const ms = (typeof timeoutMs === 'number' && timeoutMs > 0) ? timeoutMs : DEFAULT_TIMEOUT_MS;
     const poll = (typeof cancelPollMs === 'number' && cancelPollMs > 0) ? cancelPollMs : DEFAULT_CANCEL_POLL_MS;
@@ -209,11 +227,12 @@ function _defaultHttpGet(url, cancellable, cb, timeoutMs, cancelPollMs) {
     }
     let abortRequest = function () {};
     try {
-        let Soup = null, GLib = null;
+        let Soup = null, GLib = null, Gio = null;
         try { Soup = require('gi.Soup'); } catch (e) {}
         try { GLib = require('gi.GLib'); } catch (e) {}
+        try { Gio = require('gi.Gio'); } catch (e) {}
         if (Soup && typeof Soup.Session !== 'undefined') {
-            const session = new Soup.Session();
+            const session = _sharedSoupSessionGet(Soup, Math.max(1, Math.ceil(ms / 1000))) || new Soup.Session();
             try { session.timeout = Math.max(1, Math.ceil(ms / 1000)); } catch (e) {}
             const msg = Soup.Message.new('GET', url);
             if (!msg) return finish(new Error('bad-url'));
@@ -230,13 +249,14 @@ function _defaultHttpGet(url, cancellable, cb, timeoutMs, cancelPollMs) {
                 if (_isCancelled(cancellable) && !done) { abortRequest(); return false; }
                 return true;
             });
-            session.send_and_read_async(msg, GLib ? GLib.PRIORITY_DEFAULT : 0, soupCancellable, (sess, res) => {
+            // Boxed-free read (2026-09-15): send_and_read_finish GBytes SEGVs Cinnamon at GC.
+            if (!soupTextReader || typeof soupTextReader.readSoupMessageText !== 'function') return finish(new Error('no crash-free soup reader'));
+            soupTextReader.readSoupMessageText({ GLib: GLib, Gio: Gio }, session, msg, soupCancellable, (rErr, text) => {
                 if (done) return;
                 cleanup();
                 if (timedOut || _isCancelled(cancellable)) { timeoutId = null; pollId = null; }
                 try {
-                    const bytes = sess.send_and_read_finish(res);
-                    const text = new TextDecoder().decode(bytes.get_data());
+                    if (rErr) throw rErr;
                     let status = 0;
                     try {
                         if (typeof msg.get_status === 'function') status = msg.get_status();

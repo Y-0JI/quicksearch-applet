@@ -5,6 +5,53 @@ let Gio = null, GLib = null, Soup = null;
 try { Gio = require('gi.Gio'); } catch (e) {}
 try { GLib = require('gi.GLib'); } catch (e) {}
 try { Soup = require('gi.Soup'); } catch (e) {}
+const soupTextReader = (() => {
+    try { return require('./soupTextReader.js'); } catch (e) {}
+    try { return require('./ai/soupTextReader.js'); } catch (e) {}
+    try { return require('ai/soupTextReader.js'); } catch (e) { return null; }
+})();
+
+// Boxed-free request body helper (2026-09-15): avoid GLib.Bytes (boxed) which
+// SEGVs Cinnamon on GC. Gio.MemoryInputStream.new_from_data/add_data are not
+// introspectable in CJS (DestroyNotify). Use Gio.File + Gio.FileInputStream
+// (GObject, refcount-safe) + Soup.Message.set_request_body(stream). Returns true on success.
+function _setRequestBodyBoxedFree(msg, contentType, bodyStr) {
+    try {
+        if (!msg || !bodyStr) return false;
+        if (!Gio || !Gio.File) return false;
+        if (typeof msg.set_request_body !== 'function') return false;
+        let bytes = null;
+        try {
+            if (typeof TextEncoder !== 'undefined') bytes = new TextEncoder().encode(String(bodyStr));
+            else if (typeof imports !== 'undefined' && imports.byteArray && typeof imports.byteArray.fromString === 'function') bytes = imports.byteArray.fromString(String(bodyStr));
+            else { const s = String(bodyStr); bytes = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i) & 0xFF; }
+        } catch (e) { bytes = null; }
+        if (!bytes || bytes.length === 0) return false;
+        // File-backed stream: only truly boxed-free path in CJS (MemoryInputStream needs Bytes/destroy).
+        let tmpPath = '/tmp/qs-body-' + Date.now() + '-' + Math.floor(Math.random() * 1e9) + '.tmp';
+        let file = null;
+        try { file = Gio.File.new_for_path(tmpPath); } catch (e) { return false; }
+        if (!file) return false;
+        try {
+            let flags = 0;
+            try { flags = Gio.FileCreateFlags && Gio.FileCreateFlags.REPLACE_DESTINATION ? Gio.FileCreateFlags.REPLACE_DESTINATION : 0; } catch (e) {}
+            let ok = false;
+            try { const r = file.replace_contents(bytes, null, false, flags, null); ok = Array.isArray(r) ? !!r[0] : !!r; } catch (e) { ok = false; }
+            if (!ok) return false;
+        } catch (e) { return false; }
+        let stream = null;
+        try { stream = file.read(null); } catch (e) { try { file.delete(null); } catch (e2) {} return false; }
+        if (!stream) { try { file.delete(null); } catch (e) {} return false; }
+        try { msg.set_request_body(contentType, stream, bytes.length); } catch (e) { try { stream.close(null); } catch (e2) {} try { file.delete(null); } catch (e2) {} return false; }
+        try { msg._qsBodyStream = stream; msg._qsBodyFile = file; msg._qsBodyPath = tmpPath; } catch (e) {}
+        try {
+            const doCleanup = () => { try { stream.close(null); } catch (e) {} try { Gio.File.new_for_path(tmpPath).delete(null); } catch (e) {} return GLib ? GLib.SOURCE_REMOVE : false; };
+            if (GLib && typeof GLib.timeout_add === 'function') GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10000, doCleanup);
+            else setTimeout(() => { try { stream.close(null); } catch (e) {} try { Gio.File.new_for_path(tmpPath).delete(null); } catch (e) {} }, 10000);
+        } catch (e) {}
+        return true;
+    } catch (e) { return false; }
+}
 
 const DEFAULT_TIMEOUT_MS = 30000;
 // Streaming idle window: max silence (no SSE data) tolerated mid-stream before the
@@ -224,9 +271,11 @@ function createDefaultHttpFetch() {
                     }
                     const body = opts.body || '';
                     try {
-                        if (GLib && GLib.Bytes) {
-                            try { msg.set_request_body_from_bytes('application/json', GLib.Bytes.new(String(body))); }
-                            catch (e) { msg.set_request_body_from_bytes('application/json', new GLib.Bytes(String(body))); }
+                        if (!_setRequestBodyBoxedFree(msg, 'application/json', body)) {
+                            if (GLib && GLib.Bytes) {
+                                try { msg.set_request_body_from_bytes('application/json', GLib.Bytes.new(String(body))); }
+                                catch (e) { msg.set_request_body_from_bytes('application/json', new GLib.Bytes(String(body))); }
+                            }
                         }
                     } catch (e) { return reject(_attachStage(e, 'request_build')); }
                     const appCancellable = opts.cancellable || null;
@@ -255,13 +304,17 @@ function createDefaultHttpFetch() {
                     }
                     _aiLog('send_async started');
                     try {
-                    s.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, soupCancellable, (sess, res) => {
+                    // Boxed-free read (2026-09-15): send_and_read_finish GBytes SEGVs Cinnamon at GC.
+                    if (!soupTextReader || typeof soupTextReader.readSoupMessageText !== 'function') {
+                        try { bridgeCleanup(); } catch (e) {}
+                        return reject(_attachStage(new Error('no crash-free soup reader'), 'transport_select'));
+                    }
+                    soupTextReader.readSoupMessageText({ GLib: GLib, Gio: Gio }, s, msg, soupCancellable, (rErr, text) => {
                         try { bridgeCleanup(); } catch (e) {}
                         try { if (signal && abortHandler) try { signal.removeEventListener('abort', abortHandler); } catch (e) {} } catch (e) {}
                         try {
-                            const bytes = sess.send_and_read_finish(res);
-                            let text = '';
-                            try { text = new TextDecoder().decode(bytes.get_data()); } catch (e) { text = String(bytes.get_data()); }
+                            if (rErr) throw rErr;
+                            text = String(text || '');
                             const status = typeof msg.get_status === 'function' ? msg.get_status() : (msg.status_code || 200);
                             _aiLog('HTTP status:', status);
                             if (text) _aiLog('first stream chunk received');
@@ -487,38 +540,34 @@ function _resolveSoupCancellable(appCancellable) {
 }
 
 function _collectStreamText(stream, cb) {
-    let acc = [];
-    let totalLen = 0;
-    function next() {
+    // Boxed-free (2026-09-15): InputStream.read_bytes_* returns GBytes which SEGVs at GC.
+    // Use Gio.DataInputStream + read_line_finish_utf8 (plain JS string).
+    let dis = null;
+    try { dis = new Gio.DataInputStream({ base_stream: stream }); }
+    catch (e) { try { stream.close(null); } catch (e2) {} return cb(_attachStage(e, 'input_stream')); }
+    const chunks = [];
+    let total = 0;
+    const MAX = 10 * 1024 * 1024;
+    function step() {
         try {
-            stream.read_bytes_async(8192, GLib.PRIORITY_DEFAULT, null, (s, res) => {
+            dis.read_line_async(GLib.PRIORITY_DEFAULT, null, (src, res2) => {
                 try {
-                    const bytes = s.read_bytes_finish(res);
-                    if (!bytes || bytes.get_size() === 0) {
-                        try { stream.close(null); } catch (e2) {}
-                        let text = '';
-                        if (acc.length > 0) {
-                            const combined = new Uint8Array(totalLen);
-                            let off = 0;
-                            for (let i = 0; i < acc.length; i++) { combined.set(acc[i], off); off += acc[i].length; }
-                            try { text = new TextDecoder().decode(combined); } catch (e) { text = String(combined); }
-                        }
-                        cb(null, text);
-                        return;
+                    let out = null;
+                    try { out = src.read_line_finish_utf8(res2); } catch (e) { try { stream.close(null); } catch (e2) {} return cb(_attachStage(e, 'read_bytes_async')); }
+                    let line = (out && out.length) ? out[0] : null;
+                    if (line === null || typeof line === 'undefined') {
+                        try { stream.close_async(GLib.PRIORITY_DEFAULT, null, function(){}); } catch (e) { try { stream.close(null); } catch (e2) {} }
+                        return cb(null, chunks.join('\n'));
                     }
-                    const raw = bytes.get_data();
-                    let chunk;
-                    if (raw instanceof Uint8Array) chunk = raw;
-                    else if (raw && typeof raw.length === 'number') chunk = new Uint8Array(raw);
-                    else chunk = new Uint8Array(0);
-                    acc.push(chunk);
-                    totalLen += chunk.length;
-                    next();
-                } catch (e) { cb(_attachStage(e, 'read_bytes_async')); }
+                    total += String(line).length + 1;
+                    if (total > MAX) { try { stream.close_async(GLib.PRIORITY_DEFAULT, null, function(){}); } catch (e) {} return cb(_attachStage(new Error('body too large'), 'input_stream')); }
+                    chunks.push(line);
+                    step();
+                } catch (e) { try { stream.close(null); } catch (e2) {} cb(_attachStage(e, 'read_bytes_async')); }
             });
-        } catch (e) { cb(_attachStage(e, 'input_stream')); }
+        } catch (e) { try { stream.close(null); } catch (e2) {} cb(_attachStage(e, 'input_stream')); }
     }
-    next();
+    step();
 }
 
 function createDefaultStreamingHttpFetch() {
@@ -551,9 +600,11 @@ function createDefaultStreamingHttpFetch() {
                 }
                 const body = opts.body || '';
                 try {
-                    if (GLib && GLib.Bytes) {
-                        try { msg.set_request_body_from_bytes('application/json', GLib.Bytes.new(String(body))); }
-                        catch (e) { msg.set_request_body_from_bytes('application/json', new GLib.Bytes(String(body))); }
+                    if (!_setRequestBodyBoxedFree(msg, 'application/json', body)) {
+                        if (GLib && GLib.Bytes) {
+                            try { msg.set_request_body_from_bytes('application/json', GLib.Bytes.new(String(body))); }
+                            catch (e) { msg.set_request_body_from_bytes('application/json', new GLib.Bytes(String(body))); }
+                        }
                     }
                 } catch (e) {}
                 const appCancellable = opts.cancellable || null;
@@ -730,56 +781,42 @@ function createDefaultStreamingHttpFetch() {
     };
 }
 
-// Read chunks from a GIO InputStream (Soup streaming path)
-// ponytail: persistent TextDecoder with {stream:true} prevents UTF-8 split corruption.
+// Read chunks from a GIO InputStream (Soup streaming path).
+// Boxed-free (2026-09-15): replaces InputStream.read_bytes_* (GBytes/boxed → BoxedInstanceD2Ev SEGV).
+// Uses Gio.DataInputStream + read_line_finish_utf8 which returns a plain JS string
+// (transfer-full tag 13). Lines are re-joined with '\n' — CJS probes confirm this
+// reconstructs SSE verbatim (including emoji UTF-8 split). The stream parser already
+// handles buffered/incomplete JSON internally.
 function _readStreamChunks(inputStream, onChunk, onDone) {
-    const bufferSize = 4096;
     let finished = false;
-    let decoder = null;
-    try { decoder = new TextDecoder(); } catch (e) { decoder = null; }
+    let dis = null;
+    try { dis = new Gio.DataInputStream({ base_stream: inputStream }); }
+    catch (e) { if (!finished) { finished = true; onDone(_attachStage(e, 'input_stream')); } return; }
     function readNext() {
         if (finished) return;
         try {
-            inputStream.read_bytes_async(bufferSize, GLib.PRIORITY_DEFAULT, null, (stream, result) => {
+            dis.read_line_async(GLib.PRIORITY_DEFAULT, null, (stream, result) => {
                 if (finished) return;
                 try {
-                    const bytes = stream.read_bytes_finish(result);
-                    if (!bytes || bytes.get_size() === 0) {
+                    let out = null;
+                    try { out = stream.read_line_finish_utf8(result); } catch (e) { if (!finished) { finished = true; onDone(_attachStage(e, 'read_bytes_async')); } return; }
+                    let line = (out && out.length) ? out[0] : null;
+                    if (line === null || typeof line === 'undefined') {
                         finished = true;
-                        if (decoder) {
-                            try {
-                                const tail = decoder.decode();
-                                if (tail) onChunk(tail);
-                            } catch (e) { _attachStage(e, 'stream_parse'); }
-                        }
-                        try { inputStream.close(null); } catch (e) { _attachStage(e, 'input_stream'); }
+                        try { inputStream.close_async(GLib.PRIORITY_DEFAULT, null, function(){}); } catch (e) { try { inputStream.close(null); } catch (e2) {} }
                         onDone(null);
                         return;
                     }
-                    let text = '';
-                    const raw = bytes.get_data();
-                    if (decoder) {
-                        try { text = decoder.decode(raw, { stream: true }); } catch (e) { try { text = new TextDecoder().decode(raw); } catch (e2) { text = String(raw); } }
-                    } else {
-                        try { text = new TextDecoder().decode(raw); } catch (e) { text = String(raw); }
-                    }
+                    let text = line + '\n';
                     if (text) {
-                        try { onChunk(text); } catch (e) { _attachStage(e, 'engine_callback'); throw e; }
+                        try { onChunk(text); } catch (e) { if (!finished) { finished = true; onDone(_attachStage(e, 'engine_callback')); } return; }
                     }
                     readNext();
                 } catch (e) {
-                    if (!finished) {
-                        finished = true;
-                        onDone(_attachStage(e, e && e.stage ? e.stage : 'read_bytes_async'));
-                    }
+                    if (!finished) { finished = true; onDone(_attachStage(e, 'read_bytes_async')); }
                 }
             });
-        } catch (e) {
-            if (!finished) {
-                finished = true;
-                onDone(_attachStage(e, 'input_stream'));
-            }
-        }
+        } catch (e) { if (!finished) { finished = true; onDone(_attachStage(e, 'input_stream')); } }
     }
     readNext();
 }
@@ -787,11 +824,14 @@ function _readStreamChunks(inputStream, onChunk, onDone) {
 // Fallback: full read then deliver as one chunk
 function _fallbackFullRead(session, msg, onChunk, onDone) {
     try {
-        session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null, (sess, res) => {
+        // Boxed-free read (2026-09-15): send_and_read_finish GBytes SEGVs Cinnamon at GC.
+        if (!soupTextReader || typeof soupTextReader.readSoupMessageText !== 'function') {
+            return onDone(_attachStage(new Error('no crash-free soup reader'), 'send_async'));
+        }
+        soupTextReader.readSoupMessageText({ GLib: GLib, Gio: Gio }, session, msg, null, (rErr, text) => {
             try {
-                const bytes = sess.send_and_read_finish(res);
-                let text = '';
-                try { text = new TextDecoder().decode(bytes.get_data()); } catch (e) { text = String(bytes.get_data()); }
+                if (rErr) throw rErr;
+                text = String(text || '');
                 const status = _getSoupStatus(msg) || 200;
                 if (status < 200 || status >= 300) {
                     const message = _parseErrorMessage(text, status);
