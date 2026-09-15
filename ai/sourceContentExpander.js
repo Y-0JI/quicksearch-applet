@@ -265,20 +265,14 @@ function _defaultHttpGet(url, cancellable, cb, timeoutMs, cancelPollMs) {
                     } catch (e) {}
                     let ct = '';
                     try {
+                        // Boxed-free (2026-09-15 22:14 core): response headers + get_uri()
+                        // return boxed proxies (Soup.MessageHeaders / GLib.Uri) whose
+                        // finalizer (BoxedInstanceD2Ev) SEGVs Cinnamon inside GC. Only
+                        // plain-JS header objects (test mocks) are read; finalUrl falls
+                        // back to the request url.
                         if (msg.response_headers && typeof msg.response_headers.get_one === 'function') ct = msg.response_headers.get_one('Content-Type') || '';
-                        else if (typeof msg.get_response_headers === 'function') {
-                            const h = msg.get_response_headers();
-                            if (h && typeof h.get_one === 'function') ct = h.get_one('Content-Type') || '';
-                        }
                     } catch (e) {}
                     let finalUrl = url;
-                    try {
-                        const uri = msg.get_uri();
-                        if (uri) {
-                            const sUri = (typeof uri.to_string === 'function') ? uri.to_string() : String(uri);
-                            if (sUri) finalUrl = sUri;
-                        }
-                    } catch (e) {}
                     if (timedOut) return finish(timeoutErr());
                     if (status >= 400) {
                         const e = new Error('HTTP ' + status);

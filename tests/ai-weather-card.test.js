@@ -11,8 +11,7 @@ const APPLET_SRC = fs.readFileSync(path.join(ROOT, 'applet.js'), 'utf8');
 const LDF_SRC = fs.readFileSync(path.join(ROOT, 'ai/liveDataFallback.js'), 'utf8');
 const ENGINE_SRC = fs.readFileSync(path.join(ROOT, 'ai/aiSearchEngine.js'), 'utf8');
 const CONV_SRC = fs.readFileSync(path.join(ROOT, 'ai/conversationState.js'), 'utf8');
-const PROMPT_SRC = fs.readFileSync(path.join(ROOT, 'ai/promptBuilder.js'), 'utf8');
-const CSS_SRC = fs.readFileSync(path.join(ROOT, 'stylesheet.css'), 'utf8');
+const PROMPT_SRC = fs.readFileSync(path.join(ROOT, 'ai/promptBuilder.js'), 'utf8');    const CSS_SRC = fs.readFileSync(path.join(ROOT, 'stylesheet.css'), 'utf8');
 
 const ldf = require('../ai/liveDataFallback.js');
 const convMod = require('../ai/conversationState.js');
@@ -245,6 +244,23 @@ test('crash 2026-09-15 SEGV (11:02/11:19 cores): boxed GLib.Bytes request bodies
     assert.equal(calls.cleanupScheduled, true, 'body stream cleanup scheduled (no Bytes anywhere)');
     // missing Gio -> false (caller aborts), never a Bytes fallback
     assert.equal(reader.setSoupRequestBodyFromText({ GLib: null, Gio: null }, fakeMsg, 'application/json', 'x'), false, 'no Gio -> false');
+});
+
+test('crash 2026-09-15 SEGV (22:14 core): boxed response-side proxies eliminated (headers + uri)', () => {
+    // The 22:14 SIGSEGV (BoxedInstanceD2Ev inside JS_GC -> trigger_gc_if_needed, Cinnamon
+    // full crash during streaming) proved boxed proxies were STILL being created on the
+    // Soup response path: get_response_headers() (Soup.MessageHeaders) and msg.get_uri()
+    // (GLib.Uri) materialize boxed proxies on the JS heap; GC finalizing them SEGVs
+    // Cinnamon. Response-side reads are now plain-JS only (mock header objects), and
+    // finalUrl falls back to the request url.
+    const WST = fs.readFileSync(path.join(ROOT, 'ai/webSearchTool.js'), 'utf8');
+    const SCE = fs.readFileSync(path.join(ROOT, 'ai/sourceContentExpander.js'), 'utf8');
+    assert.ok(!WST.includes('msg.get_response_headers'), 'webSearchTool: no boxed get_response_headers()');
+    assert.ok(!SCE.includes('msg.get_response_headers'), 'sourceContentExpander: no boxed get_response_headers()');
+    assert.ok(!SCE.includes('msg.get_uri()'), 'sourceContentExpander: no boxed get_uri() (GLib.Uri proxy)');
+    // plain-JS header objects (node/test mock path) stay supported
+    assert.ok(WST.includes('msg.response_headers.get_one'), 'webSearchTool: plain-JS response_headers honored');
+    assert.ok(SCE.includes('msg.response_headers.get_one'), 'sourceContentExpander: plain-JS response_headers honored');
 });
 
 test('soupTextReader: contract on mocked Soup/Gio (node-safe)', () => {

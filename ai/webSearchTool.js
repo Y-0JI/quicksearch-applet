@@ -517,11 +517,13 @@ function _defaultHttpGet(url, cancellable, cb) {
                     } catch (e) {}
                     let ct = '';
                     try {
+                        // Boxed-free (2026-09-15 22:14 core): msg.response_headers /
+                        // get_response_headers() return a boxed Soup.MessageHeaders proxy.
+                        // Its finalizer (BoxedInstanceD2Ev) SEGVs Cinnamon inside GC. Only
+                        // plain-JS header objects (test mocks) are read; native msg methods
+                        // that would materialize a boxed proxy on the JS heap are never called.
                         if (msg.response_headers && typeof msg.response_headers.get_one === 'function') {
                             ct = msg.response_headers.get_one('Content-Type') || '';
-                        } else if (typeof msg.get_response_headers === 'function') {
-                            const h = msg.get_response_headers();
-                            if (h && typeof h.get_one === 'function') ct = h.get_one('Content-Type') || '';
                         }
                     } catch (e) {}
                     if (status >= 400) {
