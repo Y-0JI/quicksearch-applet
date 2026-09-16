@@ -334,6 +334,99 @@ function createAISearchEngine(deps) {
     // instead of failing a live-data question, ground it from its canonical free API.
     let _liveData = null;
 
+    // H multi-aspect fan-out (single-round, read-only, max 2, fail-closed).
+    // Tries Gt.decomposeMultiAspect on the query; null → single existing search.
+    // Two aspect searches run concurrently via the SAME webSearchTool contract;
+    // results merged (canonicalize+dedupe), aspect-tagged at snippet-text level only.
+    // Rollback: deps.fanOut === false forces the legacy single-search path.
+    const fanOutEnabled = deps.fanOut !== false;
+    function _fanoutWebSearch(wsRequest, cancellable, cb) {
+        const q = wsRequest && typeof wsRequest.query === 'string' ? wsRequest.query : '';
+        const maxResults = wsRequest && wsRequest.maxResults;
+        let plan = null;
+        try {
+            if (fanOutEnabled && Gt && typeof Gt.decomposeMultiAspect === 'function') {
+                plan = Gt.decomposeMultiAspect(q);
+            }
+        } catch (e) { plan = null; }
+        if (!plan || !Array.isArray(plan.queries) || plan.queries.length !== 2) {
+            try { webSearchTool.search(wsRequest, cancellable, cb); } catch (e) {
+                if (typeof cb === 'function') cb(e);
+            }
+            return;
+        }
+        const aspects = Array.isArray(plan.aspects) ? plan.aspects : [];
+        const collected = [[], []];
+        const errors = [null, null];
+        let done = 0;
+        let settled = false;
+        function finish() {
+            if (settled) return;
+            settled = true;
+            const okIdx = [0, 1].filter(i => !errors[i] && Array.isArray(collected[i]));
+            if (okIdx.length === 0) {
+                const firstErr = errors[0] || errors[1] || new Error('Web search unavailable');
+                return cb(firstErr);
+            }
+            let merged = [];
+            okIdx.forEach(i => {
+                const tag = aspects[i] ? '[aspek: ' + String(aspects[i]).slice(0, 40) + '] ' : '';
+                for (const s of collected[i]) {
+                    if (!s || typeof s !== 'object') continue;
+                    const copy = Object.assign({}, s);
+                    if (tag && typeof copy.snippet === 'string' && copy.snippet) copy.snippet = tag + copy.snippet;
+                    else if (tag && typeof copy.content === 'string' && copy.content) copy.content = tag + copy.content;
+                    merged.push(copy);
+                }
+            });
+            try {
+                if (Gt && typeof Gt.canonicalizeSources === 'function') merged = Gt.canonicalizeSources(merged);
+            } catch (e) {}
+            cb(null, { type: 'tool_result', tool: 'web_search', query: q, sources: merged });
+        }
+        plan.queries.forEach((subQ, i) => {
+            let req = wsRequest;
+            try {
+                if (Gt && typeof Gt.validateRequest === 'function') {
+                    const v = Gt.validateRequest({ query: subQ, maxResults: maxResults });
+                    if (!v || v.error) throw (v && v.error) || new Error('invalid_query');
+                    req = { query: v.query, maxResults: v.maxResults };
+                } else {
+                    req = Object.assign({}, wsRequest, { query: subQ });
+                }
+            } catch (e) {
+                errors[i] = e;
+                collected[i] = null;
+                done++;
+                if (done === 2) finish();
+                return;
+            }
+            try {
+                webSearchTool.search(req, cancellable, (wErr, wResults) => {
+                    if (settled) return;
+                    if (_isCancelled(cancellable) || destroyed) return;
+                    if (wErr) { errors[i] = wErr; collected[i] = null; }
+                    else if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources)) {
+                        const e = new Error('Invalid AI response');
+                        e.code = 'invalid_response';
+                        errors[i] = e;
+                        collected[i] = null;
+                    } else {
+                        collected[i] = wResults.sources;
+                    }
+                    done++;
+                    if (done === 2) finish();
+                });
+            } catch (e) {
+                if (settled) return;
+                errors[i] = e;
+                collected[i] = null;
+                done++;
+                if (done === 2) finish();
+            }
+        });
+    }
+
     function _liveDataFallbackSources(query, cancellable) {
         // null (sync) = unavailable -> caller falls through synchronously; a Promise = async fetch
         if (deps.liveDataFallback === false) return null;
@@ -450,7 +543,7 @@ function createAISearchEngine(deps) {
                 const wsRequest = (Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number')
                     ? { query: q, maxResults: Gt.DEFAULT_MAX_RESULTS }
                     : { query: q, maxResults: 5 };
-                webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
+                _fanoutWebSearch(wsRequest, myCancellable, (wErr, wResults) => {
                     if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
                     const outage = wErr ? _normalizeWebError(wErr) : null;
                     const emptyResults = !wErr && !!wResults && wResults.type === 'tool_result' && Array.isArray(wResults.sources) && wResults.sources.length === 0;
@@ -589,7 +682,7 @@ function createAISearchEngine(deps) {
                         const wsRequest = Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number'
                             ? { query: toolQuery, maxResults: Gt.DEFAULT_MAX_RESULTS }
                             : { query: toolQuery, maxResults: 5 };
-                        webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
+                        _fanoutWebSearch(wsRequest, myCancellable, (wErr, wResults) => {
                             if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
                             // Availability outage (no healthy upstream) or zero results: answer from
                             // model knowledge when the question does not need live data — a search
@@ -772,7 +865,7 @@ function createAISearchEngine(deps) {
                 const wsRequest = (Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number')
                     ? { query: q, maxResults: Gt.DEFAULT_MAX_RESULTS }
                     : { query: q, maxResults: 5 };
-                webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
+                _fanoutWebSearch(wsRequest, myCancellable, (wErr, wResults) => {
                     if (settled || _staleS() || _isCancelled(myCancellable) || destroyed) return;
                     const outage = wErr ? _normalizeWebError(wErr) : null;
                     const emptyResults = !wErr && !!wResults && wResults.type === 'tool_result' && Array.isArray(wResults.sources) && wResults.sources.length === 0;
@@ -1001,7 +1094,7 @@ function createAISearchEngine(deps) {
                     const wsRequest = Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number'
                         ? { query: toolQuery, maxResults: Gt.DEFAULT_MAX_RESULTS }
                         : { query: toolQuery, maxResults: 5 };
-                    webSearchTool.search(wsRequest, myCancellable, (wErr, wResults) => {
+                    _fanoutWebSearch(wsRequest, myCancellable, (wErr, wResults) => {
                         if (_staleS() || _isCancelled(myCancellable) || destroyed || settled) return;
                         // Availability outage (no healthy upstream) or zero results: answer from
                         // model knowledge when the question does not need live data — a search

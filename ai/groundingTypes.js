@@ -4,6 +4,34 @@ const DEFAULT_MAX_RESULTS = 5;
 const MAX_RESULTS = 10;
 const MAX_TOOL_ROUNDS = 1;
 const TOOL_NAME = 'web_search';
+const MAX_FANOUT = 2;
+const MAX_FANOUT_QUERY_CHARS = 120;
+
+// H multi-aspect fan-out: deterministic split of narrow conjunction patterns only.
+// Returns { queries:[q1,q2], aspects:[a1,a2] } or null (single-search fallback).
+// Triggers ONLY on: "dari sisi A dan B" / "dari segi A dan B" / "berdasarkan A dan B".
+// Never splits bare "dan". False negatives OK, false positives NOT.
+function decomposeMultiAspect(query) {
+    try {
+        const q = String(query || '').trim();
+        if (!q) return null;
+        const m = /(dari\s+(sisi|segi)|berdasarkan)\s+(.+?)\s+dan\s+(.+?)\s*$/i.exec(q);
+        if (!m) return null;
+        const head = q.slice(0, m.index).trim();
+        const aspectA = String(m[3] || '').trim();
+        const aspectB = String(m[4] || '').trim();
+        if (!aspectA || !aspectB) return null;
+        if (/[.!?]$/.test(aspectB)) return null;
+        if (aspectA.length > 40 || aspectB.length > 40) return null;
+        const qA = (head ? head + ' ' : '') + 'dari sisi ' + aspectA;
+        const qB = (head ? head + ' ' : '') + 'dari sisi ' + aspectB;
+        if (qA.length > MAX_FANOUT_QUERY_CHARS || qB.length > MAX_FANOUT_QUERY_CHARS) return null;
+        if (qA.toLowerCase() === qB.toLowerCase()) return null;
+        return { queries: [qA.trim(), qB.trim()], aspects: [aspectA, aspectB] };
+    } catch (e) {
+        return null;
+    }
+}
 
 const ERROR_CODES = {
     invalid_query: 'invalid_query',
@@ -233,6 +261,9 @@ module.exports = {
     DEFAULT_MAX_RESULTS,
     MAX_RESULTS,
     MAX_TOOL_ROUNDS,
+    MAX_FANOUT,
+    MAX_FANOUT_QUERY_CHARS,
+    decomposeMultiAspect,
     TOOL_NAME,
     ERROR_CODES,
     isValidHttpUrl,
