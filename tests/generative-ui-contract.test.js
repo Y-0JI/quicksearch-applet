@@ -199,3 +199,72 @@ test('original input never mutated', () => {
     contract.parseGenerativeUIResponse(raw);
     assert.equal(JSON.parse(raw).extra, 1);
 });
+
+// ── G5.1 info_card ──
+function infoEnv(overrides) {
+    return JSON.stringify(Object.assign({
+        ui_type: 'info_card',
+        version: 1,
+        summary: 'info',
+        data: { title: 'Sys', items: [{ label: 'OS', value: 'Mint' }] }
+    }, overrides || {}));
+}
+
+test('G5.1-1: valid info_card', () => {
+    const r = contract.parseGenerativeUIResponse(infoEnv());
+    assert.equal(r.valid, true);
+    assert.equal(r.value.ui_type, 'info_card');
+});
+
+test('G5.1-2: info_card without title invalid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { items: [{ label: 'a', value: 'b' }] } })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: '', items: [{ label: 'a', value: 'b' }] } })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 42, items: [{ label: 'a', value: 'b' }] } })).valid, false);
+});
+
+test('G5.1-3: items non-array invalid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'T', items: 'x' } })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'T' } })).valid, false);
+});
+
+test('G5.1-4: empty items invalid (min 1)', () => {
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'T', items: [] } })).valid, false);
+});
+
+test('G5.1-5: over 6 items invalid', () => {
+    const items = [];
+    for (let i = 0; i < 7; i++) items.push({ label: 'l' + i, value: 'v' + i });
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'T', items: items } })).valid, false);
+    const six = items.slice(0, 6);
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'T', items: six } })).valid, true);
+});
+
+test('G5.1-6: item without label invalid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'T', items: [{ value: 'v' }] } })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'T', items: [{ label: '', value: 'v' }] } })).valid, false);
+});
+
+test('G5.1-7: item without value invalid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'T', items: [{ label: 'l' }] } })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'T', items: [{ label: 'l', value: '' }] } })).valid, false);
+});
+
+test('G5.1-8: non-string label/value invalid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'T', items: [{ label: 1, value: 'v' }] } })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'T', items: [{ label: 'l', value: 2 }] } })).valid, false);
+});
+
+test('G5.1-9: nested object/array in item rejected', () => {
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'T', items: [{ label: 'l', value: { x: 1 } }] } })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'T', items: [{ label: ['a'], value: 'v' }] } })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'T', items: ['plain'] } })).valid, false);
+});
+
+test('G5.1-10: malformed info_card never throws', () => {
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: null })).valid, false);
+    assert.equal(contract.validateGenerativeUI({ ui_type: 'info_card' }).valid, false);
+});
+
+test('G5.1-11: text_only regression still valid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(env('text_only')).valid, true);
+});

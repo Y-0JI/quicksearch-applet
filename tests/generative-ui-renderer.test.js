@@ -183,6 +183,134 @@ test('G4-2: card CSS stays AI-only', () => {
     assert.ok(head.indexOf('quicksearch-row') === -1, 'no Search selector adjacency');
 });
 
+// ── G5.2 info_card ──
+function infoUi(overrides) {
+    return Object.assign({
+        ui_type: 'info_card', version: 1, summary: 'info',
+        data: { title: 'Sys', items: [{ label: 'OS', value: 'Mint' }] }
+    }, overrides || {});
+}
+function fakeSt() {
+    function FakeLabel(props) { this.props = props; }
+    FakeLabel.prototype.get_clutter_text = function() { return { set_line_wrap: function() {} }; };
+    function FakeBox(props) { this.props = props; this.children = []; }
+    FakeBox.prototype.add_child = function(c) { this.children.push(c); };
+    return { BoxLayout: FakeBox, Label: FakeLabel };
+}
+
+test('G5.2-1: valid info_card describes actor descriptor', () => {
+    const d = renderer.describeGenerativeUi(infoUi());
+    assert.ok(d);
+    assert.strictEqual(d.kind, 'info_card');
+});
+
+test('G5.2-2: title present and correct', () => {
+    assert.strictEqual(renderer.describeGenerativeUi(infoUi({ data: { title: 'Spec', items: [{ label: 'a', value: 'b' }] } })).title, 'Spec');
+});
+
+test('G5.2-3: one item renders label + value', () => {
+    const factory = require('../ai/aiFactory.js');
+    const d = renderer.describeGenerativeUi(infoUi());
+    const actor = factory.buildGenerativeUiActor(d, fakeSt());
+    assert.ok(actor);
+    const dumped = JSON.stringify(actor);
+    assert.ok(dumped.indexOf('OS') !== -1 && dumped.indexOf('Mint') !== -1);
+});
+
+test('G5.2-4: six items accepted', () => {
+    const items = [];
+    for (let i = 0; i < 6; i++) items.push({ label: 'l' + i, value: 'v' + i });
+    const d = renderer.describeGenerativeUi(infoUi({ data: { title: 'T', items: items } }));
+    assert.ok(d && d.items.length === 6);
+    assert.ok(require('../ai/aiFactory.js').buildGenerativeUiActor(d, fakeSt()));
+});
+
+test('G5.2-5: over six items rejected to fallback', () => {
+    const items = [];
+    for (let i = 0; i < 7; i++) items.push({ label: 'l' + i, value: 'v' + i });
+    assert.strictEqual(renderer.describeGenerativeUi(infoUi({ data: { title: 'T', items: items } })), null);
+});
+
+test('G5.2-6: empty label/value rejected', () => {
+    assert.strictEqual(renderer.describeGenerativeUi(infoUi({ data: { title: 'T', items: [{ label: '', value: 'v' }] } })), null);
+    assert.strictEqual(renderer.describeGenerativeUi(infoUi({ data: { title: 'T', items: [{ label: 'l', value: '' }] } })), null);
+});
+
+test('G5.2-7: nested item data rejected', () => {
+    assert.strictEqual(renderer.describeGenerativeUi(infoUi({ data: { title: 'T', items: [{ label: 'l', value: { x: 1 } }] } })), null);
+});
+
+test('G5.2-8: no contract metadata in visible UI', () => {
+    const factory = require('../ai/aiFactory.js');
+    const actor = factory.buildGenerativeUiActor(renderer.describeGenerativeUi(infoUi()), fakeSt());
+    const dumped = JSON.stringify(actor);
+    for (const leak of ['ui_type', 'info_card', '"version"', 'valid', 'reason']) {
+        assert.ok(dumped.indexOf(leak) === -1, 'no leak: ' + leak);
+    }
+});
+
+test('G5.2-9: raw JSON never shown for valid info_card', () => {
+    const raw = JSON.stringify(infoUi());
+    const genUi = require('../ai/generativeUi.js');
+    const ui = genUi.resolveAssistantUi(raw);
+    const d = renderer.describeGenerativeUi(ui);
+    assert.strictEqual(d.kind, 'info_card');
+    const actor = require('../ai/aiFactory.js').buildGenerativeUiActor(d, fakeSt());
+    assert.ok(actor);
+    assert.ok(JSON.stringify(actor).indexOf(raw.slice(0, 30)) === -1);
+});
+
+test('G5.2-10: weather/stock/sports still fallback', () => {
+    for (const t of ['weather_card', 'stock_chart', 'sports_card']) {
+        assert.strictEqual(renderer.describeGenerativeUi({ ui_type: t, version: 1, summary: 's', data: {} }), null);
+    }
+});
+
+test('G5.2-11: normal Markdown stays Markdown (null descriptor)', () => {
+    assert.strictEqual(renderer.describeGenerativeUi(null), null);
+    assert.strictEqual(renderer.describeGenerativeUi(undefined), null);
+});
+
+test('G5.2-12: builder failure never throws', () => {
+    const factory = require('../ai/aiFactory.js');
+    assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'info_card' }, fakeSt()), null);
+    assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'info_card', title: 'T', items: [] }, fakeSt()), null);
+    assert.strictEqual(factory.buildGenerativeUiActor(null, fakeSt()), null);
+});
+
+test('G5.2-13: msg.content intact after ui attach', () => {
+    const raw = JSON.stringify(infoUi());
+    const convMod = require('../ai/conversationState.js');
+    const genUi = require('../ai/generativeUi.js');
+    const conv = convMod.createConversation();
+    convMod.appendUser(conv, 'Q');
+    const aId = convMod.appendAssistant(conv);
+    convMod.completeAssistant(conv, aId, raw, [], null);
+    const msg = convMod.findMessage(conv, aId);
+    msg.ui = genUi.resolveAssistantUi(msg.content);
+    assert.strictEqual(msg.content, raw);
+    assert.strictEqual(msg.ui.ui_type, 'info_card');
+});
+
+test('G5.2-14: onDelta free of info_card rendering', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'applet.js'), 'utf8');
+    const runFn = src.slice(src.indexOf('_runAIRequestStream'));
+    const open = runFn.indexOf('{', runFn.indexOf('onDelta: function'));
+    let depth = 0, end = -1;
+    for (let i = open; i < runFn.length; i++) {
+        if (runFn[i] === '{') depth++;
+        else if (runFn[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+    }
+    const deltaBody = runFn.slice(open, end + 1);
+    assert.ok(deltaBody.indexOf('info_card') === -1);
+    assert.ok(deltaBody.indexOf('buildGenerativeUiActor') === -1);
+});
+
+test('G5.2-15: info_card CSS is AI-only', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'stylesheet.css'), 'utf8');
+    assert.ok(css.indexOf('.ai-generative-ui-info') !== -1, 'info card style exists');
+    assert.ok(css.indexOf('.ai-generative-ui-row') !== -1, 'row style exists');
+});
 test('G4-3: unsupported still falls back, content intact', () => {
     const factory = require('../ai/aiFactory.js');
     function FakeLabel(props) { this.props = props; }

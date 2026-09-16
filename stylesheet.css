@@ -865,3 +865,23 @@
     font-size: 10pt;
     color: rgba(242, 243, 245, 0.94);
 }
+.ai-generative-ui-info {
+    x-align: START;
+}
+.ai-generative-ui-title {
+    font-size: 10pt;
+    font-weight: bold;
+    color: rgba(242, 243, 245, 0.96);
+}
+.ai-generative-ui-row {
+    spacing: 8px;
+    padding: 1px 0;
+}
+.ai-generative-ui-label {
+    font-size: 9pt;
+    color: rgba(226, 231, 240, 0.62);
+}
+.ai-generative-ui-value {
+    font-size: 9pt;
+    color: rgba(242, 243, 245, 0.94);
+}

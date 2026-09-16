@@ -6,7 +6,8 @@
 const CONTRACT_VERSION = 1;
 const MAX_PAYLOAD_BYTES = 16 * 1024;
 const MAX_SUMMARY_CHARS = 500;
-const UI_TYPES = ['text_only', 'weather_card', 'stock_chart', 'sports_card'];
+const UI_TYPES = ['text_only', 'weather_card', 'stock_chart', 'sports_card', 'info_card'];
+const MAX_INFO_ITEMS = 6;
 
 function _bytes(s) {
     let n = 0;
@@ -35,6 +36,16 @@ function validateGenerativeUI(value) {
     if (typeof value.summary !== 'string') return _fail('bad-summary');
     if (value.summary.length > MAX_SUMMARY_CHARS) return _fail('summary-too-long');
     if (!value.data || typeof value.data !== 'object' || Array.isArray(value.data)) return _fail('bad-data');
+    if (value.ui_type === 'info_card') {
+        const d = value.data;
+        if (typeof d.title !== 'string' || !d.title) return _fail('bad-info-title');
+        if (!Array.isArray(d.items) || d.items.length < 1 || d.items.length > MAX_INFO_ITEMS) return _fail('bad-info-items');
+        for (const it of d.items) {
+            if (!it || typeof it !== 'object' || Array.isArray(it)) return _fail('bad-info-item');
+            if (typeof it.label !== 'string' || !it.label) return _fail('bad-info-label');
+            if (typeof it.value !== 'string' || !it.value) return _fail('bad-info-value');
+        }
+    }
     return {
         valid: true,
         value: { ui_type: value.ui_type, version: value.version, summary: value.summary, data: value.data }
