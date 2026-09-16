@@ -117,8 +117,10 @@ function buildGenerativeUiActor(descriptor, St) {
         const summary = String(descriptor.summary || '');
         if (!summary) return null;
         const box = new St.BoxLayout({ vertical: true, style_class: 'ai-generative-ui ai-generative-ui-text-only' });
+        const badge = new St.Label({ text: '✦ Ringkasan', style_class: 'ai-generative-ui-badge' });
         const lbl = new St.Label({ text: summary, style_class: 'ai-generative-ui-summary' });
         try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+        try { box.add_child(badge); } catch (e) { return null; }
         try { box.add_child(lbl); } catch (e) { return null; }
         return box;
     } catch (e) {

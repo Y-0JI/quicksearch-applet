@@ -154,7 +154,53 @@ test('G2-11: factory builder pure-St-injected, text_only only, never throws', ()
     const actor = factory.buildGenerativeUiActor({ kind: 'text_only', summary: 'hello' }, St);
     assert.ok(actor);
     assert.strictEqual(actor.props.style_class, 'ai-generative-ui ai-generative-ui-text-only');
-    assert.strictEqual(actor.children.length, 1);
-    assert.strictEqual(actor.children[0].props.text, 'hello');
     assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'text_only', summary: '' }, St), null);
+});
+
+test('G4-1: card shows badge + summary, hides contract metadata', () => {
+    const factory = require('../ai/aiFactory.js');
+    function FakeLabel(props) { this.props = props; }
+    FakeLabel.prototype.get_clutter_text = function() { return { set_line_wrap: function() {} }; };
+    function FakeBox(props) { this.props = props; this.children = []; }
+    FakeBox.prototype.add_child = function(c) { this.children.push(c); };
+    const St = { BoxLayout: FakeBox, Label: FakeLabel };
+    const actor = factory.buildGenerativeUiActor({ kind: 'text_only', summary: 'hello' }, St);
+    assert.strictEqual(actor.children.length, 2, 'badge + summary');
+    assert.strictEqual(actor.children[0].props.style_class, 'ai-generative-ui-badge');
+    assert.strictEqual(actor.children[1].props.style_class, 'ai-generative-ui-summary');
+    assert.strictEqual(actor.children[1].props.text, 'hello');
+    const dumped = JSON.stringify(actor);
+    for (const leak of ['ui_type', 'version', 'text_only', '"data"', '{}']) {
+        assert.ok(dumped.indexOf(leak) === -1, 'no metadata leak: ' + leak);
+    }
+});
+
+test('G4-2: card CSS stays AI-only', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'stylesheet.css'), 'utf8');
+    assert.ok(css.indexOf('.ai-generative-ui-badge') !== -1, 'badge style exists');
+    const badgeIdx = css.indexOf('.ai-generative-ui-badge');
+    const head = css.slice(Math.max(0, badgeIdx - 400), badgeIdx);
+    assert.ok(head.indexOf('quicksearch-row') === -1, 'no Search selector adjacency');
+});
+
+test('G4-3: unsupported still falls back, content intact', () => {
+    const factory = require('../ai/aiFactory.js');
+    function FakeLabel(props) { this.props = props; }
+    FakeLabel.prototype.get_clutter_text = function() { return { set_line_wrap: function() {} }; };
+    function FakeBox(props) { this.props = props; this.children = []; }
+    FakeBox.prototype.add_child = function(c) { this.children.push(c); };
+    const St = { BoxLayout: FakeBox, Label: FakeLabel };
+    assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'weather_card', summary: 'w' }, St), null);
+    assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'stock_chart', summary: 's' }, St), null);
+    assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'sports_card', summary: 's' }, St), null);
+    const raw = JSON.stringify({ ui_type: 'text_only', version: 1, summary: 'hi', data: {} });
+    const convMod = require('../ai/conversationState.js');
+    const genUi = require('../ai/generativeUi.js');
+    const conv = convMod.createConversation();
+    convMod.appendUser(conv, 'Q');
+    const aId = convMod.appendAssistant(conv);
+    convMod.completeAssistant(conv, aId, raw, [], null);
+    const msg = convMod.findMessage(conv, aId);
+    msg.ui = genUi.resolveAssistantUi(msg.content);
+    assert.strictEqual(msg.content, raw, 'content intact');
 });

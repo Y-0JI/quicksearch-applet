@@ -847,10 +847,19 @@
 /* G2 Generative UI — AI-only. No Search selectors touched. */
 .ai-generative-ui {
     spacing: 4px;
-    padding: 2px 8px 8px 8px;
+    padding: 6px 10px 8px 10px;
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 12px;
+    margin: 2px 8px 8px 8px;
 }
 .ai-generative-ui-text-only {
     x-align: START;
+}
+.ai-generative-ui-badge {
+    font-size: 8pt;
+    font-weight: bold;
+    color: rgba(226, 231, 240, 0.62);
 }
 .ai-generative-ui-summary {
     font-size: 10pt;
