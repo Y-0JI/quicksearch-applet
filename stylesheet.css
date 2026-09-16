@@ -896,3 +896,20 @@
     border-radius: 3px;
     font-size: 7pt;
 }
+.ai-generative-ui-sports {
+    x-align: START;
+}
+.ai-generative-ui-team {
+    font-size: 10pt;
+    color: rgba(242, 243, 245, 0.94);
+}
+.ai-generative-ui-score {
+    font-size: 10pt;
+    font-weight: bold;
+    color: rgba(242, 243, 245, 0.96);
+}
+.ai-generative-ui-status {
+    font-size: 8pt;
+    font-weight: bold;
+    color: rgba(226, 231, 240, 0.62);
+}

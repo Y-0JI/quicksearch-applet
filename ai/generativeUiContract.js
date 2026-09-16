@@ -59,6 +59,18 @@ function validateGenerativeUI(value) {
             if (typeof p.value !== 'number' || !isFinite(p.value)) return _fail('bad-stock-value');
         }
     }
+    if (value.ui_type === 'sports_card') {
+        const d = value.data;
+        if (typeof d.title !== 'string' || !d.title) return _fail('bad-sport-title');
+        if (typeof d.league !== 'string' || !d.league) return _fail('bad-sport-league');
+        for (const side of ['home', 'away']) {
+            const t = d[side];
+            if (!t || typeof t !== 'object' || Array.isArray(t)) return _fail('bad-sport-team');
+            if (typeof t.name !== 'string' || !t.name) return _fail('bad-sport-name');
+            if (typeof t.score !== 'string' || !t.score) return _fail('bad-sport-score');
+        }
+        if (typeof d.status !== 'string' || !d.status) return _fail('bad-sport-status');
+    }
     return {
         valid: true,
         value: { ui_type: value.ui_type, version: value.version, summary: value.summary, data: value.data }

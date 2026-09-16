@@ -40,8 +40,8 @@ test('G2-4: stock_chart unsupported falls back', () => {
     assert.strictEqual(renderer.describeGenerativeUi({ ui_type: 'stock_chart', version: 1, summary: 's', data: {} }), null);
 });
 
-// 5. sports_card unsupported → fallback
-test('G2-5: sports_card unsupported falls back', () => {
+// 5. sports_card now supported (G7.1) — schema-valid describes, bare envelope falls back
+test('G2-5: sports_card bare envelope falls back', () => {
     assert.strictEqual(renderer.describeGenerativeUi({ ui_type: 'sports_card', version: 1, summary: 's', data: {} }), null);
 });
 
@@ -260,10 +260,8 @@ test('G5.2-9: raw JSON never shown for valid info_card', () => {
     assert.ok(JSON.stringify(actor).indexOf(raw.slice(0, 30)) === -1);
 });
 
-test('G5.2-10: weather/sports still fallback', () => {
-    for (const t of ['weather_card', 'sports_card']) {
-        assert.strictEqual(renderer.describeGenerativeUi({ ui_type: t, version: 1, summary: 's', data: {} }), null);
-    }
+test('G5.2-10: weather still fallback', () => {
+    assert.strictEqual(renderer.describeGenerativeUi({ ui_type: 'weather_card', version: 1, summary: 's', data: {} }), null);
 });
 
 test('G5.2-11: normal Markdown stays Markdown (null descriptor)', () => {
@@ -319,7 +317,6 @@ test('G4-3: unsupported still falls back, content intact', () => {
     FakeBox.prototype.add_child = function(c) { this.children.push(c); };
     const St = { BoxLayout: FakeBox, Label: FakeLabel };
     assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'weather_card', summary: 'w' }, St), null);
-    assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'sports_card', summary: 's' }, St), null);
     const raw = JSON.stringify({ ui_type: 'text_only', version: 1, summary: 'hi', data: {} });
     const convMod = require('../ai/conversationState.js');
     const genUi = require('../ai/generativeUi.js');
@@ -495,4 +492,118 @@ test('G6.2.1-E: all-zero fallback stays safe', () => {
 test('G6.2.1-F: negative labels keep minus sign', () => {
     const r = stockWidths([{ label: 'a', value: -42 }, { label: 'b', value: 10 }]);
     assert.ok(labelsOf(r.actor).indexOf('-42') !== -1, 'minus preserved');
+});
+
+// ── G7.1 sports_card ──
+function sportUi(overrides) {
+    return Object.assign({ ui_type: 'sports_card', version: 1, summary: 'match',
+        data: { title: 'Chelsea vs Arsenal', league: 'Premier League',
+            home: { name: 'Chelsea', score: '2' }, away: { name: 'Arsenal', score: '1' }, status: 'FT' } }, overrides || {});
+}
+function sportTexts(actor) {
+    const out = [];
+    (function walk(n) {
+        if (!n) return;
+        if (n.props && typeof n.props.text === 'string') out.push(n.props.text);
+        if (Array.isArray(n.children)) n.children.forEach(walk);
+    })(actor);
+    return out;
+}
+
+test('G7.1-1: valid sports_card describes descriptor', () => {
+    const d = renderer.describeGenerativeUi(sportUi());
+    assert.ok(d);
+    assert.strictEqual(d.kind, 'sports_card');
+});
+
+test('G7.1-2: title and league preserved', () => {
+    const d = renderer.describeGenerativeUi(sportUi());
+    assert.strictEqual(d.title, 'Chelsea vs Arsenal');
+    assert.strictEqual(d.league, 'Premier League');
+});
+
+test('G7.1-3: home/away names and scores preserved', () => {
+    const d = renderer.describeGenerativeUi(sportUi());
+    assert.deepStrictEqual(d.home, { name: 'Chelsea', score: '2' });
+    assert.deepStrictEqual(d.away, { name: 'Arsenal', score: '1' });
+});
+
+test('G7.1-4: status preserved', () => {
+    assert.strictEqual(renderer.describeGenerativeUi(sportUi()).status, 'FT');
+});
+
+test('G7.1-5: missing title falls back', () => {
+    const u = sportUi(); delete u.data.title;
+    assert.strictEqual(renderer.describeGenerativeUi(u), null);
+});
+
+test('G7.1-6: missing league falls back', () => {
+    const u = sportUi(); delete u.data.league;
+    assert.strictEqual(renderer.describeGenerativeUi(u), null);
+});
+
+test('G7.1-7: missing home/away falls back', () => {
+    const a = sportUi(); delete a.data.home;
+    const b = sportUi(); delete b.data.away;
+    assert.strictEqual(renderer.describeGenerativeUi(a), null);
+    assert.strictEqual(renderer.describeGenerativeUi(b), null);
+});
+
+test('G7.1-8: empty name/score/status falls back', () => {
+    const u = sportUi(); u.data.home.name = '';
+    const v = sportUi(); v.data.status = '';
+    assert.strictEqual(renderer.describeGenerativeUi(u), null);
+    assert.strictEqual(renderer.describeGenerativeUi(v), null);
+});
+
+test('G7.1-9: nested invalid object falls back', () => {
+    const u = sportUi(); u.data.home = { name: { x: 1 }, score: '2' };
+    assert.strictEqual(renderer.describeGenerativeUi(u), null);
+});
+
+test('G7.1-10: factory creates actor with fake St', () => {
+    const actor = require('../ai/aiFactory.js').buildGenerativeUiActor(renderer.describeGenerativeUi(sportUi()), fakeSt());
+    assert.ok(actor);
+});
+
+test('G7.1-11: visible actor contains team/title/status', () => {
+    const actor = require('../ai/aiFactory.js').buildGenerativeUiActor(renderer.describeGenerativeUi(sportUi()), fakeSt());
+    const t = sportTexts(actor).join('|');
+    for (const s of ['Chelsea', 'Arsenal', '2', '1', 'FT', 'Premier League']) {
+        assert.ok(t.indexOf(s) !== -1, 'visible: ' + s);
+    }
+});
+
+test('G7.1-12: no contract metadata leaks', () => {
+    const actor = require('../ai/aiFactory.js').buildGenerativeUiActor(renderer.describeGenerativeUi(sportUi()), fakeSt());
+    const dumped = JSON.stringify(actor);
+    for (const leak of ['ui_type', 'sports_card', '"version"', 'valid', 'reason']) {
+        assert.ok(dumped.indexOf(leak) === -1, 'no leak: ' + leak);
+    }
+});
+
+test('G7.1-13: normal Markdown stays Markdown', () => {
+    assert.strictEqual(renderer.describeGenerativeUi(null), null);
+});
+
+test('G7.1-14: weather_card still falls back', () => {
+    assert.strictEqual(renderer.describeGenerativeUi({ ui_type: 'weather_card', version: 1, summary: 's', data: {} }), null);
+});
+
+test('G7.1-15: stock_chart still works', () => {
+    assert.strictEqual(renderer.describeGenerativeUi(stockUi()).kind, 'stock_chart');
+});
+
+test('G7.1-16: renderer does not mutate input', () => {
+    const u = sportUi();
+    const frozen = JSON.stringify(u);
+    renderer.describeGenerativeUi(u);
+    assert.strictEqual(JSON.stringify(u), frozen);
+});
+
+test('G7.1-17: no network/Soup/Gio/GLib in renderer', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'ai', 'generativeUiRenderer.js'), 'utf8');
+    for (const s of ['Soup', 'Gio.', 'imports.gi', 'fetch(', 'XMLHttp', 'eval(', 'Function(']) {
+        assert.ok(src.indexOf(s) === -1, 'renderer free of ' + s);
+    }
 });

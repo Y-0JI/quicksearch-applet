@@ -1,7 +1,7 @@
 // ai/generativeUiRenderer.js — G2/G5.2/G6.2 pure presentation descriptor (AI-only).
 // Pure: no UI toolkit, no I/O, no JSON.parse of AI text.
 // Input must already be a validated G0 value (via G1 resolveAssistantUi).
-// Supports text_only + info_card + stock_chart; weather_card/sports_card → null.
+// Supports text_only + info_card + stock_chart + sports_card; weather_card → null.
 // Never throws; never mutates input; never stores {valid,reason}.
 
 const MAX_INFO_ITEMS = 6;
@@ -36,6 +36,7 @@ function describeGenerativeUi(ui) {
         if (ui.ui_type === 'text_only') return { kind: 'text_only', summary: ui.summary };
         if (ui.ui_type === 'info_card') return _describeInfo(ui);
         if (ui.ui_type === 'stock_chart') return _describeStock(ui);
+        if (ui.ui_type === 'sports_card') return _describeSport(ui);
         return null;
     } catch (e) {
         return null;
@@ -55,6 +56,24 @@ function _describeStock(ui) {
         points.push({ label: p.label, value: p.value });
     }
     return { kind: 'stock_chart', symbol: d.symbol, title: d.title, points: points };
+}
+
+function _team(t) {
+    if (!t || typeof t !== 'object' || Array.isArray(t)) return null;
+    if (typeof t.name !== 'string' || !t.name) return null;
+    if (typeof t.score !== 'string' || !t.score) return null;
+    return { name: t.name, score: t.score };
+}
+
+function _describeSport(ui) {
+    const d = ui.data;
+    if (typeof d.title !== 'string' || !d.title) return null;
+    if (typeof d.league !== 'string' || !d.league) return null;
+    const home = _team(d.home);
+    const away = _team(d.away);
+    if (!home || !away) return null;
+    if (typeof d.status !== 'string' || !d.status) return null;
+    return { kind: 'sports_card', title: d.title, league: d.league, home: home, away: away, status: d.status };
 }
 
 module.exports = { describeGenerativeUi };

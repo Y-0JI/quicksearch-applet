@@ -116,6 +116,7 @@ function buildGenerativeUiActor(descriptor, St) {
         if (descriptor.kind === 'text_only') return _buildTextOnly(descriptor, St);
         if (descriptor.kind === 'info_card') return _buildInfoCard(descriptor, St);
         if (descriptor.kind === 'stock_chart') return _buildStockChart(descriptor, St);
+        if (descriptor.kind === 'sports_card') return _buildSportsCard(descriptor, St);
         return null;
     } catch (e) {
         return null;
@@ -197,6 +198,44 @@ function _buildStockChart(descriptor, St) {
         try { barBox.add_child(bar); } catch (e) { return null; }
         try { row.add_child(barBox); } catch (e) { return null; }
         try { row.add_child(v); } catch (e) { return null; }
+        try { box.add_child(row); } catch (e) { return null; }
+    }
+    return box;
+}
+
+function _sportTeam(t) {
+    if (!t || typeof t !== 'object') return null;
+    if (typeof t.name !== 'string' || !t.name) return null;
+    if (typeof t.score !== 'string' || !t.score) return null;
+    return { name: t.name, score: t.score };
+}
+
+function _buildSportsCard(descriptor, St) {
+    const title = String(descriptor.title || '');
+    const league = String(descriptor.league || '');
+    const status = String(descriptor.status || '');
+    const home = _sportTeam(descriptor.home);
+    const away = _sportTeam(descriptor.away);
+    if (!title || !league || !status || !home || !away) return null;
+    const box = new St.BoxLayout({ vertical: true, style_class: 'ai-generative-ui ai-generative-ui-sports' });
+    const badge = new St.Label({ text: '✦ Olahraga', style_class: 'ai-generative-ui-badge' });
+    const titleLbl = new St.Label({ text: title, style_class: 'ai-generative-ui-title' });
+    try { titleLbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+    const subRow = new St.BoxLayout({ vertical: false, style_class: 'ai-generative-ui-row' });
+    const leagueLbl = new St.Label({ text: league, style_class: 'ai-generative-ui-label' });
+    const statusLbl = new St.Label({ text: status, style_class: 'ai-generative-ui-status' });
+    try { subRow.add_child(leagueLbl); } catch (e) { return null; }
+    try { subRow.add_child(statusLbl); } catch (e) { return null; }
+    try { box.add_child(badge); } catch (e) { return null; }
+    try { box.add_child(titleLbl); } catch (e) { return null; }
+    try { box.add_child(subRow); } catch (e) { return null; }
+    for (const t of [home, away]) {
+        const row = new St.BoxLayout({ vertical: false, style_class: 'ai-generative-ui-row' });
+        const n = new St.Label({ text: t.name, style_class: 'ai-generative-ui-team' });
+        try { n.get_clutter_text().set_line_wrap(true); } catch (e) {}
+        const s = new St.Label({ text: t.score, style_class: 'ai-generative-ui-score' });
+        try { row.add_child(n); } catch (e) { return null; }
+        try { row.add_child(s); } catch (e) { return null; }
         try { box.add_child(row); } catch (e) { return null; }
     }
     return box;

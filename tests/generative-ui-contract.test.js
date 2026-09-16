@@ -33,8 +33,9 @@ test('valid stock_chart envelope', () => {
     assert.equal(r.value.ui_type, 'stock_chart');
 });
 
-test('valid sports_card envelope', () => {
-    const r = contract.parseGenerativeUIResponse(env('sports_card', { data: { team: 'Chelsea' } }));
+test('valid sports_card envelope (G7.1 schema)', () => {
+    const r = contract.parseGenerativeUIResponse(JSON.stringify({ ui_type: 'sports_card', version: 1, summary: 'm',
+        data: { title: 'T', league: 'L', home: { name: 'H', score: '1' }, away: { name: 'A', score: '0' }, status: 'FT' } }));
     assert.equal(r.valid, true);
     assert.equal(r.value.ui_type, 'sports_card');
 });
@@ -373,4 +374,45 @@ test('G6.1-R: info_card regression still valid', () => {
 
 test('G6.1-S: existing G0/G5.1 tests unaffected (text_only valid)', () => {
     assert.equal(contract.parseGenerativeUIResponse(env('text_only')).valid, true);
+});
+
+// ── G7.1 sports_card schema ──
+function sportEnv(data) {
+    return JSON.stringify({ ui_type: 'sports_card', version: 1, summary: 'match',
+        data: data || { title: 'Chelsea vs Arsenal', league: 'Premier League',
+            home: { name: 'Chelsea', score: '2' }, away: { name: 'Arsenal', score: '1' }, status: 'FT' } });
+}
+
+test('G7.1-C1: valid sports_card', () => {
+    const r = contract.parseGenerativeUIResponse(sportEnv());
+    assert.equal(r.valid, true);
+    assert.equal(r.value.ui_type, 'sports_card');
+});
+
+test('G7.1-C2: missing title invalid', () => {
+    const d = { league: 'L', home: { name: 'H', score: '1' }, away: { name: 'A', score: '0' }, status: 'FT' };
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv(d)).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv(Object.assign({}, d, { title: '' }))).valid, false);
+});
+
+test('G7.1-C3: missing league invalid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv({ title: 'T', home: { name: 'H', score: '1' }, away: { name: 'A', score: '0' }, status: 'FT' })).valid, false);
+});
+
+test('G7.1-C4: missing home/away invalid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv({ title: 'T', league: 'L', away: { name: 'A', score: '0' }, status: 'FT' })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv({ title: 'T', league: 'L', home: { name: 'H', score: '1' }, status: 'FT' })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv({ title: 'T', league: 'L', home: 'H', away: { name: 'A', score: '0' }, status: 'FT' })).valid, false);
+});
+
+test('G7.1-C5: empty name/score/status invalid', () => {
+    const base = { title: 'T', league: 'L', home: { name: 'H', score: '1' }, away: { name: 'A', score: '0' }, status: 'FT' };
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv(Object.assign({}, base, { home: { name: '', score: '1' } }))).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv(Object.assign({}, base, { away: { name: 'A', score: '' } }))).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv(Object.assign({}, base, { status: '' }))).valid, false);
+});
+
+test('G7.1-C6: nested invalid object rejected', () => {
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv({ title: 'T', league: 'L', home: { name: { x: 1 }, score: '1' }, away: { name: 'A', score: '0' }, status: 'FT' })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv({ title: 'T', league: 'L', home: ['H'], away: { name: 'A', score: '0' }, status: 'FT' })).valid, false);
 });
