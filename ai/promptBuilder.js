@@ -151,6 +151,18 @@ const GROUNDED_GUIDANCE = [
     'Ground factual claims in the reference context when available (ground).'
 ].join(' ');
 
+// G3: OPTIONAL structured-output guidance (Generative UI text_only).
+// Default stays natural Markdown. The model may emit the exact JSON envelope
+// below ONLY when a compact structured summary genuinely helps; never forced.
+// weather_card/stock_chart/sports_card are NOT generatable in G3.
+const STRUCTURED_UI_GUIDANCE = [
+    'Optional structured summary: when the answer has one main conclusion that reads better as a compact summary (result status, analysis outcome), you MAY respond with a single JSON object instead of Markdown.',
+    'Markdown stays the default: keep Markdown for conversational answers, explanations, tutorials, troubleshooting steps, coding answers, and any code-heavy response.',
+    'Only "text_only" may be generated. Do not use weather_card, stock_chart or sports_card — they are not yet supported.',
+    'Exact format when structured output is chosen: {"ui_type": "text_only", "version": 1, "summary": "Short user-facing summary", "data": {}}.',
+    'Rules: JSON object only, no Markdown fence, no ```json block, no text before JSON, no text after JSON; ui_type must be "text_only"; version must be 1; summary is a short user-facing string of at most 500 characters; data must be a plain object; do not invent unsupported data.'
+].join(' ');
+
 // Legacy alias — the full-blown historical prompt is gone; keep the export name for any
 // consumer that only inspects that it exists. Use buildSystemPrompt() for actual generation.
 const SYSTEM_PROMPT = CORE_SYSTEM_PROMPT;
@@ -177,6 +189,7 @@ function buildSystemPrompt(opts) {
     else if (depth === 'concise') parts.push(CONCISE_GUIDANCE);
     if (flags.completeness) parts.push(COMPLETENESS_GUIDANCE);
     if (opts.grounded) parts.push(GROUNDED_GUIDANCE);
+    parts.push(STRUCTURED_UI_GUIDANCE);
     return parts.join('\n\n');
 }
 
@@ -359,4 +372,4 @@ function buildHistoryMessages(history, limit) {
     return kept;
 }
 
-module.exports = { buildSystemPrompt, buildGroundingContext, buildUserPrompt, buildHistoryMessages, buildRuntimeContext, buildExpandedGroundingContext, SYSTEM_PROMPT, CORE_SYSTEM_PROMPT, INTENT_GUIDANCE, DETAILED_INTENT_GUIDANCE, DEPTH_DETAILED_GUIDANCE, CONCISE_GUIDANCE, COMPLETENESS_GUIDANCE, GROUNDED_GUIDANCE, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_MSG_LEN, HISTORY_CHAR_BUDGET };
+module.exports = { buildSystemPrompt, buildGroundingContext, buildUserPrompt, buildHistoryMessages, buildRuntimeContext, buildExpandedGroundingContext, SYSTEM_PROMPT, CORE_SYSTEM_PROMPT, STRUCTURED_UI_GUIDANCE, INTENT_GUIDANCE, DETAILED_INTENT_GUIDANCE, DEPTH_DETAILED_GUIDANCE, CONCISE_GUIDANCE, COMPLETENESS_GUIDANCE, GROUNDED_GUIDANCE, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_MSG_LEN, HISTORY_CHAR_BUDGET };
