@@ -135,6 +135,20 @@ function _buildTextOnly(descriptor, St) {
     return box;
 }
 
+function _cardShell(St, styleClass, badgeText, titleText) {
+    try {
+        const box = new St.BoxLayout({ vertical: true, style_class: styleClass });
+        const badge = new St.Label({ text: badgeText, style_class: 'ai-generative-ui-badge' });
+        const titleLbl = new St.Label({ text: titleText, style_class: 'ai-generative-ui-title' });
+        try { titleLbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+        try { box.add_child(badge); } catch (e) { return null; }
+        try { box.add_child(titleLbl); } catch (e) { return null; }
+        return box;
+    } catch (e) {
+        return null;
+    }
+}
+
 function _buildInfoCard(descriptor, St) {
     const title = String(descriptor.title || '');
     const items = descriptor.items;
@@ -146,12 +160,8 @@ function _buildInfoCard(descriptor, St) {
         if (typeof it.value !== 'string' || !it.value) return null;
         clean.push({ label: it.label, value: it.value });
     }
-    const box = new St.BoxLayout({ vertical: true, style_class: 'ai-generative-ui ai-generative-ui-info' });
-    const badge = new St.Label({ text: '✦ Informasi', style_class: 'ai-generative-ui-badge' });
-    const titleLbl = new St.Label({ text: title, style_class: 'ai-generative-ui-title' });
-    try { titleLbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
-    try { box.add_child(badge); } catch (e) { return null; }
-    try { box.add_child(titleLbl); } catch (e) { return null; }
+    const box = _cardShell(St, 'ai-generative-ui ai-generative-ui-info', '✦ Informasi', title);
+    if (!box) return null;
     for (const it of clean) {
         const row = new St.BoxLayout({ vertical: false, style_class: 'ai-generative-ui-row' });
         const l = new St.Label({ text: it.label, style_class: 'ai-generative-ui-label' });
@@ -180,12 +190,8 @@ function _buildStockChart(descriptor, St) {
         if (a > maxAbs) maxAbs = a;
     }
     if (!(maxAbs > 0)) maxAbs = 1;
-    const box = new St.BoxLayout({ vertical: true, style_class: 'ai-generative-ui ai-generative-ui-stock' });
-    const badge = new St.Label({ text: '✦ Grafik', style_class: 'ai-generative-ui-badge' });
-    const titleLbl = new St.Label({ text: title + ' (' + symbol + ')', style_class: 'ai-generative-ui-title' });
-    try { titleLbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
-    try { box.add_child(badge); } catch (e) { return null; }
-    try { box.add_child(titleLbl); } catch (e) { return null; }
+    const box = _cardShell(St, 'ai-generative-ui ai-generative-ui-stock', '✦ Grafik', title + ' (' + symbol + ')');
+    if (!box) return null;
     const shown = clean.slice(-12);
     for (const p of shown) {
         const row = new St.BoxLayout({ vertical: false, style_class: 'ai-generative-ui-row' });
@@ -217,17 +223,13 @@ function _buildSportsCard(descriptor, St) {
     const home = _sportTeam(descriptor.home);
     const away = _sportTeam(descriptor.away);
     if (!title || !league || !status || !home || !away) return null;
-    const box = new St.BoxLayout({ vertical: true, style_class: 'ai-generative-ui ai-generative-ui-sports' });
-    const badge = new St.Label({ text: '✦ Olahraga', style_class: 'ai-generative-ui-badge' });
-    const titleLbl = new St.Label({ text: title, style_class: 'ai-generative-ui-title' });
-    try { titleLbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+    const box = _cardShell(St, 'ai-generative-ui ai-generative-ui-sports', '✦ Olahraga', title);
+    if (!box) return null;
     const subRow = new St.BoxLayout({ vertical: false, style_class: 'ai-generative-ui-row' });
     const leagueLbl = new St.Label({ text: league, style_class: 'ai-generative-ui-label' });
     const statusLbl = new St.Label({ text: status, style_class: 'ai-generative-ui-status' });
     try { subRow.add_child(leagueLbl); } catch (e) { return null; }
     try { subRow.add_child(statusLbl); } catch (e) { return null; }
-    try { box.add_child(badge); } catch (e) { return null; }
-    try { box.add_child(titleLbl); } catch (e) { return null; }
     try { box.add_child(subRow); } catch (e) { return null; }
     for (const t of [home, away]) {
         const row = new St.BoxLayout({ vertical: false, style_class: 'ai-generative-ui-row' });

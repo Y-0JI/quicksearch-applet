@@ -607,3 +607,16 @@ test('G7.1-17: no network/Soup/Gio/GLib in renderer', () => {
         assert.ok(src.indexOf(s) === -1, 'renderer free of ' + s);
     }
 });
+
+test('G7.2-1: shell add_child failure stays fail-closed', () => {
+    const factory = require('../ai/aiFactory.js');
+    function FailBox() {}
+    FailBox.prototype.add_child = function() { throw new Error('nope'); };
+    function FakeLabel(props) { this.props = props; }
+    FakeLabel.prototype.get_clutter_text = function() { return { set_line_wrap: function() {} }; };
+    const St = { BoxLayout: FailBox, Label: FakeLabel };
+    assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'text_only', summary: 'x' }, St), null);
+    assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'info_card', title: 'T', items: [{ label: 'a', value: 'b' }] }, St), null);
+    assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'stock_chart', symbol: 'S', title: 'T', points: [{ label: 'a', value: 1 }, { label: 'b', value: 2 }] }, St), null);
+    assert.strictEqual(factory.buildGenerativeUiActor(renderer.describeGenerativeUi(sportUi()), St), null);
+});
