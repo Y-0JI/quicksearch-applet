@@ -28,7 +28,7 @@ test('valid weather_card envelope', () => {
 });
 
 test('valid stock_chart envelope', () => {
-    const r = contract.parseGenerativeUIResponse(env('stock_chart', { data: { symbol: 'BBRI' } }));
+    const r = contract.parseGenerativeUIResponse(env('stock_chart', { data: { symbol: 'BBRI', title: 'BBRI', points: [{ label: 'Jan', value: 4000 }, { label: 'Feb', value: 4100 }] } }));
     assert.equal(r.valid, true);
     assert.equal(r.value.ui_type, 'stock_chart');
 });
@@ -156,7 +156,7 @@ test('unknown extra fields ignored', () => {
 });
 
 test('arbitrary URL stays inert data', () => {
-    const r = contract.parseGenerativeUIResponse(env('stock_chart', { data: { url: 'https://evil.example/x', symbol: 'BBRI' } }));
+    const r = contract.parseGenerativeUIResponse(env('text_only', { data: { url: 'https://evil.example/x' } }));
     assert.equal(r.valid, true);
     assert.equal(r.value.data.url, 'https://evil.example/x');
 });
@@ -266,5 +266,111 @@ test('G5.1-10: malformed info_card never throws', () => {
 });
 
 test('G5.1-11: text_only regression still valid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(env('text_only')).valid, true);
+});
+
+// ── G6.1 stock_chart ──
+function stockEnv(data) {
+    return JSON.stringify({
+        ui_type: 'stock_chart', version: 1, summary: 'stock',
+        data: data || { symbol: 'BBRI', title: 'BBRI', points: [{ label: 'Jan', value: 4000 }, { label: 'Feb', value: 4100 }] }
+    });
+}
+function pts(n, value) {
+    const out = [];
+    for (let i = 0; i < n; i++) out.push({ label: 'p' + i, value: value == null ? i : value });
+    return out;
+}
+function stockObj(data) {
+    return { ui_type: 'stock_chart', version: 1, summary: 'stock',
+        data: data || { symbol: 'BBRI', title: 'BBRI', points: [{ label: 'Jan', value: 4000 }, { label: 'Feb', value: 4100 }] } };
+}
+
+test('G6.1-A: valid stock_chart simple', () => {
+    const r = contract.parseGenerativeUIResponse(stockEnv());
+    assert.equal(r.valid, true);
+    assert.equal(r.value.ui_type, 'stock_chart');
+});
+
+test('G6.1-B: two points valid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', title: 'T', points: pts(2) })).valid, true);
+});
+
+test('G6.1-C: fifty points valid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', title: 'T', points: pts(50) })).valid, true);
+});
+
+test('G6.1-D: under two points invalid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', title: 'T', points: [] })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', title: 'T', points: pts(1) })).valid, false);
+});
+
+test('G6.1-E: over fifty points invalid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', title: 'T', points: pts(51) })).valid, false);
+});
+
+test('G6.1-F: empty symbol invalid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: '', title: 'T', points: pts(2) })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ title: 'T', points: pts(2) })).valid, false);
+});
+
+test('G6.1-G: empty title invalid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', title: '', points: pts(2) })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', points: pts(2) })).valid, false);
+});
+
+test('G6.1-H: empty label invalid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', title: 'T', points: [{ label: '', value: 1 }, { label: 'b', value: 2 }] })).valid, false);
+});
+
+test('G6.1-I: non-number value invalid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', title: 'T', points: [{ label: 'a', value: null }, { label: 'b', value: 2 }] })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', title: 'T', points: [{ label: 'a' }, { label: 'b', value: 2 }] })).valid, false);
+});
+
+test('G6.1-J: string number rejected', () => {
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', title: 'T', points: [{ label: 'a', value: '4500' }, { label: 'b', value: 2 }] })).valid, false);
+});
+
+test('G6.1-K: NaN rejected', () => {
+    assert.equal(contract.validateGenerativeUI(stockObj({ symbol: 'S', title: 'T', points: [{ label: 'a', value: NaN }, { label: 'b', value: 2 }] })).valid, false);
+});
+
+test('G6.1-L: Infinity rejected', () => {
+    assert.equal(contract.validateGenerativeUI(stockObj({ symbol: 'S', title: 'T', points: [{ label: 'a', value: Infinity }, { label: 'b', value: 2 }] })).valid, false);
+});
+
+test('G6.1-M: -Infinity rejected', () => {
+    assert.equal(contract.validateGenerativeUI(stockObj({ symbol: 'S', title: 'T', points: [{ label: 'a', value: -Infinity }, { label: 'b', value: 2 }] })).valid, false);
+});
+
+test('G6.1-N: nested point data rejected', () => {
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', title: 'T', points: [{ label: 'a', value: { x: 1 } }, { label: 'b', value: 2 }] })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', title: 'T', points: [{ label: ['a'], value: 1 }, { label: 'b', value: 2 }] })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', title: 'T', points: ['plain', { label: 'b', value: 2 }] })).valid, false);
+});
+
+test('G6.1-O: array data invalid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(JSON.stringify({ ui_type: 'stock_chart', version: 1, summary: 's', data: [] })).valid, false);
+});
+
+test('G6.1-P: oversize payload invalid', () => {
+    const big = stockEnv({ symbol: 'S', title: 'T', points: pts(2) });
+    const padded = big.slice(0, -1) + ',"pad":"' + 'x'.repeat(17 * 1024) + '"}';
+    assert.ok(padded.length > 16 * 1024);
+    assert.equal(contract.parseGenerativeUIResponse(padded).valid, false);
+});
+
+test('G6.1-Q: unknown fields excluded from value', () => {
+    const r = contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', title: 'T', points: pts(2), series: [1], color: 'red' }));
+    assert.equal(r.valid, true);
+    assert.deepEqual(Object.keys(r.value).sort(), ['data', 'summary', 'ui_type', 'version']);
+});
+
+test('G6.1-R: info_card regression still valid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv()).valid, true);
+});
+
+test('G6.1-S: existing G0/G5.1 tests unaffected (text_only valid)', () => {
     assert.equal(contract.parseGenerativeUIResponse(env('text_only')).valid, true);
 });

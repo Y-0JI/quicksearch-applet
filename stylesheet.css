@@ -885,3 +885,14 @@
     font-size: 9pt;
     color: rgba(242, 243, 245, 0.94);
 }
+.ai-generative-ui-stock {
+    x-align: START;
+}
+.ai-generative-ui-bar-track {
+    spacing: 0;
+}
+.ai-generative-ui-bar-fill {
+    background-color: rgba(125, 211, 252, 0.55);
+    border-radius: 3px;
+    font-size: 7pt;
+}

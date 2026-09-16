@@ -260,8 +260,8 @@ test('G5.2-9: raw JSON never shown for valid info_card', () => {
     assert.ok(JSON.stringify(actor).indexOf(raw.slice(0, 30)) === -1);
 });
 
-test('G5.2-10: weather/stock/sports still fallback', () => {
-    for (const t of ['weather_card', 'stock_chart', 'sports_card']) {
+test('G5.2-10: weather/sports still fallback', () => {
+    for (const t of ['weather_card', 'sports_card']) {
         assert.strictEqual(renderer.describeGenerativeUi({ ui_type: t, version: 1, summary: 's', data: {} }), null);
     }
 });
@@ -319,7 +319,6 @@ test('G4-3: unsupported still falls back, content intact', () => {
     FakeBox.prototype.add_child = function(c) { this.children.push(c); };
     const St = { BoxLayout: FakeBox, Label: FakeLabel };
     assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'weather_card', summary: 'w' }, St), null);
-    assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'stock_chart', summary: 's' }, St), null);
     assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'sports_card', summary: 's' }, St), null);
     const raw = JSON.stringify({ ui_type: 'text_only', version: 1, summary: 'hi', data: {} });
     const convMod = require('../ai/conversationState.js');
@@ -331,4 +330,106 @@ test('G4-3: unsupported still falls back, content intact', () => {
     const msg = convMod.findMessage(conv, aId);
     msg.ui = genUi.resolveAssistantUi(msg.content);
     assert.strictEqual(msg.content, raw, 'content intact');
+});
+
+// ── G6.2 stock_chart ──
+function stockUi(symbol, points) {
+    return { ui_type: 'stock_chart', version: 1, summary: 'stock',
+        data: { symbol: symbol || 'BBRI', title: (symbol || 'BBRI') + ' chart',
+            points: points || [{ label: 'Jan', value: 4000 }, { label: 'Feb', value: 4100 }] } };
+}
+
+test('G6.2-A: valid stock_chart describes render descriptor', () => {
+    const d = renderer.describeGenerativeUi(stockUi());
+    assert.ok(d);
+    assert.strictEqual(d.kind, 'stock_chart');
+});
+
+test('G6.2-B: symbol/title/points follow descriptor', () => {
+    const d = renderer.describeGenerativeUi(stockUi('TLKM'));
+    assert.strictEqual(d.symbol, 'TLKM');
+    assert.ok(d.title.indexOf('TLKM') !== -1);
+    assert.strictEqual(d.points.length, 2);
+    assert.deepStrictEqual(d.points[0], { label: 'Jan', value: 4000 });
+});
+
+test('G6.2-C: two points render', () => {
+    const d = renderer.describeGenerativeUi(stockUi());
+    assert.ok(require('../ai/aiFactory.js').buildGenerativeUiActor(d, fakeSt()));
+});
+
+test('G6.2-D: many points render without error', () => {
+    const pts = [];
+    for (let i = 0; i < 50; i++) pts.push({ label: 'p' + i, value: 100 + i });
+    const actor = require('../ai/aiFactory.js').buildGenerativeUiActor(renderer.describeGenerativeUi(stockUi('X', pts)), fakeSt());
+    assert.ok(actor);
+});
+
+test('G6.2-E: invalid descriptor falls back', () => {
+    const factory = require('../ai/aiFactory.js');
+    assert.strictEqual(renderer.describeGenerativeUi(stockUi('S', [])), null);
+    assert.strictEqual(renderer.describeGenerativeUi(stockUi('S', [{ label: 'a', value: 'x' }, { label: 'b', value: 1 }])), null);
+    assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'stock_chart' }, fakeSt()), null);
+    assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'stock_chart', symbol: '', title: 'T', points: [] }, fakeSt()), null);
+});
+
+test('G6.2-F: non-stock kind not hijacked', () => {
+    const factory = require('../ai/aiFactory.js');
+    assert.strictEqual(renderer.describeGenerativeUi({ ui_type: 'weather_card', version: 1, summary: 's', data: {} }), null);
+    assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'mystery', x: 1 }, fakeSt()), null);
+    assert.strictEqual(renderer.describeGenerativeUi(stockUi()).kind, 'stock_chart');
+});
+
+test('G6.2-G: info_card regression intact', () => {
+    const d = renderer.describeGenerativeUi(infoUi());
+    assert.strictEqual(d.kind, 'info_card');
+    assert.ok(require('../ai/aiFactory.js').buildGenerativeUiActor(d, fakeSt()));
+});
+
+test('G6.2-H: raw JSON absent from rendered actor', () => {
+    const raw = JSON.stringify(stockUi());
+    const ui = require('../ai/generativeUi.js').resolveAssistantUi(raw);
+    const actor = require('../ai/aiFactory.js').buildGenerativeUiActor(renderer.describeGenerativeUi(ui), fakeSt());
+    assert.ok(actor);
+    assert.ok(JSON.stringify(actor).indexOf('"ui_type"') === -1);
+});
+
+test('G6.2-I: renderer source has no network', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'ai', 'generativeUiRenderer.js'), 'utf8');
+    for (const s of ['Soup', 'Gio.', 'imports.gi', 'fetch(', 'XMLHttp', 'eval(', 'Function(']) {
+        assert.ok(src.indexOf(s) === -1, 'renderer free of ' + s);
+    }
+    const fsrc = fs.readFileSync(path.join(__dirname, '..', 'ai', 'aiFactory.js'), 'utf8');
+    const bIdx = fsrc.indexOf('function _buildStockChart');
+    assert.ok(bIdx !== -1);
+    const bBody = fsrc.slice(bIdx, bIdx + 2500);
+    for (const s of ['Soup', 'Gio.', 'fetch(', 'XMLHttp', 'eval(']) {
+        assert.ok(bBody.indexOf(s) === -1, 'builder free of ' + s);
+    }
+});
+
+test('G6.2-J: renderer never calls contract parser', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'ai', 'generativeUiRenderer.js'), 'utf8');
+    for (const s of ['parseGenerativeUIResponse', 'validateGenerativeUI', 'require(']) {
+        assert.ok(src.indexOf(s) === -1, 'renderer free of ' + s);
+    }
+});
+
+test('G6.2-K: msg.content unchanged', () => {
+    const raw = JSON.stringify(stockUi());
+    const convMod = require('../ai/conversationState.js');
+    const genUi = require('../ai/generativeUi.js');
+    const conv = convMod.createConversation();
+    convMod.appendUser(conv, 'Q');
+    const aId = convMod.appendAssistant(conv);
+    convMod.completeAssistant(conv, aId, raw, [], null);
+    const msg = convMod.findMessage(conv, aId);
+    msg.ui = genUi.resolveAssistantUi(msg.content);
+    assert.strictEqual(msg.content, raw);
+    assert.strictEqual(msg.ui.ui_type, 'stock_chart');
+});
+
+test('G6.2-L: G0/G5.1 behavior intact', () => {
+    assert.strictEqual(renderer.describeGenerativeUi({ ui_type: 'text_only', version: 1, summary: 's', data: {} }).kind, 'text_only');
+    assert.strictEqual(renderer.describeGenerativeUi(infoUi()).kind, 'info_card');
 });

@@ -8,6 +8,8 @@ const MAX_PAYLOAD_BYTES = 16 * 1024;
 const MAX_SUMMARY_CHARS = 500;
 const UI_TYPES = ['text_only', 'weather_card', 'stock_chart', 'sports_card', 'info_card'];
 const MAX_INFO_ITEMS = 6;
+const MAX_STOCK_POINTS = 50;
+const MIN_STOCK_POINTS = 2;
 
 function _bytes(s) {
     let n = 0;
@@ -44,6 +46,17 @@ function validateGenerativeUI(value) {
             if (!it || typeof it !== 'object' || Array.isArray(it)) return _fail('bad-info-item');
             if (typeof it.label !== 'string' || !it.label) return _fail('bad-info-label');
             if (typeof it.value !== 'string' || !it.value) return _fail('bad-info-value');
+        }
+    }
+    if (value.ui_type === 'stock_chart') {
+        const d = value.data;
+        if (typeof d.symbol !== 'string' || !d.symbol) return _fail('bad-stock-symbol');
+        if (typeof d.title !== 'string' || !d.title) return _fail('bad-stock-title');
+        if (!Array.isArray(d.points) || d.points.length < MIN_STOCK_POINTS || d.points.length > MAX_STOCK_POINTS) return _fail('bad-stock-points');
+        for (const p of d.points) {
+            if (!p || typeof p !== 'object' || Array.isArray(p)) return _fail('bad-stock-point');
+            if (typeof p.label !== 'string' || !p.label) return _fail('bad-stock-label');
+            if (typeof p.value !== 'number' || !isFinite(p.value)) return _fail('bad-stock-value');
         }
     }
     return {

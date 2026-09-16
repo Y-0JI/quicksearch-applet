@@ -58,7 +58,7 @@ test('G1-E: simulated completion keeps content, attaches ui additively', () => {
     const conv = convMod.createConversation();
     convMod.appendUser(conv, 'Q');
     const aId = convMod.appendAssistant(conv);
-    const raw = env('stock_chart', { data: { symbol: 'BBRI' } });
+    const raw = env('stock_chart', { data: { symbol: 'BBRI', title: 'BBRI', points: [{ label: 'Jan', value: 4000 }, { label: 'Feb', value: 4100 }] } });
     convMod.completeAssistant(conv, aId, raw, [], null);
     const msg = convMod.findMessage(conv, aId);
     msg.ui = genUi.resolveAssistantUi(msg.content);

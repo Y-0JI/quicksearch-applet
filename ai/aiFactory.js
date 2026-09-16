@@ -108,13 +108,14 @@ function describeGenerativeUi(ui) {
 }
 
 // buildGenerativeUiActor(descriptor, St): Cinnamon runtime only. Pure descriptor in,
-// St actor out (or null fallback). text_only + info_card. No network/Soup/GLib/async.
+// St actor out (or null fallback). text_only + info_card + stock_chart. No I/O.
 function buildGenerativeUiActor(descriptor, St) {
     try {
         if (!descriptor || typeof descriptor !== 'object') return null;
         if (!St || typeof St.BoxLayout !== 'function' || typeof St.Label !== 'function') return null;
         if (descriptor.kind === 'text_only') return _buildTextOnly(descriptor, St);
         if (descriptor.kind === 'info_card') return _buildInfoCard(descriptor, St);
+        if (descriptor.kind === 'stock_chart') return _buildStockChart(descriptor, St);
         return null;
     } catch (e) {
         return null;
@@ -156,6 +157,44 @@ function _buildInfoCard(descriptor, St) {
         const v = new St.Label({ text: it.value, style_class: 'ai-generative-ui-value' });
         try { v.get_clutter_text().set_line_wrap(true); } catch (e) {}
         try { row.add_child(l); } catch (e) { return null; }
+        try { row.add_child(v); } catch (e) { return null; }
+        try { box.add_child(row); } catch (e) { return null; }
+    }
+    return box;
+}
+
+function _buildStockChart(descriptor, St) {
+    const symbol = String(descriptor.symbol || '');
+    const title = String(descriptor.title || '');
+    const points = descriptor.points;
+    if (!symbol || !title || !Array.isArray(points) || points.length < 2 || points.length > 50) return null;
+    const clean = [];
+    let max = 0;
+    for (const p of points) {
+        if (!p || typeof p !== 'object') return null;
+        if (typeof p.label !== 'string' || !p.label) return null;
+        if (typeof p.value !== 'number' || !isFinite(p.value)) return null;
+        clean.push({ label: p.label, value: p.value });
+        if (p.value > max) max = p.value;
+    }
+    if (!(max > 0)) max = 1;
+    const box = new St.BoxLayout({ vertical: true, style_class: 'ai-generative-ui ai-generative-ui-stock' });
+    const badge = new St.Label({ text: '✦ Grafik', style_class: 'ai-generative-ui-badge' });
+    const titleLbl = new St.Label({ text: title + ' (' + symbol + ')', style_class: 'ai-generative-ui-title' });
+    try { titleLbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+    try { box.add_child(badge); } catch (e) { return null; }
+    try { box.add_child(titleLbl); } catch (e) { return null; }
+    const shown = clean.slice(-12);
+    for (const p of shown) {
+        const row = new St.BoxLayout({ vertical: false, style_class: 'ai-generative-ui-row' });
+        const l = new St.Label({ text: p.label, style_class: 'ai-generative-ui-label' });
+        const barBox = new St.BoxLayout({ vertical: false, style_class: 'ai-generative-ui-bar-track' });
+        const bar = new St.Label({ text: ' ', style_class: 'ai-generative-ui-bar-fill' });
+        try { bar.set_width(Math.max(4, Math.round(120 * p.value / max))); } catch (e) {}
+        const v = new St.Label({ text: String(p.value), style_class: 'ai-generative-ui-value' });
+        try { row.add_child(l); } catch (e) { return null; }
+        try { barBox.add_child(bar); } catch (e) { return null; }
+        try { row.add_child(barBox); } catch (e) { return null; }
         try { row.add_child(v); } catch (e) { return null; }
         try { box.add_child(row); } catch (e) { return null; }
     }
