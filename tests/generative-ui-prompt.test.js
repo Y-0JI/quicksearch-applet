@@ -111,3 +111,24 @@ test('G7.6.1-1: no stale visual-card names outside supported list', () => {
     assert.ok(both.indexOf('news)') === -1 && both.indexOf('/news') === -1, 'no news card');
     assert.ok(both.indexOf('news_card') === -1, 'no news_card type');
 });
+
+test('GROUNDED-CONF-1: conflict guidance exists with page-over-snippet rule', () => {
+    const p = promptBuilder.buildSystemPrompt({ intent: { primary: 'simple', flags: {}, depth: 'normal' }, grounded: true });
+    assert.ok(/differ/i.test(p), 'disagreement addressed');
+    assert.ok(p.indexOf('FULL PAGE CONTENT') !== -1 && p.indexOf('SNIPPET FALLBACK') !== -1, 'evidence tiers named');
+    assert.ok(/prefer FULL PAGE CONTENT over SNIPPET FALLBACK/i.test(p), 'page precedence present');
+});
+
+test('GROUNDED-CONF-2: snippet-only and insufficient-evidence limits present, no second search', () => {
+    const p = promptBuilder.buildSystemPrompt({ intent: { primary: 'simple', flags: {}, depth: 'normal' }, grounded: true });
+    assert.ok(/relies only on a snippet|only on a snippet/i.test(p), 'snippet-only limit present');
+    assert.ok(/remains unverified|insufficient/i.test(p), 'insufficient-evidence rule present');
+    assert.ok(/do not .* search again|no .* second search|without .* search/i.test(p), 'no second search');
+});
+
+test('GROUNDED-CONF-3: conflict guidance forces neither JSON nor card', () => {
+    const p = promptBuilder.buildSystemPrompt({ intent: { primary: 'explanation', flags: {}, depth: 'normal' }, grounded: true });
+    assert.ok(p.indexOf('Markdown') !== -1, 'Markdown default intact');
+    const g = String(promptBuilder.GROUNDED_GUIDANCE);
+    assert.ok(g.indexOf('JSON') === -1 && g.indexOf('ui_type') === -1, 'grounded block stays card-free');
+});

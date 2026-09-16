@@ -148,7 +148,9 @@ const GROUNDED_GUIDANCE = [
     'Synthesize relevant facts instead of walking through sources in order.',
     'Do not mention source indexes, retrieval process, snippets, or internal evidence structure.',
     'Lead with the answer the user wants; include only supporting facts that improve the answer.',
-    'Ground factual claims in the reference context when available (ground).'
+    'Ground factual claims in the reference context when available (ground).',
+    'If sources agree, answer directly without comparing them; if they differ, briefly state the difference and prefer FULL PAGE CONTENT over SNIPPET FALLBACK.',
+    'If a claim relies only on a snippet, say so; if the evidence is insufficient to decide, say what remains unverified — do not invent a resolution and do not search again.'
 ].join(' ');
 
 // G3/G7.4: OPTIONAL structured-output guidance (Generative UI).
