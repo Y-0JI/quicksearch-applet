@@ -102,3 +102,12 @@ test('G7.6-3: single conclusion alone never justifies text_only', () => {
     assert.ok(g.indexOf('one main conclusion that reads better as a compact summary') === -1,
         'old single-conclusion trigger removed');
 });
+
+test('G7.6.1-1: no stale visual-card names outside supported list', () => {
+    const g = String(promptBuilder.STRUCTURED_UI_GUIDANCE);
+    const intent = String(promptBuilder.INTENT_GUIDANCE.current || '');
+    const both = (g + '\n' + intent).toLowerCase();
+    assert.ok(both.indexOf('weather/') === -1, 'no weather/ card group');
+    assert.ok(both.indexOf('news)') === -1 && both.indexOf('/news') === -1, 'no news card');
+    assert.ok(both.indexOf('news_card') === -1, 'no news_card type');
+});
