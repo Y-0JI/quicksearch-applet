@@ -169,15 +169,16 @@ function _buildStockChart(descriptor, St) {
     const points = descriptor.points;
     if (!symbol || !title || !Array.isArray(points) || points.length < 2 || points.length > 50) return null;
     const clean = [];
-    let max = 0;
+    let maxAbs = 0;
     for (const p of points) {
         if (!p || typeof p !== 'object') return null;
         if (typeof p.label !== 'string' || !p.label) return null;
         if (typeof p.value !== 'number' || !isFinite(p.value)) return null;
         clean.push({ label: p.label, value: p.value });
-        if (p.value > max) max = p.value;
+        const a = Math.abs(p.value);
+        if (a > maxAbs) maxAbs = a;
     }
-    if (!(max > 0)) max = 1;
+    if (!(maxAbs > 0)) maxAbs = 1;
     const box = new St.BoxLayout({ vertical: true, style_class: 'ai-generative-ui ai-generative-ui-stock' });
     const badge = new St.Label({ text: '✦ Grafik', style_class: 'ai-generative-ui-badge' });
     const titleLbl = new St.Label({ text: title + ' (' + symbol + ')', style_class: 'ai-generative-ui-title' });
@@ -190,7 +191,7 @@ function _buildStockChart(descriptor, St) {
         const l = new St.Label({ text: p.label, style_class: 'ai-generative-ui-label' });
         const barBox = new St.BoxLayout({ vertical: false, style_class: 'ai-generative-ui-bar-track' });
         const bar = new St.Label({ text: ' ', style_class: 'ai-generative-ui-bar-fill' });
-        try { bar.set_width(Math.max(4, Math.round(120 * p.value / max))); } catch (e) {}
+        try { bar.set_width(Math.max(4, Math.round(120 * Math.abs(p.value) / maxAbs))); } catch (e) {}
         const v = new St.Label({ text: String(p.value), style_class: 'ai-generative-ui-value' });
         try { row.add_child(l); } catch (e) { return null; }
         try { barBox.add_child(bar); } catch (e) { return null; }

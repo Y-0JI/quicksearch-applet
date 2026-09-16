@@ -433,3 +433,66 @@ test('G6.2-L: G0/G5.1 behavior intact', () => {
     assert.strictEqual(renderer.describeGenerativeUi({ ui_type: 'text_only', version: 1, summary: 's', data: {} }).kind, 'text_only');
     assert.strictEqual(renderer.describeGenerativeUi(infoUi()).kind, 'info_card');
 });
+
+// ── G6.2.1 negative scaling hardening ──
+function widthSt(widths) {
+    function FakeLabel(props) { this.props = props; this.width = null; }
+    FakeLabel.prototype.get_clutter_text = function() { return { set_line_wrap: function() {} }; };
+    FakeLabel.prototype.set_width = function(w) { this.width = w; if (widths) widths.push(w); };
+    function FakeBox(props) { this.props = props; this.children = []; }
+    FakeBox.prototype.add_child = function(c) { this.children.push(c); };
+    return { BoxLayout: FakeBox, Label: FakeLabel };
+}
+function stockWidths(points) {
+    const widths = [];
+    const d = { kind: 'stock_chart', symbol: 'S', title: 'T', points: points };
+    const actor = require('../ai/aiFactory.js').buildGenerativeUiActor(d, widthSt(widths));
+    return { actor: actor, widths: widths };
+}
+function labelsOf(actor) {
+    const out = [];
+    (function walk(n) {
+        if (!n) return;
+        if (n.props && typeof n.props.text === 'string') out.push(n.props.text);
+        if (Array.isArray(n.children)) n.children.forEach(walk);
+    })(actor);
+    return out;
+}
+
+test('G6.2.1-A: positive values scale normally', () => {
+    const r = stockWidths([{ label: 'a', value: 50 }, { label: 'b', value: 100 }]);
+    assert.ok(r.actor);
+    assert.deepStrictEqual(r.widths, [60, 120]);
+});
+
+test('G6.2.1-B: all-negative values render with valid widths', () => {
+    const r = stockWidths([{ label: 'a', value: -100 }, { label: 'b', value: -50 }]);
+    assert.ok(r.actor);
+    assert.deepStrictEqual(r.widths, [120, 60]);
+});
+
+test('G6.2.1-C: mixed values never negative/NaN/Infinity', () => {
+    const r = stockWidths([{ label: 'a', value: -30 }, { label: 'b', value: 60 }]);
+    assert.ok(r.actor);
+    for (const w of r.widths) {
+        assert.ok(typeof w === 'number' && isFinite(w) && w >= 4, 'valid width: ' + w);
+    }
+    assert.deepStrictEqual(r.widths, [60, 120]);
+});
+
+test('G6.2.1-D: zero value gets minimum width', () => {
+    const r = stockWidths([{ label: 'a', value: 0 }, { label: 'b', value: 100 }]);
+    assert.ok(r.actor);
+    assert.deepStrictEqual(r.widths, [4, 120]);
+});
+
+test('G6.2.1-E: all-zero fallback stays safe', () => {
+    const r = stockWidths([{ label: 'a', value: 0 }, { label: 'b', value: 0 }]);
+    assert.ok(r.actor);
+    assert.deepStrictEqual(r.widths, [4, 4]);
+});
+
+test('G6.2.1-F: negative labels keep minus sign', () => {
+    const r = stockWidths([{ label: 'a', value: -42 }, { label: 'b', value: 10 }]);
+    assert.ok(labelsOf(r.actor).indexOf('-42') !== -1, 'minus preserved');
+});
