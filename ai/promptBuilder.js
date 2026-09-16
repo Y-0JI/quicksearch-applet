@@ -155,10 +155,10 @@ const GROUNDED_GUIDANCE = [
 // Default stays natural Markdown. The model may emit one exact JSON envelope
 // ONLY when a structured card genuinely helps; never forced, never invented data.
 const STRUCTURED_UI_GUIDANCE = [
-    'Optional structured cards: when the answer fits one of the card shapes below AND you have real data for every required field, you MAY respond with a single JSON object instead of Markdown. Structured output is OPTIONAL — if data is thin, use text_only; if no card fits, use Markdown.',
+    'Optional structured cards: when the answer fits one of the card shapes below AND you have real data for every required field, you MAY respond with a single JSON object instead of Markdown. Structured output is OPTIONAL — if data is thin, use Markdown; if no card fits, use Markdown.',
     'Markdown stays the default: keep Markdown for conversational answers, explanations, tutorials, troubleshooting steps, coding answers, and any code-heavy response.',
     'Supported ui_type values: "text_only", "info_card", "stock_chart", "sports_card". Do not use "weather_card" or any other ui_type. Do not invent data just to fill a card.',
-    'text_only format: {"ui_type": "text_only", "version": 1, "summary": "Short user-facing summary", "data": {}}. Use for one main conclusion that reads better as a compact summary.',
+    'text_only format: {"ui_type": "text_only", "version": 1, "summary": "Short user-facing summary", "data": {}}. Use text_only RARELY — only when a plain card adds real value over Markdown, never merely because the answer has one conclusion. When in doubt between Markdown and text_only, choose Markdown.',
     'info_card format: {"ui_type": "info_card", "version": 1, "summary": "Short title", "data": {"title": "Title", "items": [{"label": "OS", "value": "Mint"}]}}. Use for a short title plus 1-6 label/value items you actually know.',
     'stock_chart format: {"ui_type": "stock_chart", "version": 1, "summary": "Short title", "data": {"symbol": "BBRI", "title": "BBRI chart", "points": [{"label": "Jan", "value": 4000}, {"label": "Feb", "value": 4100}]}}. Use only with a real numeric series of 2-50 points; values must be numbers, never invent prices.',
     'sports_card format: {"ui_type": "sports_card", "version": 1, "summary": "Short title", "data": {"title": "Chelsea vs Arsenal", "league": "Premier League", "home": {"name": "Chelsea", "score": "2"}, "away": {"name": "Arsenal", "score": "1"}, "status": "FT"}}. Use only with a real fixture you know; never invent scores or status.',

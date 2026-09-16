@@ -84,3 +84,21 @@ test('G3-8: onDelta has no structured parsing', () => {
         assert.ok(deltaBody.indexOf(s) === -1, 'onDelta free of ' + s);
     }
 });
+
+test('G7.6-1: thin data falls back to Markdown, not text_only', () => {
+    const g = String(promptBuilder.STRUCTURED_UI_GUIDANCE).toLowerCase();
+    assert.ok(g.indexOf('if data is thin') !== -1 && g.indexOf('markdown') !== -1, 'thin-data rule present');
+    assert.ok(/if data is thin[^.]*markdown/i.test(g), 'thin data routes to Markdown');
+});
+
+test('G7.6-2: text_only is rare, doubt routes to Markdown', () => {
+    const g = String(promptBuilder.STRUCTURED_UI_GUIDANCE).toLowerCase();
+    assert.ok(g.indexOf('rarely') !== -1, 'text_only marked rare');
+    assert.ok(/in doubt[^.]*markdown|doubt[^.]*markdown/i.test(g), 'doubt routes to Markdown');
+});
+
+test('G7.6-3: single conclusion alone never justifies text_only', () => {
+    const g = String(promptBuilder.STRUCTURED_UI_GUIDANCE);
+    assert.ok(g.indexOf('one main conclusion that reads better as a compact summary') === -1,
+        'old single-conclusion trigger removed');
+});
