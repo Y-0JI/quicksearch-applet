@@ -2487,6 +2487,19 @@ class QuickSearchApplet extends Applet.IconApplet {
         this._runAIRequestStream(q, assistantId, myGen);
     }
 
+    // G1: resolve validated Generative UI envelope AFTER complete only.
+    // Never called from onDelta. msg.content stays unchanged; msg.ui holds
+    // the validated value or null (never {valid,reason}). Via factory only.
+    _attachGenerativeUi(conv, assistantId, text) {
+        try {
+            if (!convMod || !conv || assistantId == null) return;
+            if (!aiFactoryMod || typeof aiFactoryMod.resolveAssistantUi !== 'function') return;
+            const msg = convMod.findMessage(conv, assistantId);
+            if (!msg || msg.role !== 'assistant') return;
+            msg.ui = aiFactoryMod.resolveAssistantUi(text);
+        } catch (e) {}
+    }
+
     // Shared streaming/answer runner for first message, follow-up, edit and resend.
     // Chunks always append to the single assistant message created by the staging step
     // above — never to a replaced/older message.
@@ -2526,6 +2539,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                         const sources = Array.isArray(data && data.sources) ? data.sources : [];
                         const meta = { finishReason: (data && data.finishReason) || null, truncated: !!(data && data.truncated) };
                         convMod.completeAssistant(conv, assistantId, text, sources, meta);
+                        self._attachGenerativeUi(conv, assistantId, text);
                         _render();
                     },
                     onError: function(err) {
@@ -2556,9 +2570,10 @@ class QuickSearchApplet extends Applet.IconApplet {
                 self._aiLoading = false;
                 self._aiStreaming = false;
                 const meta = { finishReason: (data && data.finishReason) || null, truncated: !!(data && data.truncated) };
-                convMod.completeAssistant(conv, assistantId,
-                    data && typeof data.text === 'string' ? data.text : String((data && data.text) || ''),
+                const aText = data && typeof data.text === 'string' ? data.text : String((data && data.text) || '');
+                convMod.completeAssistant(conv, assistantId, aText,
                     Array.isArray(data && data.sources) ? data.sources : [], meta);
+                self._attachGenerativeUi(conv, assistantId, aText);
                 _render();
             },
             onError: (err) => {
@@ -2583,7 +2598,9 @@ class QuickSearchApplet extends Applet.IconApplet {
                     self._aiLoading = false;
                     self._aiStreaming = false;
                     const meta2 = { finishReason: data.finishReason || null, truncated: !!data.truncated };
-                    convMod.completeAssistant(conv, assistantId, data.text || '', Array.isArray(data.sources) ? data.sources : [], meta2);
+                    const dText = data.text || '';
+                    convMod.completeAssistant(conv, assistantId, dText, Array.isArray(data.sources) ? data.sources : [], meta2);
+                    self._attachGenerativeUi(conv, assistantId, dText);
                     _render();
                 }
             }

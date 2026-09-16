@@ -72,6 +72,19 @@ if (!sourceContentExpanderMod) {
     } catch (e2) {}
 }
 
+let generativeUiMod = null;
+_r = _tryRequireWithDiagnostics('generativeUi', ['./ai/generativeUi.js', './generativeUi.js', 'ai/generativeUi.js']);
+generativeUiMod = _r.module;
+
+function resolveAssistantUi(text) {
+    try {
+        if (generativeUiMod && typeof generativeUiMod.resolveAssistantUi === 'function') {
+            return generativeUiMod.resolveAssistantUi(text);
+        }
+    } catch (e) {}
+    return null;
+}
+
 function _trim(s) { return String(s || '').trim(); }
 
 function _makeErrorProvider(code, message) {
@@ -284,4 +297,4 @@ function createAiEngine(opts) {
 
 function _getRequireDiagnostics() { return JSON.parse(JSON.stringify(_lastRequireDiagnostics || {})); }
 function _resetRequireDiagnostics() { _lastRequireDiagnostics = {}; }
-module.exports = { createAiEngine, createAiEngineForConfig: createAiEngine, _tryRequireWithDiagnostics, _sanitizeRequireMsg, _getRequireDiagnostics, _resetRequireDiagnostics, _lastRequireDiagnostics: _lastRequireDiagnostics };
+module.exports = { createAiEngine, createAiEngineForConfig: createAiEngine, resolveAssistantUi, _tryRequireWithDiagnostics, _sanitizeRequireMsg, _getRequireDiagnostics, _resetRequireDiagnostics, _lastRequireDiagnostics: _lastRequireDiagnostics };
