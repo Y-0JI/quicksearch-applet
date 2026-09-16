@@ -107,8 +107,40 @@ test('G2-10: applet builds actor via factory only, never onDelta', () => {
     assert.ok(factorySrc.indexOf('buildGenerativeUiActor') !== -1, 'factory exposes actor builder');
 });
 
-test('G2-11: factory builder pure-St-injected, text_only only, never throws', () => {
-    const factory = require('../ai/aiFactory.js');
+test('G2-12: complete branch renders gen actor instead of raw JSON Markdown', () => {
+    const appletSrc = fs.readFileSync(path.join(__dirname, '..', 'applet.js'), 'utf8');
+    const idx = appletSrc.indexOf("} else if (msg.status === 'complete') {");
+    assert.ok(idx !== -1, 'complete branch found');
+    let depth = 0, end = -1;
+    const open = appletSrc.indexOf('{', idx);
+    for (let i = open; i < appletSrc.length; i++) {
+        if (appletSrc[i] === '{') depth++;
+        else if (appletSrc[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+    }
+    const body = appletSrc.slice(open, end + 1);
+    const genPos = body.indexOf('_buildGenerativeUiActorForMessage(msg)');
+    const mdPos = body.indexOf('_buildAiAnswerActor(String(msg.content');
+    assert.ok(genPos !== -1 && mdPos !== -1, 'both builders present');
+    assert.ok(genPos < mdPos, 'gen actor attempted before Markdown');
+    assert.ok(body.indexOf('genShown') !== -1, 'Markdown gated on gen failure');
+});
+
+test('G2-13: complete branch never strips or mutates msg.content', () => {
+    const appletSrc = fs.readFileSync(path.join(__dirname, '..', 'applet.js'), 'utf8');
+    const idx = appletSrc.indexOf("} else if (msg.status === 'complete') {");
+    let depth = 0, end = -1;
+    const open = appletSrc.indexOf('{', idx);
+    for (let i = open; i < appletSrc.length; i++) {
+        if (appletSrc[i] === '{') depth++;
+        else if (appletSrc[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+    }
+    const body = appletSrc.slice(open, end + 1);
+    assert.ok(body.indexOf('msg.content =') === -1, 'no content assignment');
+    assert.ok(body.indexOf('msg.content=') === -1, 'no content assignment');
+    assert.ok(body.indexOf('.replace(') === -1, 'no content stripping');
+});
+
+test('G2-11: factory builder pure-St-injected, text_only only, never throws', () => {    const factory = require('../ai/aiFactory.js');
     assert.strictEqual(typeof factory.describeGenerativeUi, 'function');
     assert.strictEqual(typeof factory.buildGenerativeUiActor, 'function');
     assert.strictEqual(factory.buildGenerativeUiActor(null, null), null);

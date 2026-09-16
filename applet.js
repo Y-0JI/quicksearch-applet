@@ -2237,16 +2237,23 @@ class QuickSearchApplet extends Applet.IconApplet {
                         } catch (e) {}
                     }
                 } else if (msg.status === 'complete') {
-                    try {
-                        const actor = this._buildAiAnswerActor(String(msg.content || ''));
-                        if (actor) ov.aiResultsBox.add_child(actor);
-                    } catch (e) {}
-                    // G2: additive Generative UI below the Markdown answer (AI-only).
-                    // Fallback-safe: null/unsupported → nothing added, Markdown stays.
+                    // G2.1: valid Generative UI actor wins; raw JSON content is never
+                    // rendered as Markdown. Fallback: existing Markdown answer.
+                    // msg.content untouched in all cases (presentation decision only).
+                    let genShown = false;
                     try {
                         const genActor = this._buildGenerativeUiActorForMessage(msg);
-                        if (genActor) ov.aiResultsBox.add_child(genActor);
-                    } catch (e) {}
+                        if (genActor) {
+                            ov.aiResultsBox.add_child(genActor);
+                            genShown = true;
+                        }
+                    } catch (e) { genShown = false; }
+                    if (!genShown) {
+                        try {
+                            const actor = this._buildAiAnswerActor(String(msg.content || ''));
+                            if (actor) ov.aiResultsBox.add_child(actor);
+                        } catch (e) {}
+                    }
                     if (msg.truncated) {
                         try {
                             const tLbl = new St.Label({ text: _("Jawaban terhenti karena mencapai batas output."), style_class: "quicksearch-ai-truncated" });
