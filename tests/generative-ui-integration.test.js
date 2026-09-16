@@ -70,6 +70,61 @@ test('G1-E: simulated completion keeps content, attaches ui additively', () => {
     assert.ok(ctx.every(m => m.ui === undefined), 'no ui field leaks into context messages');
 });
 
+// ── G1.1 loader hardening ──
+test('G1.1-1: contract loader finds parser via candidate paths', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'ai', 'generativeUi.js'), 'utf8');
+    assert.ok(src.indexOf('./ai/generativeUiContract.js') !== -1, 'applet-root path tried');
+    assert.ok(src.indexOf('./generativeUiContract.js') !== -1, 'sibling path tried');
+    assert.ok(src.indexOf("require('./generativeUiContract.js')") === -1, 'single-path require gone');
+    const genUi = require('../ai/generativeUi.js');
+    const d = genUi.diagnoseAssistantUi(JSON.stringify({ ui_type: 'text_only', version: 1, summary: 's', data: {} }));
+    assert.strictEqual(d.parserLoaded, true, 'parser loads in Node');
+});
+
+test('G1.1-2: valid text_only resolves to validated value', () => {
+    const genUi = require('../ai/generativeUi.js');
+    const ui = genUi.resolveAssistantUi(env('text_only', { summary: 'hi' }));
+    assert.strictEqual(ui.ui_type, 'text_only');
+    assert.strictEqual(ui.version, 1);
+});
+
+test('G1.1-3: bad JSON stays null', () => {
+    assert.strictEqual(require('../ai/generativeUi.js').resolveAssistantUi('{nope'), null);
+});
+
+test('G1.1-4: non-string stays null', () => {
+    const genUi = require('../ai/generativeUi.js');
+    assert.strictEqual(genUi.resolveAssistantUi(null), null);
+    assert.strictEqual(genUi.resolveAssistantUi(42), null);
+});
+
+test('G1.1-5: total loader failure stays null without throwing', () => {
+    const Module = require('module');
+    const orig = Module.prototype.require;
+    Module.prototype.require = function(p) {
+        if (String(p).indexOf('generativeUiContract') !== -1) throw new Error('blocked');
+        return orig.apply(this, arguments);
+    };
+    try {
+        delete require.cache[require.resolve('../ai/generativeUi.js')];
+        const iso = require('../ai/generativeUi.js');
+        assert.strictEqual(iso.resolveAssistantUi(env('text_only')), null);
+        const d = iso.diagnoseAssistantUi(env('text_only'));
+        assert.strictEqual(d.parserLoaded, false);
+        assert.strictEqual(d.reason, 'no-parser');
+    } finally {
+        Module.prototype.require = orig;
+        delete require.cache[require.resolve('../ai/generativeUi.js')];
+        require('../ai/generativeUi.js');
+    }
+});
+
+test('G1.1-6: public API stays compatible', () => {
+    const genUi = require('../ai/generativeUi.js');
+    assert.strictEqual(typeof genUi.resolveAssistantUi, 'function');
+    assert.strictEqual(genUi.resolveAssistantUi.length, 1);
+});
+
 // ── F. applet.js wiring: via factory only, onComplete only, never onDelta ──
 test('G1-F: applet wires resolveAssistantUi via factory on completion paths', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'applet.js'), 'utf8');
