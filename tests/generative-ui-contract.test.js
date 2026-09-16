@@ -416,3 +416,38 @@ test('G7.1-C6: nested invalid object rejected', () => {
     assert.equal(contract.parseGenerativeUIResponse(sportEnv({ title: 'T', league: 'L', home: { name: { x: 1 }, score: '1' }, away: { name: 'A', score: '0' }, status: 'FT' })).valid, false);
     assert.equal(contract.parseGenerativeUIResponse(sportEnv({ title: 'T', league: 'L', home: ['H'], away: { name: 'A', score: '0' }, status: 'FT' })).valid, false);
 });
+
+// ── G7.4 per-field 200-char bounds ──
+test('G7.4-F1: info title 200 pass / 201 fail', () => {
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'x'.repeat(200), items: [{ label: 'a', value: 'b' }] } })).valid, true);
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'x'.repeat(201), items: [{ label: 'a', value: 'b' }] } })).valid, false);
+});
+
+test('G7.4-F2: info label/value 201 fail', () => {
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'T', items: [{ label: 'x'.repeat(201), value: 'b' }] } })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv({ data: { title: 'T', items: [{ label: 'a', value: 'x'.repeat(201) }] } })).valid, false);
+});
+
+test('G7.4-F3: stock symbol/title/point.label 201 fail', () => {
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'x'.repeat(201), title: 'T', points: pts(2) })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', title: 'x'.repeat(201), points: pts(2) })).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv({ symbol: 'S', title: 'T', points: [{ label: 'x'.repeat(201), value: 1 }, { label: 'b', value: 2 }] })).valid, false);
+});
+
+test('G7.4-F4: sports fields 201 fail', () => {
+    const base = { title: 'T', league: 'L', home: { name: 'H', score: '1' }, away: { name: 'A', score: '0' }, status: 'FT' };
+    for (const [k, v] of [['title', 'x'.repeat(201)], ['league', 'x'.repeat(201)], ['status', 'x'.repeat(201)]]) {
+        assert.equal(contract.parseGenerativeUIResponse(sportEnv(Object.assign({}, base, { [k]: v }))).valid, false, k);
+    }
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv(Object.assign({}, base, { home: { name: 'x'.repeat(201), score: '1' } }))).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv(Object.assign({}, base, { home: { name: 'H', score: 'x'.repeat(201) } }))).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv(Object.assign({}, base, { away: { name: 'x'.repeat(201), score: '0' } }))).valid, false);
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv(Object.assign({}, base, { away: { name: 'A', score: 'x'.repeat(201) } }))).valid, false);
+});
+
+test('G7.4-F5: existing valid fixtures still pass', () => {
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv()).valid, true);
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv()).valid, true);
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv()).valid, true);
+    assert.equal(contract.parseGenerativeUIResponse(env('text_only')).valid, true);
+});

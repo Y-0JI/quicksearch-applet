@@ -10,6 +10,13 @@ const UI_TYPES = ['text_only', 'weather_card', 'stock_chart', 'sports_card', 'in
 const MAX_INFO_ITEMS = 6;
 const MAX_STOCK_POINTS = 50;
 const MIN_STOCK_POINTS = 2;
+const MAX_FIELD_LENGTH = 200;
+
+function _str(s, max) {
+    if (typeof s !== 'string' || !s) return false;
+    if (typeof max === 'number' && s.length > max) return false;
+    return true;
+}
 
 function _bytes(s) {
     let n = 0;
@@ -40,36 +47,36 @@ function validateGenerativeUI(value) {
     if (!value.data || typeof value.data !== 'object' || Array.isArray(value.data)) return _fail('bad-data');
     if (value.ui_type === 'info_card') {
         const d = value.data;
-        if (typeof d.title !== 'string' || !d.title) return _fail('bad-info-title');
+        if (!_str(d.title, MAX_FIELD_LENGTH)) return _fail('bad-info-title');
         if (!Array.isArray(d.items) || d.items.length < 1 || d.items.length > MAX_INFO_ITEMS) return _fail('bad-info-items');
         for (const it of d.items) {
             if (!it || typeof it !== 'object' || Array.isArray(it)) return _fail('bad-info-item');
-            if (typeof it.label !== 'string' || !it.label) return _fail('bad-info-label');
-            if (typeof it.value !== 'string' || !it.value) return _fail('bad-info-value');
+            if (!_str(it.label, MAX_FIELD_LENGTH)) return _fail('bad-info-label');
+            if (!_str(it.value, MAX_FIELD_LENGTH)) return _fail('bad-info-value');
         }
     }
     if (value.ui_type === 'stock_chart') {
         const d = value.data;
-        if (typeof d.symbol !== 'string' || !d.symbol) return _fail('bad-stock-symbol');
-        if (typeof d.title !== 'string' || !d.title) return _fail('bad-stock-title');
+        if (!_str(d.symbol, MAX_FIELD_LENGTH)) return _fail('bad-stock-symbol');
+        if (!_str(d.title, MAX_FIELD_LENGTH)) return _fail('bad-stock-title');
         if (!Array.isArray(d.points) || d.points.length < MIN_STOCK_POINTS || d.points.length > MAX_STOCK_POINTS) return _fail('bad-stock-points');
         for (const p of d.points) {
             if (!p || typeof p !== 'object' || Array.isArray(p)) return _fail('bad-stock-point');
-            if (typeof p.label !== 'string' || !p.label) return _fail('bad-stock-label');
+            if (!_str(p.label, MAX_FIELD_LENGTH)) return _fail('bad-stock-label');
             if (typeof p.value !== 'number' || !isFinite(p.value)) return _fail('bad-stock-value');
         }
     }
     if (value.ui_type === 'sports_card') {
         const d = value.data;
-        if (typeof d.title !== 'string' || !d.title) return _fail('bad-sport-title');
-        if (typeof d.league !== 'string' || !d.league) return _fail('bad-sport-league');
+        if (!_str(d.title, MAX_FIELD_LENGTH)) return _fail('bad-sport-title');
+        if (!_str(d.league, MAX_FIELD_LENGTH)) return _fail('bad-sport-league');
         for (const side of ['home', 'away']) {
             const t = d[side];
             if (!t || typeof t !== 'object' || Array.isArray(t)) return _fail('bad-sport-team');
-            if (typeof t.name !== 'string' || !t.name) return _fail('bad-sport-name');
-            if (typeof t.score !== 'string' || !t.score) return _fail('bad-sport-score');
+            if (!_str(t.name, MAX_FIELD_LENGTH)) return _fail('bad-sport-name');
+            if (!_str(t.score, MAX_FIELD_LENGTH)) return _fail('bad-sport-score');
         }
-        if (typeof d.status !== 'string' || !d.status) return _fail('bad-sport-status');
+        if (!_str(d.status, MAX_FIELD_LENGTH)) return _fail('bad-sport-status');
     }
     return {
         valid: true,
@@ -103,5 +110,6 @@ module.exports = {
     CONTRACT_VERSION,
     MAX_PAYLOAD_BYTES,
     MAX_SUMMARY_CHARS,
+    MAX_FIELD_LENGTH,
     UI_TYPES
 };

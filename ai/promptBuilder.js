@@ -151,16 +151,18 @@ const GROUNDED_GUIDANCE = [
     'Ground factual claims in the reference context when available (ground).'
 ].join(' ');
 
-// G3: OPTIONAL structured-output guidance (Generative UI text_only).
-// Default stays natural Markdown. The model may emit the exact JSON envelope
-// below ONLY when a compact structured summary genuinely helps; never forced.
-// weather_card/stock_chart/sports_card are NOT generatable in G3.
+// G3/G7.4: OPTIONAL structured-output guidance (Generative UI).
+// Default stays natural Markdown. The model may emit one exact JSON envelope
+// ONLY when a structured card genuinely helps; never forced, never invented data.
 const STRUCTURED_UI_GUIDANCE = [
-    'Optional structured summary: when the answer has one main conclusion that reads better as a compact summary (result status, analysis outcome), you MAY respond with a single JSON object instead of Markdown.',
+    'Optional structured cards: when the answer fits one of the card shapes below AND you have real data for every required field, you MAY respond with a single JSON object instead of Markdown. Structured output is OPTIONAL — if data is thin, use text_only; if no card fits, use Markdown.',
     'Markdown stays the default: keep Markdown for conversational answers, explanations, tutorials, troubleshooting steps, coding answers, and any code-heavy response.',
-    'Only "text_only" may be generated. Do not use weather_card, stock_chart or sports_card — they are not yet supported.',
-    'Exact format when structured output is chosen: {"ui_type": "text_only", "version": 1, "summary": "Short user-facing summary", "data": {}}.',
-    'Rules: JSON object only, no Markdown fence, no ```json block, no text before JSON, no text after JSON; ui_type must be "text_only"; version must be 1; summary is a short user-facing string of at most 500 characters; data must be a plain object; do not invent unsupported data.'
+    'Supported ui_type values: "text_only", "info_card", "stock_chart", "sports_card". Do not use "weather_card" or any other ui_type. Do not invent data just to fill a card.',
+    'text_only format: {"ui_type": "text_only", "version": 1, "summary": "Short user-facing summary", "data": {}}. Use for one main conclusion that reads better as a compact summary.',
+    'info_card format: {"ui_type": "info_card", "version": 1, "summary": "Short title", "data": {"title": "Title", "items": [{"label": "OS", "value": "Mint"}]}}. Use for a short title plus 1-6 label/value items you actually know.',
+    'stock_chart format: {"ui_type": "stock_chart", "version": 1, "summary": "Short title", "data": {"symbol": "BBRI", "title": "BBRI chart", "points": [{"label": "Jan", "value": 4000}, {"label": "Feb", "value": 4100}]}}. Use only with a real numeric series of 2-50 points; values must be numbers, never invent prices.',
+    'sports_card format: {"ui_type": "sports_card", "version": 1, "summary": "Short title", "data": {"title": "Chelsea vs Arsenal", "league": "Premier League", "home": {"name": "Chelsea", "score": "2"}, "away": {"name": "Arsenal", "score": "1"}, "status": "FT"}}. Use only with a real fixture you know; never invent scores or status.',
+    'Rules: JSON object only, no Markdown fence, no ```json block, no text before JSON, no text after JSON; version must be 1; summary is a short user-facing string of at most 500 characters; every other text field at most 200 characters; do not invent unsupported data.'
 ].join(' ');
 
 // Legacy alias — the full-blown historical prompt is gone; keep the export name for any

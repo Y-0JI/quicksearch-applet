@@ -36,16 +36,15 @@ test('G3-3: prompt does not force all responses to JSON', () => {
     assert.ok(promptBuilder.STRUCTURED_UI_GUIDANCE, 'guidance exported');
 });
 
-// G3-4: generation limited to text_only
-test('G3-4: prompt restricts structured UI to text_only', () => {
+// G3-4: generation limited to supported types (G7.4: 4 types)
+test('G3-4: prompt documents supported card types', () => {
     const g = String(promptBuilder.STRUCTURED_UI_GUIDANCE);
-    assert.ok(g.indexOf('text_only') !== -1);
-    assert.ok(/only\s+("text_only"|'text_only'|text_only)/i.test(g) || /do not use (weather|stock|sports)/i.test(g),
-        'text_only is the only generatable type');
-    for (const t of ['weather_card', 'stock_chart', 'sports_card']) {
-        assert.ok(g.indexOf(t) === -1 || /do not use|not yet|unsupported|only text_only/i.test(g),
-            t + ' must not be offered as generatable');
+    for (const t of ['text_only', 'info_card', 'stock_chart', 'sports_card']) {
+        assert.ok(g.indexOf(t) !== -1, t + ' documented');
     }
+    assert.ok(/do not use "weather_card"|weather_card.*unsupported|no.*weather/i.test(g),
+        'weather_card stays ungeneratable');
+    assert.ok(g.indexOf('not yet supported') === -1, 'stale claim removed');
 });
 
 // G3-5: no Markdown fence for structured output

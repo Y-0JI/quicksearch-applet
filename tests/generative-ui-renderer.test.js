@@ -620,3 +620,18 @@ test('G7.2-1: shell add_child failure stays fail-closed', () => {
     assert.strictEqual(factory.buildGenerativeUiActor({ kind: 'stock_chart', symbol: 'S', title: 'T', points: [{ label: 'a', value: 1 }, { label: 'b', value: 2 }] }, St), null);
     assert.strictEqual(factory.buildGenerativeUiActor(renderer.describeGenerativeUi(sportUi()), St), null);
 });
+
+test('G7.4-E2E: sports raw JSON end-to-end resolve→describe→build', () => {
+    const raw = JSON.stringify(sportUi());
+    const genUi = require('../ai/generativeUi.js');
+    const factory = require('../ai/aiFactory.js');
+    const ui = genUi.resolveAssistantUi(raw);
+    assert.ok(ui && ui.ui_type === 'sports_card', 'resolved');
+    const d = renderer.describeGenerativeUi(ui);
+    assert.ok(d && d.kind === 'sports_card', 'described');
+    assert.strictEqual(d.title, 'Chelsea vs Arsenal');
+    const actor = factory.buildGenerativeUiActor(d, fakeSt());
+    assert.ok(actor, 'actor built, no Markdown fallback');
+    const t = sportTexts(actor).join('|');
+    assert.ok(t.indexOf('Chelsea') !== -1 && t.indexOf('FT') !== -1, 'fields preserved');
+});
