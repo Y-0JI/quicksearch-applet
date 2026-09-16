@@ -6,7 +6,7 @@
 const CONTRACT_VERSION = 1;
 const MAX_PAYLOAD_BYTES = 16 * 1024;
 const MAX_SUMMARY_CHARS = 500;
-const UI_TYPES = ['text_only', 'weather_card', 'stock_chart', 'sports_card', 'info_card'];
+const UI_TYPES = ['text_only', 'info_card', 'stock_chart', 'sports_card'];
 const MAX_INFO_ITEMS = 6;
 const MAX_STOCK_POINTS = 50;
 const MIN_STOCK_POINTS = 2;

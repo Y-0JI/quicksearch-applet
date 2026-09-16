@@ -45,7 +45,7 @@ test('G7.5-C1: hostile envelope shapes fail closed', () => {
     assert.strictEqual(contract.validateGenerativeUI({ ui_type: 'info_card', version: 1, summary: 's', data: { title: 'T', items: {} } }).valid, false);
 });
 
-test('G7.5-C2: extra hostile data fields ignored, never executed', () => {
+test('G7.5-C2: extra data fields unconsumed, input unmutated, nothing executed', () => {
     const r = contract.parseGenerativeUIResponse(JSON.stringify({
         ui_type: 'info_card', version: 1, summary: 's',
         data: { title: 'T', items: [{ label: 'a', value: 'b', __proto__: { x: 1 }, extra: [1, 2] }], series: [1], url: 'https://evil.example/' }

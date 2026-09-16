@@ -21,10 +21,19 @@ test('valid text_only', () => {
     assert.equal(r.value.ui_type, 'text_only');
 });
 
-test('valid weather_card envelope', () => {
+test('G7.5.1-W: weather_card rejected (no runtime)', () => {
     const r = contract.parseGenerativeUIResponse(env('weather_card', { data: { city: 'Jakarta' } }));
-    assert.equal(r.valid, true);
-    assert.equal(r.value.ui_type, 'weather_card');
+    assert.equal(r.valid, false);
+    assert.equal(r.value, null);
+    assert.equal(require('../ai/generativeUi.js').resolveAssistantUi(env('weather_card', { data: {} })), null);
+    assert.equal(require('../ai/generativeUiRenderer.js').describeGenerativeUi({ ui_type: 'weather_card', version: 1, summary: 's', data: {} }), null);
+});
+
+test('G7.5.1-V: four supported types stay valid', () => {
+    assert.equal(contract.parseGenerativeUIResponse(env('text_only')).valid, true);
+    assert.equal(contract.parseGenerativeUIResponse(infoEnv()).valid, true);
+    assert.equal(contract.parseGenerativeUIResponse(stockEnv()).valid, true);
+    assert.equal(contract.parseGenerativeUIResponse(sportEnv()).valid, true);
 });
 
 test('valid stock_chart envelope', () => {
@@ -169,8 +178,8 @@ test('HTML/Pango-looking summary stays plain data', () => {
     assert.equal(r.value.summary, s);
 });
 
-test('unexpected nested data types pass through', () => {
-    const r = contract.parseGenerativeUIResponse(env('weather_card', { data: { a: [1, 2], b: null, c: 42, d: { e: 'x' } } }));
+test('unexpected nested data types pass through (text_only envelope-only)', () => {
+    const r = contract.parseGenerativeUIResponse(env('text_only', { data: { a: [1, 2], b: null, c: 42, d: { e: 'x' } } }));
     assert.equal(r.valid, true);
 });
 

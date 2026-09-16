@@ -108,7 +108,7 @@ function describeGenerativeUi(ui) {
 }
 
 // buildGenerativeUiActor(descriptor, St): Cinnamon runtime only. Pure descriptor in,
-// St actor out (or null fallback). text_only + info_card + stock_chart. No I/O.
+// St actor out (or null fallback). text_only + info_card + stock_chart + sports_card. No I/O.
 function buildGenerativeUiActor(descriptor, St) {
     try {
         if (!descriptor || typeof descriptor !== 'object') return null;
