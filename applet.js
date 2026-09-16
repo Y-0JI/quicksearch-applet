@@ -1992,151 +1992,15 @@ class QuickSearchApplet extends Applet.IconApplet {
             return false;
         } catch (e) { return true; }
     }
-    // Weather card: map WMO codes to theme symbolic icon names.
-    _wmoIconName(code) {
-        const c = Number(code) || 0;
-        if (c === 0) return "weather-clear-symbolic";
-        if (c === 1 || c === 2) return "weather-few-clouds-symbolic";
-        if (c === 3) return "weather-overcast-symbolic";
-        if (c === 45 || c === 48) return "weather-fog-symbolic";
-        if ((c >= 51 && c <= 55) || (c >= 80 && c <= 82)) return "weather-showers-scattered-symbolic";
-        if ((c >= 61 && c <= 67)) return "weather-showers-symbolic";
-        if ((c >= 71 && c <= 77)) return "weather-snow-symbolic";
-        if (c >= 95) return "weather-storm-symbolic";
-        return "weather-overcast-symbolic";
-    }
-
-    // Weather card: wind degrees -> 8-point Indonesian compass, pure JS.
-    _windDirName(deg) {
-        const d = Number(deg);
-        if (!isFinite(d)) return "";
-        return ["U", "TL", "T", "TG", "S", "BD", "B", "BL"][Math.round(((d % 360) + 360) % 360 / 45) % 8];
-    }
-
-    // Weather card: temperature range chart built from PURE-CSS bars (2026-09-14).
-    // No cairo, no Clutter.Canvas, no manual boxed disposal anywhere: both crash dumps (SIGSEGV on
-    // a cairo boxed, then SIGABRT GBytes heap corruption) trace back to native boxed
-    // ownership games in the old canvas-based sparkline. St widgets only now.
-    _buildSparkline(series, w, h) {
-        try {
-            const vals = [];
-            for (const s of (series || [])) {
-                const hi = Number(s && s.max); const lo = Number(s && s.min);
-                if (isFinite(hi)) vals.push(hi);
-                if (isFinite(lo)) vals.push(lo);
-            }
-            if (vals.length < 4) return null;
-            const minV = Math.min.apply(null, vals), maxV = Math.max.apply(null, vals);
-            const span = Math.max(0.1, maxV - minV);
-            const mkBarCol = (v, cls) => {
-                const barH = Math.max(3, Math.round(((v - minV) / span) * (h - 6)) + 3);
-                const col = new St.BoxLayout({ vertical: true, style_class: cls });
-                col.add(new St.Bin({ width: 6, height: h - barH })); // transparent spacer -> bar hugs the bottom
-                col.add(new St.Bin({ width: 6, height: barH }));
-                return col;
-            };
-            const row = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-weather-spark" });
-            for (const s of (series || [])) {
-                const hi = Number(s && s.max), lo = Number(s && s.min);
-                if (!isFinite(hi) && !isFinite(lo)) continue;
-                const pair = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-weather-spark-pair" });
-                if (isFinite(lo)) pair.add(mkBarCol(lo, "quicksearch-ai-weather-spark-col-min"));
-                if (isFinite(hi)) pair.add(mkBarCol(hi, "quicksearch-ai-weather-spark-col"));
-                row.add(pair);
-            }
-            return row;
-        } catch (e) { return null; }
-    }
-
-    // Weather card renderer: structured snapshot -> native widget (icon, big temp,
-    // humidity/wind row, 3-day strip with a sparkline). Pure presentation.
-    _buildWeatherCard(data) {
-        try {
-            if (!data || data.kind !== 'weather') return null;
-            const cur = data.current || {};
-            const box = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-weather" });
-            // header: place name
-            try {
-                const head = new St.Label({ text: "\u26c5 " + String(data.place || "") + (data.country ? ", " + data.country : ""), style_class: "quicksearch-ai-weather-place" });
-                box.add(head);
-            } catch (e) {}
-            // main row: big icon + big temp + condition
-            const main = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-weather-main" });
-            try {
-                const icon = new St.Icon({ icon_name: this._wmoIconName(cur.code), icon_size: 44, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-weather-icon" });
-                main.add(icon);
-            } catch (e) {}
-            try {
-                const col = new St.BoxLayout({ vertical: true });
-                const t = new St.Label({ text: (isFinite(Number(cur.temperature)) ? Math.round(Number(cur.temperature)) : "--") + "\u00b0C", style_class: "quicksearch-ai-weather-temp" });
-                col.add(t);
-                const wmoTxt = ({ 0: "Langit cerah", 1: "Cerah berawan", 2: "Berawan sebagian", 3: "Berawan", 45: "Berkabut", 48: "Berkabut membeku", 51: "Gerimis ringan", 53: "Gerimis", 55: "Gerimis lebat", 61: "Hujan ringan", 63: "Hujan sedang", 65: "Hujan lebat", 66: "Hujan membeku", 67: "Hujan membeku lebat", 71: "Salju ringan", 73: "Salju sedang", 75: "Salju lebat", 80: "Hujan lokal ringan", 81: "Hujan lokal sedang", 82: "Hujan lokal deras", 95: "Badai petir", 96: "Badai petir + hujan es", 99: "Badai petir hebat" })[Number(cur.code)] || "";
-                if (wmoTxt) col.add(new St.Label({ text: wmoTxt, style_class: "quicksearch-ai-weather-cond" }));
-                main.add(col);
-            } catch (e) {}
-            box.add(main);
-            // meta rows: humidity + feels-like + rain chance, wind + gusts, sun times
-            try {
-                const todayProb = (Array.isArray(data.daily) && data.daily[0] && data.daily[0].precipProb);
-                let line1 = "\ud83d\udca7 " + (isFinite(Number(cur.humidity)) ? Math.round(Number(cur.humidity)) : "--") + "%";
-                if (isFinite(Number(cur.feelsLike))) line1 += "  \u2022  Terasa " + Math.round(Number(cur.feelsLike)) + "\u00b0";
-                if (isFinite(Number(todayProb))) line1 += "  \u2022  \ud83c\udf27 " + Math.round(Number(todayProb)) + "%";
-                box.add(new St.Label({ text: line1, style_class: "quicksearch-ai-weather-meta" }));
-                const dir = this._windDirName(cur.windDir);
-                let line2 = "\ud83d\udca8 " + (isFinite(Number(cur.wind)) ? Math.round(Number(cur.wind)) : "--") + " km/j" + (dir ? " " + dir : "");
-                if (isFinite(Number(cur.gusts))) line2 += "  \u2022  Kencang " + Math.round(Number(cur.gusts)) + " km/j";
-                box.add(new St.Label({ text: line2, style_class: "quicksearch-ai-weather-meta" }));
-                if (data.sunrise || data.sunset) {
-                    box.add(new St.Label({ text: "\ud83c\udf05 " + (data.sunrise || "--:--") + "   \ud83c\udf07 " + (data.sunset || "--:--"), style_class: "quicksearch-ai-weather-meta" }));
-                }
-            } catch (e) {}
-            // 3-day strip + sparkline
-            const daily = Array.isArray(data.daily) ? data.daily : [];
-            if (daily.length > 0) {
-                try {
-                    const strip = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-weather-days" });
-                    const dayNames = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
-                    for (const dItem of daily) {
-                        const col = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-weather-day" });
-                        let dayName = "";
-                        try {
-                            const dt = new Date(String(dItem.date || "") + "T00:00:00");
-                            if (!isNaN(dt.getTime())) dayName = dayNames[dt.getDay()];
-                        } catch (e) {}
-                        col.add(new St.Label({ text: dayName || String(dItem.date || "").slice(5), style_class: "quicksearch-ai-weather-day-name" }));
-                        try { col.add(new St.Icon({ icon_name: this._wmoIconName(dItem.code), icon_size: 18, icon_type: St.IconType.SYMBOLIC, style_class: "quicksearch-ai-weather-day-icon" })); } catch (e2) {}
-                        col.add(new St.Label({ text: (isFinite(Number(dItem.min)) ? Math.round(Number(dItem.min)) : "--") + "\u2013" + (isFinite(Number(dItem.max)) ? Math.round(Number(dItem.max)) : "--") + "\u00b0", style_class: "quicksearch-ai-weather-day-temp" }));
-                        if (isFinite(Number(dItem.precipProb))) col.add(new St.Label({ text: "\ud83c\udf27" + Math.round(Number(dItem.precipProb)) + "%", style_class: "quicksearch-ai-weather-day-name" }));
-                        strip.add(col);
-                    }
-                    box.add(strip);
-                } catch (e) {}
-                try {
-                    const spark = this._buildSparkline(daily, 190, 34);
-                    if (spark) { try { box.add(spark, { x_align: St.Align.MIDDLE }); } catch (e3) { try { box.add(spark); } catch (e4) {} } }
-                } catch (e) {}
-            }
-            return box;
-        } catch (e) { return null; }
-    }
-
-    _buildAiAnswerActor(content, structuredData) {
+    _buildAiAnswerActor(content) {
         try {
             const text = String(content || '');
-            if (!text && !structuredData) return null;
+            if (!text) return null;
             let blocks = null;
             if (mdMod && typeof mdMod.parseMarkdownBlocks === 'function') {
                 try { blocks = mdMod.parseMarkdownBlocks(text); } catch (e) { blocks = null; }
             }
             const box = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-answer-md quicksearch-ai-answer-block" });
-            // structured card (weather) sits ABOVE the narrative text, ChatGPT-style
-            if (structuredData) {
-                try {
-                    const card = this._buildWeatherCard(structuredData);
-                    if (card) try { box.add_child(card); } catch (e0) {}
-                } catch (e) {}
-            }
-            if (!text) return box;
             const arr = (blocks && blocks.length) ? blocks :
                 [{ kind: 'paragraph', lines: text.split('\n').map(l => ({ spans: [{ style: 'plain', text: l }] })) }];
             for (const block of arr) {
@@ -2347,7 +2211,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 if (msg.status === 'streaming') {
                     if (msg.content) {
                         try {
-                            const actor = this._buildAiAnswerActor(String(msg.content), msg.data);
+                            const actor = this._buildAiAnswerActor(String(msg.content));
                             if (actor) ov.aiResultsBox.add_child(actor);
                         } catch (e) {}
                     } else {
@@ -2358,7 +2222,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                     }
                 } else if (msg.status === 'complete') {
                     try {
-                        const actor = this._buildAiAnswerActor(String(msg.content || ''), msg.data);
+                        const actor = this._buildAiAnswerActor(String(msg.content || ''));
                         if (actor) ov.aiResultsBox.add_child(actor);
                     } catch (e) {}
                     if (msg.truncated) {
@@ -2404,7 +2268,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                     // §8: partial content remains visible, status shown, request inactive
                     if (msg.content) {
                         try {
-                            const actor = this._buildAiAnswerActor(String(msg.content), msg.data);
+                            const actor = this._buildAiAnswerActor(String(msg.content));
                             if (actor) ov.aiResultsBox.add_child(actor);
                         } catch (e) {}
                     }
@@ -2435,7 +2299,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                                 : (diagOn ? this._buildAiDiagnosticText(msg.error) : _("Unable to get an AI response."));
                     if (msg.content) {
                         try {
-                            const actor = this._buildAiAnswerActor(String(msg.content), msg.data);
+                            const actor = this._buildAiAnswerActor(String(msg.content));
                             if (actor) ov.aiResultsBox.add_child(actor);
                         } catch (e) {}
                     }
@@ -2660,11 +2524,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                         self._aiStreaming = false;
                         const text = data && typeof data.text === 'string' ? data.text : String((data && data.text) || '');
                         const sources = Array.isArray(data && data.sources) ? data.sources : [];
-                        // meta must ALWAYS be an object: when it was null (normal answers
-                        // without finishReason/truncated) `meta.data = ...` threw inside the
-                        // try/catch and silently dropped the weather-card payload.
                         const meta = { finishReason: (data && data.finishReason) || null, truncated: !!(data && data.truncated) };
-                        if (data && data.data) { try { meta.data = data.data; } catch (eM) {} }
                         convMod.completeAssistant(conv, assistantId, text, sources, meta);
                         _render();
                     },
@@ -2695,10 +2555,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                 if (_check()) return;
                 self._aiLoading = false;
                 self._aiStreaming = false;
-                // meta must ALWAYS be an object (see onComplete above) or the card data
-                // assignment throws and is silently swallowed.
                 const meta = { finishReason: (data && data.finishReason) || null, truncated: !!(data && data.truncated) };
-                if (data && data.data) { try { meta.data = data.data; } catch (eM) {} }
                 convMod.completeAssistant(conv, assistantId,
                     data && typeof data.text === 'string' ? data.text : String((data && data.text) || ''),
                     Array.isArray(data && data.sources) ? data.sources : [], meta);
@@ -2726,7 +2583,6 @@ class QuickSearchApplet extends Applet.IconApplet {
                     self._aiLoading = false;
                     self._aiStreaming = false;
                     const meta2 = { finishReason: data.finishReason || null, truncated: !!data.truncated };
-                    if (data.data) { try { meta2.data = data.data; } catch (eM) {} }
                     convMod.completeAssistant(conv, assistantId, data.text || '', Array.isArray(data.sources) ? data.sources : [], meta2);
                     _render();
                 }

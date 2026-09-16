@@ -82,8 +82,6 @@ function completeAssistant(conv, id, text, sources, meta) {
     m.status = 'complete';
     if (meta && typeof meta.finishReason === 'string') m.finishReason = meta.finishReason;
     m.truncated = !!(meta && (meta.truncated || meta.finishReason === 'length'));
-    // structured card data (e.g. weather snapshot) rides on the message for the UI
-    if (meta && meta.data && typeof meta.data === 'object') m.data = meta.data;
     if (conv.activeId === id) conv.activeId = null;
     return true;
 }

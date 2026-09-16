@@ -146,37 +146,6 @@
                 return httpGetJson(fUrl, cancellable).then((f) => {
                     const c = f.current || {};
                     const d = (f.daily || {});
-                    // structured snapshot for the UI weather card (rendered as a native
-                    // widget above the AI text — plain sources only carry the flat text)
-                    const data = {
-                        kind: 'weather',
-                        place: hit.name || place,
-                        country: hit.country || null,
-                        current: {
-                            temperature: Number(c.temperature_2m),
-                            feelsLike: Number(c.apparent_temperature),
-                            humidity: Number(c.relative_humidity_2m),
-                            wind: Number(c.wind_speed_10m),
-                            windDir: Number(c.wind_direction_10m),
-                            gusts: Number(c.wind_gusts_10m),
-                            precip: Number(c.precipitation),
-                            code: Number(c.weather_code)
-                        },
-                        sunrise: String((d.sunrise || [])[0] || '').slice(11, 16) || null,
-                        sunset: String((d.sunset || [])[0] || '').slice(11, 16) || null,
-                        daily: []
-                    };
-                    if (d.time) {
-                        for (let i = 0; i < Math.min(3, d.time.length); i++) {
-                            data.daily.push({
-                                date: String(d.time[i] || ''),
-                                min: Number((d.temperature_2m_min || [])[i]),
-                                max: Number((d.temperature_2m_max || [])[i]),
-                                code: Number((d.weather_code || [])[i]),
-                                precipProb: Number((d.precipitation_probability_max || [])[i])
-                            });
-                        }
-                    }
                     const lines = [];
                     lines.push('Cuaca ' + (hit.name || place) + (hit.country ? ', ' + hit.country : '') + ' saat ini: ' + _wmo(c.weather_code) +
                         ', suhu ' + c.temperature_2m + '°C, terasa ' + c.apparent_temperature + '°C, kelembapan ' + c.relative_humidity_2m + '%, angin ' + c.wind_speed_10m + ' km/j.');
@@ -185,7 +154,7 @@
                             lines.push(d.time[i] + ': ' + _wmo((d.weather_code || [])[i]) + ', ' + (d.temperature_2m_min || [])[i] + '–' + (d.temperature_2m_max || [])[i] + '°C, peluang hujan ' + ((d.precipitation_probability_max || [])[i] != null ? (d.precipitation_probability_max || [])[i] : '-') + '%.');
                         }
                     }
-                    return { structured: data, sources: [{ title: 'Cuaca ' + (hit.name || place) + ' — Open-Meteo', url: 'https://open-meteo.com/', snippet: lines.join(' ') }] };
+                    return [{ title: 'Cuaca ' + (hit.name || place) + ' — Open-Meteo', url: 'https://open-meteo.com/', snippet: lines.join(' ') }];
                 });
             });
         }
@@ -282,12 +251,8 @@
             const p = domain === 'weather' ? fetchWeather(query, cancellable)
                 : domain === 'stock' ? fetchStock(query, cancellable)
                 : fetchNews(query, cancellable);
-            // weather returns { structured, sources } (the card data rides along); the
-            // other domains still return a plain sources array (no cards yet)
+            // every domain returns a plain sources array (no cards)
             return p.then((r) => {
-                if (domain === 'weather' && r && r.structured) {
-                    return { domain: domain, sources: r.sources, structured: r.structured };
-                }
                 return { domain: domain, sources: r };
             });
         }
