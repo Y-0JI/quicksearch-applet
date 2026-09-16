@@ -843,3 +843,16 @@
 .quicksearch-search-view .quicksearch-results-connected {
     border-top: none;
 }
+
+/* G2 Generative UI — AI-only. No Search selectors touched. */
+.ai-generative-ui {
+    spacing: 4px;
+    padding: 2px 8px 8px 8px;
+}
+.ai-generative-ui-text-only {
+    x-align: START;
+}
+.ai-generative-ui-summary {
+    font-size: 10pt;
+    color: rgba(242, 243, 245, 0.94);
+}

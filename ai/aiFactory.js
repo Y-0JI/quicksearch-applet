@@ -85,6 +85,38 @@ function resolveAssistantUi(text) {
     return null;
 }
 
+let generativeUiRendererMod = null;
+_r = _tryRequireWithDiagnostics('generativeUiRenderer', ['./ai/generativeUiRenderer.js', './generativeUiRenderer.js', 'ai/generativeUiRenderer.js']);
+generativeUiRendererMod = _r.module;
+
+function describeGenerativeUi(ui) {
+    try {
+        if (generativeUiRendererMod && typeof generativeUiRendererMod.describeGenerativeUi === 'function') {
+            return generativeUiRendererMod.describeGenerativeUi(ui);
+        }
+    } catch (e) {}
+    return null;
+}
+
+// buildGenerativeUiActor(descriptor, St): Cinnamon runtime only. Pure descriptor in,
+// St actor out (or null fallback). text_only only. No network/Soup/GLib/async.
+function buildGenerativeUiActor(descriptor, St) {
+    try {
+        if (!descriptor || typeof descriptor !== 'object') return null;
+        if (descriptor.kind !== 'text_only') return null;
+        if (!St || typeof St.BoxLayout !== 'function' || typeof St.Label !== 'function') return null;
+        const summary = String(descriptor.summary || '');
+        if (!summary) return null;
+        const box = new St.BoxLayout({ vertical: true, style_class: 'ai-generative-ui ai-generative-ui-text-only' });
+        const lbl = new St.Label({ text: summary, style_class: 'ai-generative-ui-summary' });
+        try { lbl.get_clutter_text().set_line_wrap(true); } catch (e) {}
+        try { box.add_child(lbl); } catch (e) { return null; }
+        return box;
+    } catch (e) {
+        return null;
+    }
+}
+
 function _trim(s) { return String(s || '').trim(); }
 
 function _makeErrorProvider(code, message) {
@@ -297,4 +329,4 @@ function createAiEngine(opts) {
 
 function _getRequireDiagnostics() { return JSON.parse(JSON.stringify(_lastRequireDiagnostics || {})); }
 function _resetRequireDiagnostics() { _lastRequireDiagnostics = {}; }
-module.exports = { createAiEngine, createAiEngineForConfig: createAiEngine, resolveAssistantUi, _tryRequireWithDiagnostics, _sanitizeRequireMsg, _getRequireDiagnostics, _resetRequireDiagnostics, _lastRequireDiagnostics: _lastRequireDiagnostics };
+module.exports = { createAiEngine, createAiEngineForConfig: createAiEngine, resolveAssistantUi, describeGenerativeUi, buildGenerativeUiActor, _tryRequireWithDiagnostics, _sanitizeRequireMsg, _getRequireDiagnostics, _resetRequireDiagnostics, _lastRequireDiagnostics: _lastRequireDiagnostics };

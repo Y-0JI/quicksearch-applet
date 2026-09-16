@@ -1992,6 +1992,22 @@ class QuickSearchApplet extends Applet.IconApplet {
             return false;
         } catch (e) { return true; }
     }
+    // G2: AI-only Generative UI actor from validated msg.ui. Pure descriptor in,
+    // St actor out (or null fallback). Markdown answer stays; this is additive.
+    // Never called from onDelta/streaming — complete branch only.
+    _buildGenerativeUiActorForMessage(msg) {
+        try {
+            if (!msg || !msg.ui) return null;
+            if (!aiFactoryMod || typeof aiFactoryMod.describeGenerativeUi !== 'function') return null;
+            if (typeof aiFactoryMod.buildGenerativeUiActor !== 'function') return null;
+            const descriptor = aiFactoryMod.describeGenerativeUi(msg.ui);
+            if (!descriptor) return null;
+            return aiFactoryMod.buildGenerativeUiActor(descriptor, St);
+        } catch (e) {
+            return null;
+        }
+    }
+
     _buildAiAnswerActor(content) {
         try {
             const text = String(content || '');
@@ -2224,6 +2240,12 @@ class QuickSearchApplet extends Applet.IconApplet {
                     try {
                         const actor = this._buildAiAnswerActor(String(msg.content || ''));
                         if (actor) ov.aiResultsBox.add_child(actor);
+                    } catch (e) {}
+                    // G2: additive Generative UI below the Markdown answer (AI-only).
+                    // Fallback-safe: null/unsupported → nothing added, Markdown stays.
+                    try {
+                        const genActor = this._buildGenerativeUiActorForMessage(msg);
+                        if (genActor) ov.aiResultsBox.add_child(genActor);
                     } catch (e) {}
                     if (msg.truncated) {
                         try {
