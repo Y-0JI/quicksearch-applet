@@ -115,9 +115,36 @@ test('data array', () => {
 
 test('payload over 16KB rejected', () => {
     const big = env('text_only', { summary: 's', data: { blob: 'x'.repeat(17 * 1024) } });
-    assert.ok(Buffer.byteLength(big, 'utf8') > 16 * 1024);
+    assert.ok(big.length > 16 * 1024);
     const r = contract.parseGenerativeUIResponse(big);
     assert.equal(r.valid, false);
+});
+
+test('utf8 multibyte payload measured in bytes not chars (GJS path, no Buffer)', () => {
+    const saved = global.Buffer;
+    try {
+        delete global.Buffer;
+        // 'é' = 2 bytes UTF-8: ~9068 chars but ~18068 bytes > 16KB -> must reject
+        const big = env('text_only', { summary: 's', data: { blob: 'é'.repeat(9000) } });
+        assert.ok(big.length < 16 * 1024, 'char count stays under limit');
+        assert.equal(contract.parseGenerativeUIResponse(big).valid, false);
+        // small unicode payload stays valid without Buffer
+        assert.equal(contract.parseGenerativeUIResponse(env('text_only', { summary: 'Cuaca ☀️' })).valid, true);
+    } finally {
+        global.Buffer = saved;
+    }
+});
+
+test('ascii payload size enforced without Buffer (GJS path)', () => {
+    const saved = global.Buffer;
+    try {
+        delete global.Buffer;
+        assert.equal(contract.parseGenerativeUIResponse(env('text_only')).valid, true);
+        const big = env('text_only', { summary: 's', data: { blob: 'x'.repeat(17 * 1024) } });
+        assert.equal(contract.parseGenerativeUIResponse(big).valid, false);
+    } finally {
+        global.Buffer = saved;
+    }
 });
 
 // ── ROBUSTNESS ──

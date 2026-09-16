@@ -9,7 +9,19 @@ const MAX_SUMMARY_CHARS = 500;
 const UI_TYPES = ['text_only', 'weather_card', 'stock_chart', 'sports_card'];
 
 function _bytes(s) {
-    try { return Buffer.byteLength(s, 'utf8'); } catch (e) { return s.length; }
+    let n = 0;
+    for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+        if (c < 0x80) n += 1;
+        else if (c < 0x800) n += 2;
+        else if (c >= 0xD800 && c <= 0xDBFF) {
+            const lo = s.charCodeAt(i + 1);
+            if (lo >= 0xDC00 && lo <= 0xDFFF) { n += 4; i++; }
+            else n += 3;
+        }
+        else n += 3;
+    }
+    return n;
 }
 
 function _fail(reason) {
