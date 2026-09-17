@@ -431,25 +431,32 @@ test('P1-4: open() verifies the modal actually left the CLOSED state', () => {
     assert.ok(section.includes('WARN overlay.state still CLOSED'), 'failure is logged, not swallowed');
 });
 
-test('P2-3: long code lines contained without a nested scrollview', () => {
-    // Regression (fixed in 9c8889e, re-proven by T5): a nested St.ScrollView
-    // inside the chat's own _aiScroll collapses to an empty viewport on
-    // Cinnamon -> codebox renders header/copy/scrollbar but NO visible text.
-    // The label must be a direct child again; long lines are contained by
-    // char-wise hard wrapping.
+test('P2-3: code lines verbatim in a deterministic h-scroll viewport', () => {
+    // History: nested ScrollView with no valid height collapsed to a 0px
+    // viewport (header/copy/scrollbar visible, content empty). Fix: the code
+    // ScrollView gets a deterministic height from the line count BEFORE layout,
+    // so it can never measure 0px; CHAR wrap is gone so URLs/paths stay whole.
     const codeIdx = APPLET_SRC.indexOf("block.kind === 'code'");
-    const codeSection = APPLET_SRC.slice(codeIdx, codeIdx + 3000);
-    assert.ok(!codeSection.includes('new St.ScrollView'), 'no nested ScrollView in code blocks (empty-viewport bug)');
-    assert.ok(!codeSection.includes('quicksearch-ai-md-code-scroll'), 'scroll container class removed');
-    assert.ok(!codeSection.includes('codeScroll'), 'no scroll-viewport variable left in code path');
-    assert.ok(codeSection.includes('codeBox.add(codeLbl)') || codeSection.includes('codeBox.add_child(codeLbl)'), 'code label is a direct child of the codebox');
-    assert.ok(codeSection.includes('Pango.WrapMode.CHAR'), 'long lines hard-wrap by character');
-    assert.ok(codeSection.includes('set_line_wrap(true)'), 'wrap enabled');
-    assert.ok(codeSection.includes('set_text(codeText)'), 'fallback injects full code text into the label');
-    assert.ok(codeSection.includes('_setLabelMarkupSafe(codeLbl'), 'markup path injects full code text into the label');
+    const codeSection = APPLET_SRC.slice(codeIdx, codeIdx + 5000);
+    assert.ok(codeSection.includes('new St.ScrollView'), 'dedicated code scroll viewport exists');
+    assert.ok(codeSection.includes('quicksearch-ai-md-code-scroll'), 'scroll container class present');
+    assert.ok(codeSection.includes('codeScroll.add_actor(codeBody)') || codeSection.includes('codeScroll.add_child(codeBody)'), 'line stack lives inside the scroll, header/copy stay outside');
+    assert.ok(codeSection.includes('St.PolicyType.AUTOMATIC, St.PolicyType.NEVER'), 'horizontal scroll on demand, never vertical (parent _aiScroll owns vertical)');
+    assert.ok(codeSection.includes('codeLineCount * 24 + 16'), 'viewport height deterministic from line count (never 0px)');
+    assert.ok(codeSection.includes('codeScroll.set_height('), 'height set synchronously before layout');
+    assert.ok(!codeSection.includes('Pango.WrapMode.CHAR'), 'no char wrap that splits URLs/paths/commands');
+    assert.ok(codeSection.includes('set_line_wrap(false)'), 'code lines never wrap mid-token');
+    assert.ok(codeSection.includes('for (const rawLine of (block.lines || []))'), 'one label per source line (newlines preserved)');
+    assert.ok(codeSection.includes('escapeMarkupText(rawLine)'), 'each line escaped verbatim, never re-parsed');
+    assert.ok(codeSection.includes('lineLbl.set_text(String(rawLine))'), 'fallback injects the raw line verbatim');
+    assert.ok(!codeSection.includes('blockToMarkup(block)'), 'no whole-block markup that could reflow lines');
     assert.ok(codeSection.includes('_copyUserMessageToClipboard(codeText)'), 'copy still copies the full block text');
+    assert.ok(!codeSection.includes('_copyUserMessageToClipboard(rawLine'), 'copy never copies a single visible line');
     assert.ok(codeSection.includes('quicksearch-ai-md-code-copy'), 'copy button still present');
-    assert.ok(codeSection.includes('codeHeader.add(copyBtn'), 'copy stays above the code text (visible + clickable)');
+    assert.ok(codeSection.includes('codeHeader.add(copyBtn'), 'copy stays in the header, outside the scroll body');
+    assert.ok(codeSection.includes('codeBox.add(codeScroll)') || codeSection.includes('codeBox.add_child(codeScroll)'), 'scroll is a direct child of the codebox');
     assert.ok(CSS_SRC.includes('.quicksearch-ai-md-code-header'), 'header styled');
-    assert.ok(!/\.quicksearch-ai-md-code\s*\{[^}]*(display\s*:\s*none|visibility\s*:\s*hidden|color\s*:\s*transparent|color\s*:\s*rgba\(0,\s*0,\s*0,\s*0)/.test(CSS_SRC), 'code text never hidden via display/visibility/transparent color');
+    assert.ok(CSS_SRC.includes('.quicksearch-ai-md-code-scroll'), 'scroll body styled');
+    assert.ok(CSS_SRC.includes('.quicksearch-ai-md-code-line'), 'per-line code styled');
+    assert.ok(!/\.quicksearch-ai-md-code-line\s*\{[^}]*(display\s*:\s*none|visibility\s*:\s*hidden|color\s*:\s*transparent|color\s*:\s*rgba\(0,\s*0,\s*0,\s*0)/.test(CSS_SRC), 'code text never hidden via display/visibility/transparent color');
 });

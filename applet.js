@@ -2046,22 +2046,37 @@ class QuickSearchApplet extends Applet.IconApplet {
                         try { copyBtn.add_style_class_name("quicksearch-ai-action-icon-btn"); } catch (e) {}
                         try { codeHeader.add(copyBtn, { x_align: St.Align.END, y_align: St.Align.MIDDLE }); } catch (e) { try { codeHeader.add_child(copyBtn); } catch (e2) {} }
                         try { codeBox.add(codeHeader); } catch (e) { try { codeBox.add_child(codeHeader); } catch (e2) {} }
-                        const codeLbl = new St.Label({ text: '', style_class: "quicksearch-ai-md-code" });
-                        try {
-                            const ct = codeLbl.get_clutter_text();
-                            ct.set_line_wrap(true);
-                            ct.set_line_wrap_mode(Pango.WrapMode.CHAR);
-                            if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
-                        } catch (e) {}
-                        let ok = false;
-                        try {
-                            const markup = (mdMod && typeof mdMod.blockToMarkup === 'function') ? mdMod.blockToMarkup(block) : null;
-                            if (markup != null) ok = this._setLabelMarkupSafe(codeLbl, markup);
-                        } catch (e) { ok = false; }
-                        if (!ok) {
-                            try { codeLbl.set_text(codeText); } catch (e2) {}
+                        const codeBody = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-md-code-body" });
+                        for (const rawLine of (block.lines || [])) {
+                            try {
+                                const lineLbl = new St.Label({ style_class: "quicksearch-ai-md-code-line" });
+                                try {
+                                    const ct = lineLbl.get_clutter_text();
+                                    ct.set_line_wrap(false);
+                                    if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
+                                } catch (e) {}
+                                let lineOk = false;
+                                try {
+                                    const lineMarkup = (mdMod && typeof mdMod.escapeMarkupText === 'function') ? mdMod.escapeMarkupText(rawLine) : null;
+                                    if (lineMarkup != null) lineOk = this._setLabelMarkupSafe(lineLbl, lineMarkup);
+                                } catch (e) { lineOk = false; }
+                                if (!lineOk) {
+                                    try { lineLbl.set_text(String(rawLine)); } catch (e2) {}
+                                }
+                                try { codeBody.add(lineLbl); } catch (e) { try { codeBody.add_child(lineLbl); } catch (e2) {} }
+                            } catch (e) {}
                         }
-                        try { codeBox.add(codeLbl); } catch (e) { try { codeBox.add_child(codeLbl); } catch (e2) {} }
+                        const codeLineCount = Math.max(1, (block.lines || []).length);
+                        const codeScroll = new St.ScrollView({
+                            style_class: "quicksearch-ai-md-code-scroll",
+                            x_fill: true, y_fill: false,
+                            clip_to_allocation: true,
+                            overlay_scrollbars: false
+                        });
+                        try { codeScroll.set_policy(St.PolicyType.AUTOMATIC, St.PolicyType.NEVER); } catch (e) {}
+                        try { codeScroll.add_actor(codeBody); } catch (e) { try { codeScroll.add_child(codeBody); } catch (e2) {} }
+                        try { codeScroll.set_height(codeLineCount * 24 + 16); } catch (eH) {}
+                        try { codeBox.add(codeScroll); } catch (e) { try { codeBox.add_child(codeScroll); } catch (e2) {} }
                         box.add_child(codeBox);
                     } catch (e) {}
                     continue;

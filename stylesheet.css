@@ -760,9 +760,20 @@
     font-weight: 600;
     color: rgba(255, 255, 255, 0.45);
 }
-.quicksearch-ai-md-code {
+.quicksearch-ai-md-code-scroll {
+    background: none;
+    border: none;
+    padding: 2px 0 8px 0;
+}
+.quicksearch-ai-md-code-body {
+    padding: 0 10px 0 10px;
+    spacing: 0;
+}
+.quicksearch-ai-md-code-line {
     font-family: monospace;
-    padding: 2px 10px 8px 10px;
+    font-size: 10pt;
+    color: rgba(242, 243, 245, 0.94);
+    padding: 1px 0;
 }
 .quicksearch-ai-md-code-copy {
     width: 22px;
