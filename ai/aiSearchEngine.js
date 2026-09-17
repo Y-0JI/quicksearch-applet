@@ -340,12 +340,26 @@ function createAISearchEngine(deps) {
     // results merged (canonicalize+dedupe), aspect-tagged at snippet-text level only.
     // Rollback: deps.fanOut === false forces the legacy single-search path.
     const fanOutEnabled = deps.fanOut !== false;
+    // H precision gate: fan-out only for research/comparison-eligible intents.
+    // Reuses the existing responseIntent classifier (no new NLP). Eligible:
+    // comparison, data, list, current. Ineligible (single search): explanation,
+    // howto, troubleshooting, simple, or unknown. Fail-closed: no intent → single.
+    function _fanoutEligible(query) {
+        try {
+            const intent = _detectIntent(query);
+            if (!intent || typeof intent.primary !== 'string') return false;
+            return intent.primary === 'comparison' || intent.primary === 'data' ||
+                intent.primary === 'list' || intent.primary === 'current';
+        } catch (e) {
+            return false;
+        }
+    }
     function _fanoutWebSearch(wsRequest, cancellable, cb) {
         const q = wsRequest && typeof wsRequest.query === 'string' ? wsRequest.query : '';
         const maxResults = wsRequest && wsRequest.maxResults;
         let plan = null;
         try {
-            if (fanOutEnabled && Gt && typeof Gt.decomposeMultiAspect === 'function') {
+            if (fanOutEnabled && _fanoutEligible(q) && Gt && typeof Gt.decomposeMultiAspect === 'function') {
                 plan = Gt.decomposeMultiAspect(q);
             }
         } catch (e) { plan = null; }

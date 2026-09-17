@@ -208,3 +208,67 @@ test('H-OSUVWX: guards for dedupe, metadata, parser, UI', () => {
     assert.ok(engSrc.indexOf('generativeUi') === -1, 'engine never touches Generative UI (X)');
     assert.ok(engSrc.indexOf('require(') !== -1, 'sanity');
 });
+
+test('H-P1A: comparison fan-out stays 2 searches', async () => {
+    const seen = [];
+    const engine = engineWith((req, canc, cb) => {
+        seen.push(req.query);
+        cb(null, { type: 'tool_result', tool: 'web_search', query: req.query, sources: srcSet(2, 'p' + seen.length) });
+    });
+    await runStream(engine, 'Bandingkan X dari sisi harga dan performa');
+    assert.strictEqual(seen.length, 2, 'comparison fans out');
+});
+
+test('H-P1C: explanation stays single search', async () => {
+    const seen = [];
+    const { createMockStreamingAiProvider: mkProv } = require('../ai/aiProvider.js');
+    const provider = mkProv({
+        handler: (payload, onEvent) => {
+            onEvent({ type: 'start' });
+            onEvent({ type: 'tool_call', tool: 'web_search', arguments: { query: 'Jelaskan X dari sisi harga dan performa' } });
+        }
+    });
+    const engine = createAISearchEngine({ provider, webSearchTool: { search: (req, canc, cb) => {
+        seen.push(req.query);
+        cb(null, { type: 'tool_result', tool: 'web_search', query: req.query, sources: srcSet(2, 'e' + seen.length) });
+    } }, enableGrounding: true });
+    await runStream(engine, 'Jelaskan X');
+    assert.strictEqual(seen.length, 1, 'explanation stays single, got ' + JSON.stringify(seen));
+});
+
+test('H-P1D: definition stays single search', async () => {
+    const seen = [];
+    const { createMockStreamingAiProvider: mkProv2 } = require('../ai/aiProvider.js');
+    const provider = mkProv2({
+        handler: (payload, onEvent) => {
+            onEvent({ type: 'start' });
+            onEvent({ type: 'tool_call', tool: 'web_search', arguments: { query: 'Apa itu X berdasarkan harga dan performa' } });
+        }
+    });
+    const engine = createAISearchEngine({ provider, webSearchTool: { search: (req, canc, cb) => {
+        seen.push(req.query);
+        cb(null, { type: 'tool_result', tool: 'web_search', query: req.query, sources: srcSet(2, 'd' + seen.length) });
+    } }, enableGrounding: true });
+    await runStream(engine, 'Apa itu X');
+    assert.strictEqual(seen.length, 1, 'definition stays single, got ' + JSON.stringify(seen));
+});
+
+test('H-P1E: how-to stays single search', async () => {
+    const seen = [];
+    const engine = engineWith((req, canc, cb) => {
+        seen.push(req.query);
+        cb(null, { type: 'tool_result', tool: 'web_search', query: req.query, sources: srcSet(2, 'h' + seen.length) });
+    });
+    await runStream(engine, 'Cara menggunakan X dari sisi harga dan performa');
+    assert.strictEqual(seen.length, 1, 'how-to stays single, got ' + JSON.stringify(seen));
+});
+
+test('H-P1B: two-object comparison fans out', async () => {
+    const seen = [];
+    const engine = engineWith((req, canc, cb) => {
+        seen.push(req.query);
+        cb(null, { type: 'tool_result', tool: 'web_search', query: req.query, sources: srcSet(2, 'b' + seen.length) });
+    });
+    await runStream(engine, 'Bandingkan X dan Y dari segi harga dan performa');
+    assert.strictEqual(seen.length, 2, 'two-object comparison fans out, got ' + JSON.stringify(seen));
+});
