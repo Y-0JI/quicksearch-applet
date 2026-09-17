@@ -78,7 +78,7 @@ function parseInline(line) {
 // Blocks:
 //   { kind:'paragraph', lines:[ {spans:[...]}, ... ] }
 //   { kind:'list', ordered:bool, items:[ {num:null|'1.', spans:[...]}, ... ] }
-//   { kind:'code', lines:[rawString, ...] }   (verbatim, no inline parsing)
+//   { kind:'code', lang:'bash'|..., lines:[rawString, ...] }   (verbatim, no inline parsing)
 function parseMarkdownBlocks(text) {
     const src = String(text == null ? '' : text).replace(/\r\n?/g, '\n');
     const lines = src.split('\n');
@@ -91,7 +91,8 @@ function parseMarkdownBlocks(text) {
         if (!trimmed) { i++; continue; }
         // fenced code block: keep verbatim until the closing fence
         if (/^```/.test(trimmed)) {
-            const code = { kind: 'code', lines: [] };
+            const lang = trimmed.replace(/^```\s*/, '').split(/\s+/)[0] || '';
+            const code = { kind: 'code', lang: lang, lines: [] };
             i++;
             while (i < n && !/^```/.test(lines[i].trim())) {
                 code.lines.push(lines[i]);

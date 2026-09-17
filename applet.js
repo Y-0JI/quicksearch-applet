@@ -2027,14 +2027,28 @@ class QuickSearchApplet extends Applet.IconApplet {
                 if (block.kind === 'code') {
                     try {
                         const codeText = String((block.lines || []).join('\n'));
+                        const codeLang = String((block && block.lang) || '').slice(0, 24);
                         const codeBox = new St.BoxLayout({ vertical: true, style_class: "quicksearch-ai-md-codebox" });
+                        const codeHeader = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-md-code-header" });
+                        if (codeLang) {
+                            try {
+                                const langLbl = new St.Label({ text: codeLang, style_class: "quicksearch-ai-md-code-lang" });
+                                try { codeHeader.add(langLbl, { x_align: St.Align.START, y_align: St.Align.MIDDLE }); } catch (e) { try { codeHeader.add_child(langLbl); } catch (e2) {} }
+                            } catch (e) {}
+                        }
+                        try {
+                            const gap = new St.Widget({ x_expand: true });
+                            try { codeHeader.add(gap, { expand: true }); } catch (e) { try { codeHeader.add_child(gap); } catch (e2) {} }
+                        } catch (e) {}
+                        const copyBtn = this._buildIconActionButton(["edit-copy-symbolic", "edit-copy"], _("Copy code"), "quicksearch-ai-md-code-copy", () => {
+                            this._copyUserMessageToClipboard(codeText);
+                        });
+                        try { copyBtn.add_style_class_name("quicksearch-ai-action-icon-btn"); } catch (e) {}
+                        try { codeHeader.add(copyBtn, { x_align: St.Align.END, y_align: St.Align.MIDDLE }); } catch (e) { try { codeHeader.add_child(copyBtn); } catch (e2) {} }
+                        try { codeBox.add(codeHeader); } catch (e) { try { codeBox.add_child(codeHeader); } catch (e2) {} }
                         const codeLbl = new St.Label({ text: '', style_class: "quicksearch-ai-md-code" });
                         try {
                             const ct = codeLbl.get_clutter_text();
-                            // P2-3 regression fix: never nest a ScrollView inside the chat's own
-                            // _aiScroll — a nested St.ScrollView collapses to an empty viewport on
-                            // Cinnamon (codebox rendered with no visible text). Long lines are
-                            // contained by char-wise hard wrapping instead of horizontal scrolling.
                             ct.set_line_wrap(true);
                             ct.set_line_wrap_mode(Pango.WrapMode.CHAR);
                             if (typeof ct.set_ellipsize === 'function') ct.set_ellipsize(Pango.EllipsizeMode.NONE);
@@ -2047,17 +2061,7 @@ class QuickSearchApplet extends Applet.IconApplet {
                         if (!ok) {
                             try { codeLbl.set_text(codeText); } catch (e2) {}
                         }
-                        // Copy button shares the code's own row: text left, button pinned to
-                        // the codebox's right border (beside the first line), never on a
-                        // separate header row above the text.
-                        const codeRow = new St.BoxLayout({ vertical: false, style_class: "quicksearch-ai-md-code-row" });
-                        const copyBtn = this._buildIconActionButton(["edit-copy-symbolic", "edit-copy"], _("Copy code"), "quicksearch-ai-md-code-copy", () => {
-                            this._copyUserMessageToClipboard(codeText);
-                        });
-                        try { copyBtn.add_style_class_name("quicksearch-ai-action-icon-btn"); } catch (e) {}
-                        try { codeRow.add(codeLbl, { expand: true, x_fill: true, y_align: St.Align.MIDDLE }); } catch (e) { try { codeRow.add_child(codeLbl); } catch (e2) {} }
-                        try { codeRow.add(copyBtn, { x_align: St.Align.END, y_align: St.Align.START }); } catch (e) { try { codeRow.add_child(copyBtn); } catch (e2) {} }
-                        try { codeBox.add(codeRow); } catch (e) { try { codeBox.add_child(codeRow); } catch (e2) {} }
+                        try { codeBox.add(codeLbl); } catch (e) { try { codeBox.add_child(codeLbl); } catch (e2) {} }
                         box.add_child(codeBox);
                     } catch (e) {}
                     continue;
