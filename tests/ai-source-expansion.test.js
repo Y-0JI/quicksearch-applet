@@ -255,7 +255,7 @@ test('engine non-streaming: grounded leg uses expanded page content, sources int
         }
     });
     const webTool = createMockWebSearchTool({
-        handler: (query, cancellable, cb) => cb(null, [{ title: 'Berita', url: 'https://example.com/berita', snippet: 'snip' }])
+        handler: (query, cancellable, cb) => cb(null, [{ title: 'Berita BMRI', url: 'https://example.com/berita', snippet: 'snip bmri harga' }])
     });
     const expander = makeExpanderEvidence([
         { title: 'Berita', url: 'https://example.com/berita', evidenceType: 'page_content', content: 'Harga saham BMRI hari ini berada di sekitar Rp4.450 dengan volume tinggi.' }
@@ -288,7 +288,7 @@ test('engine streaming tool_call: expanded context reaches grounded stream', asy
         }
     });
     const webTool = createMockWebSearchTool({
-        handler: (query, cancellable, cb) => cb(null, [{ title: 'Chelsea', url: 'https://example.com/chelsea', snippet: 'snip' }])
+        handler: (query, cancellable, cb) => cb(null, [{ title: 'Skuad Chelsea', url: 'https://example.com/chelsea', snippet: 'snip skuad chelsea' }])
     });
     const expander = makeExpanderEvidence([
         { title: 'Chelsea', url: 'https://example.com/chelsea', evidenceType: 'page_content', content: 'SKUAD LENGKAP: Player A, Player B, Player C, Player D, Player E, Player F.' }

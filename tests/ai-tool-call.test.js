@@ -71,7 +71,8 @@ test('TEST3 fragmented tool_call arguments via SSE are merged and search called 
     // non-live query so the (fragmented) tool_call path is exercised — live queries are web-first
     engine.searchStream('siapa striker chelsea', { onComplete: d=> got=d });
     assert.equal(searchCalls, 1);
-    assert.equal(receivedQuery, 'jadwal Chelsea');
+    // Focused rebuild: schedule-hint 'jadwal' produces a fixtures query for SearXNG.
+    assert.equal(receivedQuery, 'Chelsea fixtures');
     assert.ok(got);
 });
 

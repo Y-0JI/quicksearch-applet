@@ -6,6 +6,8 @@ let promptBuilderMod = _tryReq('./ai/promptBuilder.js') || _tryReq('./promptBuil
 let sourceFormatterMod = _tryReq('./ai/sourceFormatter.js') || _tryReq('./sourceFormatter.js') || _tryReq('ai/sourceFormatter.js');
 let citationCleanerMod = _tryReq('./ai/citationCleaner.js') || _tryReq('./citationCleaner.js') || _tryReq('ai/citationCleaner.js');
 let Gt = _tryReq('./ai/groundingTypes.js') || _tryReq('./groundingTypes.js') || _tryReq('ai/groundingTypes.js');
+let retrievalQualityMod = _tryReq('./ai/retrievalQuality.js') || _tryReq('./retrievalQuality.js') || _tryReq('ai/retrievalQuality.js');
+let toolCallMarkupMod = _tryReq('./ai/toolCallMarkup.js') || _tryReq('./toolCallMarkup.js') || _tryReq('ai/toolCallMarkup.js');
 let responseIntentMod = _tryReq('./ai/responseIntent.js') || _tryReq('./responseIntent.js') || _tryReq('ai/responseIntent.js');
 let liveDataMod = _tryReq('./ai/liveDataFallback.js') || _tryReq('./liveDataFallback.js') || _tryReq('ai/liveDataFallback.js');
 if (!promptBuilderMod) try { global.log("[quicksearch@yoji] aiSearchEngine missing promptBuilder"); } catch (e) {}
@@ -43,6 +45,120 @@ function _isLiveIntent(q) {
 
 function _isCancelled(c) {
     try { return !!(c && typeof c.is_cancelled === 'function' && c.is_cancelled()); } catch (e) { return false; }
+}
+
+// Retrieval-quality layer (deterministic, no LLM, no extra round).
+// Same FINAL query feeds SearXNG and the relevance gate (query identity).
+function _optimizeRetrievalQuery(q, intent) {
+    try {
+        if (retrievalQualityMod && typeof retrievalQualityMod.optimizeRetrievalQuery === 'function') {
+            const out = retrievalQualityMod.optimizeRetrievalQuery(q, intent);
+            if (typeof out === 'string' && out.trim()) return out;
+        }
+    } catch (e) {}
+    return String(q || '').trim();
+}
+// Trace helper passthrough: rebuilt vs raw-wording (observability only).
+function _describeRetrievalQuery(q, intent) {
+    try {
+        if (retrievalQualityMod && typeof retrievalQualityMod.describeRetrievalQuery === 'function') {
+            return retrievalQualityMod.describeRetrievalQuery(q, intent);
+        }
+    } catch (e) {}
+    return { source: 'raw-wording', retrievalQuery: String(q || '').trim(), cleaned: '' };
+}
+// Raw <tool_calls> XML TEXT from the model is an INTERNAL tool call, never UI text.
+// Fast path: strings without '<' skip the helper entirely (normal answers untouched).
+function _xmlToolCallOf(text) {
+    try {
+        const s = String(text == null ? '' : text);
+        if (s.indexOf('<') === -1) return null;
+        if (toolCallMarkupMod && typeof toolCallMarkupMod.extractXmlToolCall === 'function') {
+            return toolCallMarkupMod.extractXmlToolCall(s);
+        }
+    } catch (e) {}
+    return null;
+}
+function _stripXmlToolCall(text) {
+    try {
+        const s = String(text == null ? '' : text);
+        if (s.indexOf('<') === -1) return s;
+        if (toolCallMarkupMod && typeof toolCallMarkupMod.stripToolCallMarkup === 'function') {
+            return toolCallMarkupMod.stripToolCallMarkup(s);
+        }
+    } catch (e) {}
+    return String(text == null ? '' : text);
+}
+function _looksLikePartialXmlToolCall(text) {
+    try {
+        const s = String(text == null ? '' : text);
+        if (s.indexOf('<') === -1) return false;
+        return /<\s*\/?\s*(tool_calls|invoke|parameter)\b/i.test(s);
+    } catch (e) { return false; }
+}
+// T6 runtime evidence (observability ONLY — never changes behavior).
+function _logGroundingTrace(leg, userQuery, finalQuery, rawSources, gatedSources, intent) {
+    try {
+        if (typeof global === 'undefined' || typeof global.log !== 'function') return;
+        const raw = Array.isArray(rawSources) ? rawSources : [];
+        const kept = new Set((Array.isArray(gatedSources) ? gatedSources : []).map(s => s && s.url));
+        let intentTag = '';
+        try { intentTag = ' intent=' + String((intent && intent.primary) || '?'); } catch (e) {}
+        let sourceTag = '';
+        try {
+            if (retrievalQualityMod && typeof retrievalQualityMod.describeRetrievalQuery === 'function') {
+                const d = retrievalQualityMod.describeRetrievalQuery(userQuery, intent);
+                sourceTag = ' querySource=' + String((d && d.source) || '?');
+            }
+        } catch (e) {}
+        global.log('[AI-GROUNDING] leg=' + String(leg || '?') +
+            ' userQuery=' + String(userQuery || '').slice(0, 120) +
+            ' retrievalQuery=' + String(finalQuery || '').slice(0, 120) +
+            intentTag + sourceTag +
+            ' rawCount=' + raw.length +
+            ' normalizedCount=' + raw.length +
+            ' relevantCount=' + kept.size);
+        const n = Math.min(5, raw.length);
+        for (let i = 0; i < n; i++) {
+            const r = raw[i] || {};
+            let detail = '';
+            try {
+                if (retrievalQualityMod && typeof retrievalQualityMod.scoreSource === 'function') {
+                    const s = retrievalQualityMod.scoreSource(finalQuery, r, intent);
+                    detail = ' score=' + s.score + ' matched=' + s.matched + '/' + s.total +
+                        ' core=' + String(s.core || '') + ' coreHit=' + !!s.coreHit +
+                        ' boost=' + (s.intentBoost || 0) + ' auth=' + (s.authority || 0) +
+                        ' fresh=' + !!s.fresh + ' unrelated=' + !!s.unrelated;
+                }
+            } catch (e) {}
+            const keep = kept.has(r.url);
+            let reason = keep ? 'kept' : 'rejected';
+            try {
+                if (!keep && retrievalQualityMod && typeof retrievalQualityMod.scoreSource === 'function') {
+                    const s2 = retrievalQualityMod.scoreSource(finalQuery, r, intent);
+                    if (s2.unrelated && s2.coreMatched === 0 && !s2.coreHit) reason = 'unrelated-marker+zero-coverage';
+                    else if (s2.genericOnly) reason = 'generic-only-no-topic';
+                    else if (s2.coreMatched === 0 && !s2.coreHit) reason = 'zero-coverage';
+                    else reason = 'below-coverage';
+                }
+            } catch (e) {}
+            global.log('[AI-GROUNDING] result #' + (i + 1) +
+                ' title=' + String(r.title || '').slice(0, 120) +
+                ' domain=' + String(r.domain || '').slice(0, 80) +
+                ' url=' + String(r.url || '').slice(0, 200) +
+                ' snippet=' + String(r.snippet || r.content || r.description || '').slice(0, 200) +
+                detail + ' decision=' + (keep ? 'KEEP' : 'REJECT') + ' reason=' + reason);
+        }
+    } catch (e) {}
+}
+function _gateRelevantSources(finalQuery, sources, intent) {
+    try {
+        if (retrievalQualityMod && typeof retrievalQualityMod.filterRelevantSources === 'function') {
+            const out = retrievalQualityMod.filterRelevantSources(finalQuery, sources, intent);
+            if (Array.isArray(out)) return out;
+        }
+    } catch (e) {}
+    return Array.isArray(sources) ? sources : [];
 }
 
 // P5 runtime trace: log the web_search result the engine received right before it decides whether
@@ -354,13 +470,16 @@ function createAISearchEngine(deps) {
             return false;
         }
     }
-    function _fanoutWebSearch(wsRequest, cancellable, cb) {
+    function _fanoutWebSearch(wsRequest, cancellable, cb, origQuery) {
         const q = wsRequest && typeof wsRequest.query === 'string' ? wsRequest.query : '';
         const maxResults = wsRequest && wsRequest.maxResults;
+        // Intent + decomposition run on the RAW query (retrieval cleanup strips
+        // question words that the classifier and fan-out eligibility depend on).
+        const intentQuery = (typeof origQuery === 'string' && origQuery.trim()) ? origQuery : q;
         let plan = null;
         try {
-            if (fanOutEnabled && _fanoutEligible(q) && Gt && typeof Gt.decomposeMultiAspect === 'function') {
-                plan = Gt.decomposeMultiAspect(q);
+            if (fanOutEnabled && _fanoutEligible(intentQuery) && Gt && typeof Gt.decomposeMultiAspect === 'function') {
+                plan = Gt.decomposeMultiAspect(intentQuery);
             }
         } catch (e) { plan = null; }
         if (!plan || !Array.isArray(plan.queries) || plan.queries.length !== 2) {
@@ -398,9 +517,12 @@ function createAISearchEngine(deps) {
             } catch (e) {}
             cb(null, { type: 'tool_result', tool: 'web_search', query: q, sources: merged });
         }
-        plan.queries.forEach((subQ, i) => {
+        plan.queries.forEach((subQRaw, i) => {
             let req = wsRequest;
             try {
+                // Fan-out sub-queries pass the same focused builder (intent from
+                // the RAW sub-query; aspect clauses force the raw-wording path).
+                const subQ = _optimizeRetrievalQuery(subQRaw, _detectIntent(subQRaw));
                 if (Gt && typeof Gt.validateRequest === 'function') {
                     const v = Gt.validateRequest({ query: subQ, maxResults: maxResults });
                     if (!v || v.error) throw (v && v.error) || new Error('invalid_query');
@@ -459,8 +581,12 @@ function createAISearchEngine(deps) {
 
     function _deliverAnswer(myGen, cancellable, callbacks, text, sources, meta) {
         if (_stale(myGen) || _isCancelled(cancellable) || destroyed) return;
+        // T6 defense: raw <tool_calls> markup is internal, never user text — strip on
+        // EVERY final delivery path (normal answers without '<' skip untouched).
+        const noMarkup = _stripXmlToolCall(text);
+        if (!String(noMarkup || '').trim()) return;
         // sources is the numbered evidence of the grounded leg -> its text may carry [n] markers
-        const finalText = (Array.isArray(sources) && sources.length > 0) ? _cleanAnswerText(text) : text;
+        const finalText = (Array.isArray(sources) && sources.length > 0) ? _cleanAnswerText(noMarkup) : noMarkup;
         let payload;
         if (Gt && typeof Gt.createGroundedAnswer === 'function') {
             payload = Gt.createGroundedAnswer(finalText, sources || [], meta || null);
@@ -536,6 +662,9 @@ function createAISearchEngine(deps) {
             _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
             return;
         }
+        // Intent computed ONCE from the RAW user query; shared by routing, the
+        // relevance gate and the trace (never recomputed from cleaned queries).
+        const reqIntent = _detectIntent(q);
         let systemPrompt = _buildRequestSystemPrompt(promptBuilder, false, q);
 
         // Phase 8 §3: bounded conversation history (validated) attached to every provider payload.
@@ -554,10 +683,11 @@ function createAISearchEngine(deps) {
         // never re-run an ungrounded draft + search + second-generation cycle.
         if (enableGrounding && _isLiveIntent(q)) {
             try {
+                const liveRetrievalQuery = _optimizeRetrievalQuery(q, reqIntent);
                 const wsRequest = (Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number')
-                    ? { query: q, maxResults: Gt.DEFAULT_MAX_RESULTS }
-                    : { query: q, maxResults: 5 };
-                _fanoutWebSearch(wsRequest, myCancellable, (wErr, wResults) => {
+                    ? { query: liveRetrievalQuery, maxResults: Gt.DEFAULT_MAX_RESULTS }
+                    : { query: liveRetrievalQuery, maxResults: 5 };
+                const _liveCb = (wErr, wResults) => {
                     if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
                     const outage = wErr ? _normalizeWebError(wErr) : null;
                     const emptyResults = !wErr && !!wResults && wResults.type === 'tool_result' && Array.isArray(wResults.sources) && wResults.sources.length === 0;
@@ -612,10 +742,16 @@ function createAISearchEngine(deps) {
                     if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources)) {
                         return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
                     }
-                    const sources = wResults.sources;
-                    _logWebSearchSources((wResults && wResults.query) || q, sources);
-                    if (sources.length === 0) {
+                    const rawSources = wResults.sources;
+                    _logWebSearchSources((wResults && wResults.query) || q, rawSources);
+                    if (rawSources.length === 0) {
                         return _deliverError(myGen, myCancellable, callbacks, 'no_results', ERROR_MESSAGES.no_results, { stage: 'web_search_normalize' });
+                    }
+                    const gateQueryLive = String((wResults && wResults.query) || liveRetrievalQuery || q);
+                    const sources = _gateRelevantSources(gateQueryLive, rawSources, reqIntent);
+                    _logGroundingTrace('live', q, gateQueryLive, rawSources, sources, reqIntent);
+                    if (sources.length === 0) {
+                        return _deliverError(myGen, myCancellable, callbacks, 'no_results', ERROR_MESSAGES.no_results, { stage: 'web_search_relevance' });
                     }
                     _prepareGroundingContext(myGen, myCancellable, q, sources, q, (ctxInfo) => {
                         if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
@@ -637,7 +773,8 @@ function createAISearchEngine(deps) {
                             return _deliverError(myGen, myCancellable, callbacks, n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
                         }
                     });
-                });
+                };
+                _fanoutWebSearch(wsRequest, myCancellable, _liveCb, q);
             } catch (e) {
                 return _deliverError(myGen, myCancellable, callbacks, 'grounding_error', ERROR_MESSAGES.grounding_error);
             }
@@ -656,12 +793,28 @@ function createAISearchEngine(deps) {
                 if (!res || typeof res !== 'object') {
                     return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
                 }
+                // T6: model answered with raw <tool_calls> XML TEXT instead of a tool_call.
+                // Treat whole-body XML as the INTERNAL tool call (existing single-round flow
+                // below handles it); never deliver the markup to the user.
+                if (res.type === 'answer' && typeof res.text === 'string') {
+                    const xmlHit = _xmlToolCallOf(res.text);
+                    if (xmlHit && _stripXmlToolCall(res.text) === '') {
+                        try { if (typeof global !== 'undefined' && global.log) global.log("[QuickSearch AI] Received tool call (xml-text): " + String(xmlHit.tool || 'web_search') + " query=" + String(xmlHit.query || '').slice(0, 80)); } catch (e) {}
+                        res = { type: 'tool_call', tool: xmlHit.tool, arguments: { query: xmlHit.query } };
+                    }
+                }
                 if (res.type === 'answer') {
                     if (!res.text || !String(res.text).trim()) {
                         return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
                     }
-                    try { if (typeof global !== 'undefined' && global.log) global.log("[QuickSearch AI] Received tool call: none, received content: " + String(res.text||'').slice(0,120)); } catch(e){}
-                    return _deliverAnswer(myGen, myCancellable, callbacks, res.text, [], _metaOf(res));
+                    // Defense: strip any embedded tool-call markup from final text; an
+                    // answer that was ONLY markup can never reach here as text.
+                    const cleanText = _stripXmlToolCall(res.text);
+                    if (!cleanText) {
+                        return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
+                    }
+                    try { if (typeof global !== 'undefined' && global.log) global.log("[QuickSearch AI] Received tool call: none, received content: " + String(cleanText||'').slice(0,120)); } catch(e){}
+                    return _deliverAnswer(myGen, myCancellable, callbacks, cleanText, [], _metaOf(res));
                 }
                     if (res.type === 'tool_call') {
                     try { if (typeof global !== 'undefined' && global.log) global.log("[QuickSearch AI] Received tool call: " + String(res.tool||'web_search') + " query=" + String(res.arguments&&res.arguments.query||'').slice(0,80)); } catch(e){}
@@ -690,13 +843,16 @@ function createAISearchEngine(deps) {
                         }
                     }
 
-                    const toolQuery = normalized ? normalized.arguments.query : (res.arguments && res.arguments.query).trim();
+                    const toolQueryRaw = normalized ? normalized.arguments.query : (res.arguments && res.arguments.query).trim();
+                    // Same focused builder for the LLM tool query (intent of the RAW
+                    // tool query); FINAL query goes to SearXNG and the gate.
+                    const toolQuery = _optimizeRetrievalQuery(toolQueryRaw, _detectIntent(toolQueryRaw));
 
                     try {
                         const wsRequest = Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number'
                             ? { query: toolQuery, maxResults: Gt.DEFAULT_MAX_RESULTS }
                             : { query: toolQuery, maxResults: 5 };
-                        _fanoutWebSearch(wsRequest, myCancellable, (wErr, wResults) => {
+                        const _toolCb = (wErr, wResults) => {
                             if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
                             // Availability outage (no healthy upstream) or zero results: answer from
                             // model knowledge when the question does not need live data — a search
@@ -776,11 +932,17 @@ function createAISearchEngine(deps) {
                             if (!wResults || wResults.type !== 'tool_result' || !Array.isArray(wResults.sources)) {
                                 return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
                             }
-                            const sources = wResults.sources;
-                            _logWebSearchSources((wResults && wResults.query) || q, sources);
-                            if (sources.length === 0) {
+                            const rawSources = wResults.sources;
+                            _logWebSearchSources((wResults && wResults.query) || q, rawSources);
+                            if (rawSources.length === 0) {
                                 // P6.4: tool_result valid but empty -> explicit normalize stage, never Stage: unknown
                                 return _deliverError(myGen, myCancellable, callbacks, 'no_results', ERROR_MESSAGES.no_results, { stage: 'web_search_normalize' });
+                            }
+                            const gateQueryTool = String((wResults && wResults.query) || toolQuery || q);
+                            const sources = _gateRelevantSources(gateQueryTool, rawSources, reqIntent);
+                            _logGroundingTrace('tool', q, gateQueryTool, rawSources, sources, reqIntent);
+                            if (sources.length === 0) {
+                                return _deliverError(myGen, myCancellable, callbacks, 'no_results', ERROR_MESSAGES.no_results, { stage: 'web_search_relevance' });
                             }
                             _prepareGroundingContext(myGen, myCancellable, q, sources, toolQuery, (ctxInfo) => {
                                 if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
@@ -805,7 +967,8 @@ function createAISearchEngine(deps) {
                                     return _deliverError(myGen, myCancellable, callbacks, n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
                                 }
                             });
-                        });
+                        };
+                        _fanoutWebSearch(wsRequest, myCancellable, _toolCb, toolQueryRaw);
                     } catch (e) {
                         return _deliverError(myGen, myCancellable, callbacks, 'grounding_error', ERROR_MESSAGES.grounding_error);
                     }
@@ -852,6 +1015,8 @@ function createAISearchEngine(deps) {
             return;
         }
 
+        // Intent computed ONCE from the RAW user query (same contract as search()).
+        const reqIntent = _detectIntent(q);
         let systemPrompt = _buildRequestSystemPrompt(promptBuilder, false, q);
 
         // Phase 8 §3: bounded conversation history (validated) attached to every provider payload.
@@ -876,10 +1041,11 @@ function createAISearchEngine(deps) {
         // grounded leg) and never re-run draft + search + second generation.
         if (enableGrounding && _isLiveIntent(q)) {
             try {
+                const liveRetrievalQueryS = _optimizeRetrievalQuery(q, reqIntent);
                 const wsRequest = (Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number')
-                    ? { query: q, maxResults: Gt.DEFAULT_MAX_RESULTS }
-                    : { query: q, maxResults: 5 };
-                _fanoutWebSearch(wsRequest, myCancellable, (wErr, wResults) => {
+                    ? { query: liveRetrievalQueryS, maxResults: Gt.DEFAULT_MAX_RESULTS }
+                    : { query: liveRetrievalQueryS, maxResults: 5 };
+                const _liveCbS = (wErr, wResults) => {
                     if (settled || _staleS() || _isCancelled(myCancellable) || destroyed) return;
                     const outage = wErr ? _normalizeWebError(wErr) : null;
                     const emptyResults = !wErr && !!wResults && wResults.type === 'tool_result' && Array.isArray(wResults.sources) && wResults.sources.length === 0;
@@ -920,10 +1086,17 @@ function createAISearchEngine(deps) {
                         return;
                     }
                     if (wErr) return;
-                    const sources = wResults.sources;
-                    _logWebSearchSources((wResults && wResults.query) || q, sources);
-                    if (sources.length === 0) {
+                    const rawSourcesS = wResults.sources;
+                    _logWebSearchSources((wResults && wResults.query) || q, rawSourcesS);
+                    if (rawSourcesS.length === 0) {
                         emitError('no_results', ERROR_MESSAGES.no_results, { stage: 'web_search_normalize' });
+                        return;
+                    }
+                    const gateQueryLiveS = String((wResults && wResults.query) || liveRetrievalQueryS || q);
+                    const sources = _gateRelevantSources(gateQueryLiveS, rawSourcesS, reqIntent);
+                    _logGroundingTrace('live-stream', q, gateQueryLiveS, rawSourcesS, sources, reqIntent);
+                    if (sources.length === 0) {
+                        emitError('no_results', ERROR_MESSAGES.no_results, { stage: 'web_search_relevance' });
                         return;
                     }
                     groundedSources = sources;
@@ -941,7 +1114,8 @@ function createAISearchEngine(deps) {
                             emitError(n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
                         }
                     });
-                });
+                };
+                _fanoutWebSearch(wsRequest, myCancellable, _liveCbS, q);
             } catch (e) {
                 emitError('grounding_error', ERROR_MESSAGES.grounding_error);
             }
@@ -1025,7 +1199,10 @@ function createAISearchEngine(deps) {
                 return;
             }
             if (evt.type === 'delta') {
-                const chunk = typeof evt.text === 'string' ? evt.text : '';
+                const rawChunk = typeof evt.text === 'string' ? evt.text : '';
+                // T6: second leg must never stream tool-call markup either (loop guard
+                // already rejects tool_call events; this covers markup-as-text).
+                const chunk = _stripXmlToolCall(rawChunk);
                 accumulatedText += chunk;
                 // second leg is always grounded -> deltas are cleaned so markers never show mid-stream
                 if (callbacks && typeof callbacks.onDelta === 'function') callbacks.onDelta(chunk, _cleanAnswerText(accumulatedText));
@@ -1037,7 +1214,7 @@ function createAISearchEngine(deps) {
                 return;
             }
             if (evt.type === 'complete') {
-                const finalText = (evt.result && typeof evt.result.text === 'string') ? evt.result.text : accumulatedText;
+                const finalText = _stripXmlToolCall((evt.result && typeof evt.result.text === 'string') ? evt.result.text : accumulatedText);
                 const sources = (evt.result && Array.isArray(evt.result.sources)) ? evt.result.sources : [];
                 const fr = evt.result && typeof evt.result.finishReason === 'string' ? evt.result.finishReason : null;
                 const trunc = !!(evt.result && evt.result.truncated) || fr === 'length';
@@ -1065,6 +1242,9 @@ function createAISearchEngine(deps) {
                 if (toolCallPending) return;
                 const chunk = typeof evt.text === 'string' ? evt.text : '';
                 accumulatedText += chunk;
+                // T6: hold back chunks that look like tool-call markup until complete
+                // decides (tool_call vs text) — raw <tool_calls> must never stream to UI.
+                if (!toolCallPending && _looksLikePartialXmlToolCall(accumulatedText)) return;
                 if (callbacks && typeof callbacks.onDelta === 'function') callbacks.onDelta(chunk, accumulatedText);
                 return;
             }
@@ -1103,19 +1283,20 @@ function createAISearchEngine(deps) {
                     }
                     normalized = { type: 'tool_call', tool: 'web_search', arguments: { query: tq.trim() } };
                 }
-                const toolQuery = normalized.arguments.query;
+                const toolQueryRawS = normalized.arguments.query;
+                const toolQuery = _optimizeRetrievalQuery(toolQueryRawS, _detectIntent(toolQueryRawS));
                 try {
                     const wsRequest = Gt && typeof Gt.DEFAULT_MAX_RESULTS === 'number'
                         ? { query: toolQuery, maxResults: Gt.DEFAULT_MAX_RESULTS }
                         : { query: toolQuery, maxResults: 5 };
-                    _fanoutWebSearch(wsRequest, myCancellable, (wErr, wResults) => {
+                    const _toolCbS = (wErr, wResults) => {
                         if (_staleS() || _isCancelled(myCancellable) || destroyed || settled) return;
                         // Availability outage (no healthy upstream) or zero results: answer from
                         // model knowledge when the question does not need live data — a search
                         // outage must not kill the whole AI request (2026-09-13).
-                    const outage = wErr ? _normalizeWebError(wErr) : null;
-                    const emptyResults = !wErr && !!wResults && wResults.type === 'tool_result' && Array.isArray(wResults.sources) && wResults.sources.length === 0;
-                    if (outage && outage.code === 'cancelled') return;
+                        const outage = wErr ? _normalizeWebError(wErr) : null;
+                        const emptyResults = !wErr && !!wResults && wResults.type === 'tool_result' && Array.isArray(wResults.sources) && wResults.sources.length === 0;
+                        if (outage && outage.code === 'cancelled') return;
                         if ((outage && outage.code !== 'invalid_query') || emptyResults) {
                             // structured live data (weather/stocks/news)? ground from its keyless direct API
                             if (_isLiveIntent(toolQuery)) {
@@ -1172,10 +1353,17 @@ function createAISearchEngine(deps) {
                             emitError('invalid_response', ERROR_MESSAGES.invalid_response);
                             return;
                         }
-                        const sources = wResults.sources;
-                        _logWebSearchSources((wResults && wResults.query) || toolQuery, sources);
-                        if (sources.length === 0) {
+                        const rawSourcesT = wResults.sources;
+                        _logWebSearchSources((wResults && wResults.query) || toolQuery, rawSourcesT);
+                        if (rawSourcesT.length === 0) {
                             emitError('no_results', ERROR_MESSAGES.no_results, { stage: 'web_search_normalize' });
+                            return;
+                        }
+                        const gateQueryToolS = String((wResults && wResults.query) || toolQuery || q);
+                        const sources = _gateRelevantSources(gateQueryToolS, rawSourcesT, reqIntent);
+                        _logGroundingTrace('tool-stream', q, gateQueryToolS, rawSourcesT, sources, reqIntent);
+                        if (sources.length === 0) {
+                            emitError('no_results', ERROR_MESSAGES.no_results, { stage: 'web_search_relevance' });
                             return;
                         }
                         groundedSources = sources;
@@ -1194,7 +1382,8 @@ function createAISearchEngine(deps) {
                                 emitError(n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
                             }
                         });
-                    });
+                        };
+                        _fanoutWebSearch(wsRequest, myCancellable, _toolCbS, toolQueryRawS);
                 } catch (e) {
                     emitError('grounding_error', ERROR_MESSAGES.grounding_error);
                 }
@@ -1203,7 +1392,19 @@ function createAISearchEngine(deps) {
 
             if (evt.type === 'complete') {
                 if (toolCallPending) return;
-                const finalText = (evt.result && typeof evt.result.text === 'string') ? evt.result.text : accumulatedText;
+                let finalText = (evt.result && typeof evt.result.text === 'string') ? evt.result.text : accumulatedText;
+                // T6: streamed answer that is ONLY raw <tool_calls> XML becomes the
+                // INTERNAL tool call (single grounding round); held-back deltas mean the
+                // UI never saw the markup. Embedded markup is stripped instead.
+                const xmlHitS = _xmlToolCallOf(finalText);
+                if (xmlHitS && _stripXmlToolCall(finalText) === '') {
+                    accumulatedText = '';
+                    toolCallPending = true;
+                    try { if (typeof global !== 'undefined' && global.log) global.log("[QuickSearch AI] Received tool call (xml-text-stream): " + String(xmlHitS.tool || 'web_search') + " query=" + String(xmlHitS.query || '').slice(0, 80)); } catch (e) {}
+                    handleFirstStreamEvent({ type: 'tool_call', tool: xmlHitS.tool, arguments: { query: xmlHitS.query } });
+                    return;
+                }
+                finalText = _stripXmlToolCall(finalText);
                 const sources = (evt.result && Array.isArray(evt.result.sources)) ? evt.result.sources : [];
                 const fr0 = evt.result && typeof evt.result.finishReason === 'string' ? evt.result.finishReason : null;
                 const trunc0 = !!(evt.result && evt.result.truncated) || fr0 === 'length';

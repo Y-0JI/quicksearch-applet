@@ -64,8 +64,8 @@ test('citation cleanup: maxIndex option bounds removal; empty/no-op safe', () =>
 test('engine grounded answer: markers removed from text, sources + count intact', async () => {
     const webTool = createMockWebSearchTool({
         handler: (query, cancellable, cb) => cb(null, [
-            { title: 'Source A', url: 'https://example.com/a', snippet: 'snippet a' },
-            { title: 'Source B', url: 'https://example.com/b', snippet: 'snippet b' }
+            { title: 'BMRI harga Source A', url: 'https://example.com/a', snippet: 'snippet harga bmri a' },
+            { title: 'BMRI harga Source B', url: 'https://example.com/b', snippet: 'snippet harga bmri b' }
         ])
     });
     // P3 web-first: live query ('harga bmri') searches FIRST engine-side; the provider only

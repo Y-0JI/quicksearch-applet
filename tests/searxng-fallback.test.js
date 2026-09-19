@@ -5,8 +5,8 @@ const { createSearXngProvider, parseSearXngHtml } = require('../ai/searchProvide
 
 function searxngHtmlWithResults() {
     return `<html><body><div id="results">
-    <article class="result"><h3><a href="https://example.com/a">Title A</a></h3><p class="content">snippet a</p></article>
-    <article class="result"><h3><a href="https://example.com/b">Title B</a></h3><p class="content">snippet b</p></article>
+    <article class="result"><h3><a href="https://example.com/a">Chelsea Title A</a></h3><p class="content">jadwal chelsea snippet a</p></article>
+    <article class="result"><h3><a href="https://example.com/b">Chelsea Title B</a></h3><p class="content">jadwal chelsea snippet b</p></article>
     <article class="result"><h3><a href="#/local">Broken Local</a></h3><p class="content">skip me</p></article>
     <article class="result"><h3><a href="javascript:void(0)">JS Link</a></h3><p class="content">skip me</p></article>
   </div></body></html>`;

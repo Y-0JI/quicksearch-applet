@@ -53,7 +53,7 @@ const { createMockStreamingAiProvider } = require('../ai/aiProvider.js');
 
 function srcSet(n, prefix) {
     const out = [];
-    for (let i = 0; i < n; i++) out.push({ title: prefix + i, url: 'https://example.com/' + prefix + i, snippet: 'snippet text number ' + i + ' long enough here' });
+    for (let i = 0; i < n; i++) out.push({ title: 'harga performa ' + prefix + i, url: 'https://example.com/' + prefix + i, snippet: 'snippet harga performa number ' + i + ' long enough here' });
     return out;
 }
 function engineWith(searchFn) {
@@ -128,7 +128,7 @@ test('H-R: aspect identity in grounding text, no new metadata', async () => {
         n++;
         const tag = 'u' + n;
         const srcs = [];
-        for (let i = 0; i < 3; i++) srcs.push({ title: tag + i, url: 'https://example.com/' + tag + '/' + i, snippet: 'snippet text number ' + i + ' long enough here' });
+        for (let i = 0; i < 3; i++) srcs.push({ title: 'harga performa ' + tag + i, url: 'https://example.com/' + tag + '/' + i, snippet: 'snippet harga performa number ' + i + ' long enough here' });
         cb(null, { type: 'tool_result', tool: 'web_search', query: req.query, sources: srcs });
     } };
     const engine = createAISearchEngine({ provider, webSearchTool: webTool, enableGrounding: true });
