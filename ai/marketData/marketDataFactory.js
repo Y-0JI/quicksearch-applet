@@ -22,6 +22,17 @@ try { plannerMod = require('./minCallPlanner.js'); } catch (e) {}
 try { if (!plannerMod) plannerMod = require('./marketData/minCallPlanner.js'); } catch (e) {}
 try { if (!plannerMod) plannerMod = require('ai/marketData/minCallPlanner.js'); } catch (e) {}
 
+function _mergeLabelled(kind, parts) {
+    const symbols = [];
+    const rows = [];
+    for (const p of parts) {
+        const sym = (p && p.symbols && p.symbols[0]) || '?';
+        symbols.push(sym);
+        rows.push({ symbol: sym, interval: p && p.interval, data: p && p.rows });
+    }
+    return { type: 'market_data', kind, symbols, interval: (parts[0] && parts[0].interval) || null, rows, attribution: 'TradingView', sources: [] };
+}
+
 function createMarketDataFromConfig(cfg) {
     cfg = cfg || {};
     if (!cfg.enabled || typeof cfg.httpRequest !== 'function') {
@@ -32,6 +43,9 @@ function createMarketDataFromConfig(cfg) {
         httpRequest: cfg.httpRequest,
         endpoint: cfg.endpoint,
         supportedVersions: cfg.supportedVersions,
+        modernVersions: cfg.modernVersions,
+        mode: cfg.mode,
+        discovery: cfg.discovery,
         authProvider: cfg.authProvider || auth,
         stateless: cfg.stateless,
         requireSession: cfg.requireSession,
@@ -49,25 +63,59 @@ function createMarketDataFromConfig(cfg) {
             const symbols = (p && p.symbols) || (plan && plan.symbols) || [];
             const tfs = (p && p.timeframes) || (plan && plan.timeframes) || [];
             const tf = tfs.length ? tfs[0] : 'D1';
-            if (intent === 'market_price') return core.getPrice(symbols[0] || '', cancellable);
-            if (intent === 'market_ohlcv') return core.getOhlcv(symbols[0] || '', tf, 100, cancellable);
-            if (intent === 'technical_analysis') {
-                if (plan && plan.wantsBars) {
-                    const symbol = symbols[0] || '';
-                    let tech = null;
-                    try { tech = await core.getTechnicals(symbol, tf, cancellable); } catch (e) { tech = null; }
-                    const ohlcv = await core.getOhlcv(symbol, tf, 100, cancellable);
-                    if (tech && tech.rows && tech.rows[0]) ohlcv.rows = [{ technicals: tech.rows[0], bars: ohlcv.rows }];
-                    return ohlcv;
+            if (intent === 'market_price') {
+                if (symbols.length > 1) return core.getPrices(symbols, cancellable);
+                return core.getPrice(symbols[0] || '', cancellable);
+            }
+            if (intent === 'market_ohlcv') {
+                if (symbols.length > 1) {
+                    const parts = [];
+                    for (const s of symbols) parts.push(await core.getOhlcv(await core.resolveSymbol(s, cancellable), tf, 100, cancellable));
+                    return _mergeLabelled('market_ohlcv', parts);
                 }
-                return core.getTechnicals(symbols[0] || '', tf, cancellable);
+                return core.getOhlcv(await core.resolveSymbol(symbols[0] || '', cancellable), tf, 100, cancellable);
             }
-            if (intent === 'market_news') return core.getNews(symbols[0] || '', cancellable);
+            if (intent === 'technical_analysis') {
+                const runOne = async (raw) => {
+                    const symbol = await core.resolveSymbol(raw, cancellable);
+                    if (plan && plan.wantsBars) {
+                        let tech = null;
+                        try { tech = await core.getTechnicals(symbol, tf, cancellable); } catch (e) { tech = null; }
+                        const ohlcv = await core.getOhlcv(symbol, tf, 100, cancellable);
+                        if (tech && tech.rows && tech.rows[0]) ohlcv.rows = [{ technicals: tech.rows[0], bars: ohlcv.rows }];
+                        return ohlcv;
+                    }
+                    return core.getTechnicals(symbol, tf, cancellable);
+                };
+                if (symbols.length > 1) {
+                    const parts = [];
+                    for (const s of symbols) parts.push(await runOne(s));
+                    return _mergeLabelled('technicals', parts);
+                }
+                return runOne(symbols[0] || '');
+            }
+            if (intent === 'fundamental_analysis') return core.getFundamentals(symbols[0] || '', !!(plan && plan.wantsConsensus), cancellable);
+            if (intent === 'market_news') {
+                const md = await core.getNews(await core.resolveSymbol(symbols[0] || '', cancellable), cancellable);
+                if (plan && plan.wantsStory && md.rows && md.rows[0] && md.rows[0].id) {
+                    return core.getStory(md.rows[0].id, cancellable);
+                }
+                return md;
+            }
+            if (intent === 'financial_screener') return core.runScreener({ columns: (plan && plan.columns) || [], filters: (plan && plan.filters) || {}, limit: (plan && plan.limit) }, cancellable);
+            if (intent === 'economic_data') return core.getEconomic(symbols[0] || ((plan && plan.economicSymbol) || ''), cancellable);
             if (intent === 'symbol_lookup') {
-                const symbol = await core.resolveSymbol(symbols[0] || '', cancellable);
-                return { type: 'market_data', kind: 'symbol_lookup', symbols: [symbol], interval: null, rows: [{ symbol }], attribution: 'TradingView', sources: [] };
+                const out = [];
+                const list = symbols.length ? symbols : [''];
+                for (const raw of list) {
+                    const symbol = await core.resolveSymbol(raw, cancellable);
+                    out.push({ symbol });
+                }
+                return { type: 'market_data', kind: 'symbol_lookup', symbols: out.map((r) => r.symbol), interval: null, rows: out, attribution: 'TradingView', sources: [] };
             }
-            return core.getPrice(symbols[0] || '', cancellable);
+            const e = new Error('Unsupported market intent: ' + intent);
+            e.code = 'unsupported_tool';
+            throw e;
         },
         _core: core
     };

@@ -19,6 +19,49 @@ function _enumOf(registry, tool, field) {
     } catch (e) {}
     return null;
 }
+function _requiredOf(registry, tool) {
+    try {
+        const t = registry.get(tool);
+        const r = t && t.inputSchema && t.inputSchema.required;
+        return Array.isArray(r) ? r.slice() : [];
+    } catch (e) { return []; }
+}
+function _propsOf(registry, tool) {
+    try {
+        const t = registry.get(tool);
+        const p = t && t.inputSchema && t.inputSchema.properties;
+        return (p && typeof p === 'object') ? p : {};
+    } catch (e) { return {}; }
+}
+// Price-candidate compatibility: required `symbol` satisfiable; every other
+// required field must be satisfiable from {symbol} + known optionals
+// (interval via D1 mapping, count=1, symbols batch). Unknown required → skip.
+function _priceArgsFor(registry, name, symbol) {
+    const required = _requiredOf(registry, name);
+    const props = _propsOf(registry, name);
+    const args = {};
+    const haveInterval = _enumOf(registry, name, 'interval');
+    for (const k of required) {
+        if (k === 'symbol' || k === 'symbols') continue;
+        if (k === 'interval' || k === 'timeframe') continue;
+        if (k === 'count' || k === 'limit') continue;
+        if (k === 'columns') continue;
+        return null;
+    }
+    if (props.symbol || required.indexOf('symbol') >= 0) args.symbol = symbol;
+    else if (props.symbols || required.indexOf('symbols') >= 0) args.symbols = symbol;
+    else return null;
+    if (haveInterval) {
+        const m = tfMod && typeof tfMod.toToolInterval === 'function' ? tfMod.toToolInterval('D1', haveInterval) : null;
+        if (!m || !m.ok) return null;
+        args.interval = m.value;
+    } else if (props.interval && required.indexOf('interval') >= 0) {
+        return null;
+    }
+    if (props.count && required.indexOf('count') < 0) args.count = 1;
+    else if (required.indexOf('count') >= 0) args.count = 1;
+    return args;
+}
 function _asRows(res) {
     if (!res || typeof res !== 'object') return [];
     for (const k of ['bars', 'rows', 'data', 'results', 'items', 'news']) {
@@ -61,28 +104,56 @@ function createMarketDataTool(opts) {
     async function getPrice(rawSymbol, cancellable) {
         const symbol = await resolveSymbol(rawSymbol, cancellable);
         const order = ['get_symbol_data', 'get_symbol_data_batch', 'get_ohlcv'];
-        let picked = null;
         for (const name of order) {
-            if (registry.isCallable(name)) { picked = name; break; }
-        }
-        if (!picked) throw _makeError('unsupported_tool', 'No market-price tool available');
-        if (picked === 'get_ohlcv') {
-            const acc = _enumOf(registry, picked, 'interval');
-            const args = { symbol };
-            if (acc) {
-                const m = tfMod && typeof tfMod.toToolInterval === 'function' ? tfMod.toToolInterval('D1', acc) : null;
-                if (m && m.ok) args.interval = m.value;
-            }
-            try {
-                const schema = registry.get(picked).inputSchema;
-                const props = (schema && schema.properties) || {};
-                if (props.count) args.count = 1;
-            } catch (e) {}
-            const res = await adapter.callTool(picked, args, cancellable);
+            if (!registry.isCallable(name)) continue;
+            const args = _priceArgsFor(registry, name, symbol);
+            if (!args) continue;
+            const v = registry.validate(name, args);
+            if (!v.ok) continue;
+            const res = await adapter.callTool(name, args, cancellable);
             return _marketData('market_price', [symbol], args.interval || null, _asRows(res));
         }
-        const res = await adapter.callTool(picked, { symbol }, cancellable);
-        return _marketData('market_price', [symbol], null, _asRows(res));
+        throw _makeError('unsupported_tool', 'No compatible market-price tool available');
+    }
+    // Multi-symbol market-price: batch tool when schema-compatible, else bounded
+    // single calls in order. Any ambiguous symbol fails the whole request.
+    async function getPrices(rawSymbols, cancellable) {
+        const list = Array.isArray(rawSymbols) ? rawSymbols.map((s) => String(s || '').trim()).filter(Boolean) : [];
+        if (!list.length) throw _makeError('no_results', 'No symbols requested');
+        const resolved = [];
+        for (const raw of list) resolved.push(await resolveSymbol(raw, cancellable));
+        if (registry.isCallable('get_symbol_data_batch')) {
+            const props = _propsOf(registry, 'get_symbol_data_batch');
+            if (props.symbols || _requiredOf(registry, 'get_symbol_data_batch').indexOf('symbols') >= 0) {
+                const args = { symbols: resolved.join(',') };
+                const v = registry.validate('get_symbol_data_batch', args);
+                if (v.ok) {
+                    const res = await adapter.callTool('get_symbol_data_batch', args, cancellable);
+                    const rows = _asRows(res);
+                    return _marketData('market_price', resolved, null, rows.length ? rows : resolved.map((s) => ({ symbol: s })));
+                }
+            }
+        }
+        const rows = [];
+        for (const symbol of resolved) {
+            const single = await getPriceBySymbol(symbol, cancellable);
+            rows.push(single);
+        }
+        return _marketData('market_price', resolved, null, rows);
+    }
+    async function getPriceBySymbol(symbol, cancellable) {
+        const order = ['get_symbol_data', 'get_ohlcv'];
+        for (const name of order) {
+            if (!registry.isCallable(name)) continue;
+            const args = _priceArgsFor(registry, name, symbol);
+            if (!args) continue;
+            const v = registry.validate(name, args);
+            if (!v.ok) continue;
+            const res = await adapter.callTool(name, args, cancellable);
+            const rows = _asRows(res);
+            return Object.assign({ symbol }, rows[0] && typeof rows[0] === 'object' ? rows[0] : { value: rows[0] });
+        }
+        throw _makeError('unsupported_tool', 'No compatible market-price tool available');
     }
     async function getOhlcv(symbol, canonTf, count, cancellable) {
         const acc = _enumOf(registry, 'get_ohlcv', 'interval') || [];
@@ -112,8 +183,60 @@ function createMarketDataTool(opts) {
         }
         return _marketData('news', [symbol], null, rows, sources);
     }
+    // Intent-correct endpoints: each fails unsupported_tool when its tool is
+    // absent — NEVER falls back to price.
+    async function getFundamentals(rawSymbol, wantsConsensus, cancellable) {
+        const symbol = await resolveSymbol(rawSymbol, cancellable);
+        if (!registry.isCallable('get_financials')) throw _makeError('unsupported_tool', 'Fundamentals tool unavailable');
+        const res = await adapter.callTool('get_financials', { symbol }, cancellable);
+        const out = _marketData('financials', [symbol], null, _asRows(res));
+        if (wantsConsensus) {
+            if (!registry.isCallable('get_forecasts')) throw _makeError('unsupported_tool', 'Forecasts tool unavailable');
+            const fc = await adapter.callTool('get_forecasts', { symbol }, cancellable);
+            out.rows = [{ fundamentals: out.rows, forecasts: _asRows(fc) }];
+        }
+        return out;
+    }
+    async function getStory(storyId, cancellable) {
+        if (!registry.isCallable('get_news_story')) throw _makeError('unsupported_tool', 'News story tool unavailable');
+        const res = await adapter.callTool('get_news_story', { id: String(storyId) }, cancellable);
+        return _marketData('news_story', [], null, _asRows(res));
+    }
+    async function getEconomic(symbol, cancellable) {
+        const sym = String(symbol || '').trim();
+        if (!sym) throw _makeError('no_results', 'No economic symbol resolved from query');
+        if (!registry.isCallable('get_economic_data')) throw _makeError('unsupported_tool', 'Economic data tool unavailable');
+        const res = await adapter.callTool('get_economic_data', { symbol: sym }, cancellable);
+        return _marketData('economic', [sym], null, _asRows(res));
+    }
+    // Screener with real cache wiring: get_screener_columns fetched once,
+    // cached, reused. Unknown columns fail closed. Empty cache never valid.
+    async function runScreener(req, cancellable) {
+        req = req || {};
+        if (!registry.isCallable('run_screener')) throw _makeError('unsupported_tool', 'Screener tool unavailable');
+        const wantCols = Array.isArray(req.columns) ? req.columns.slice() : [];
+        if (wantCols.length) {
+            if (!registry.screenerColumnsCached()) {
+                if (!registry.isCallable('get_screener_columns')) throw _makeError('unsupported_tool', 'Screener columns unavailable');
+                const res = await adapter.callTool('get_screener_columns', {}, cancellable);
+                const cols = res && (res.columns || res.names || res.rows);
+                registry.setScreenerColumns(Array.isArray(cols) ? cols.map((c) => (c && (c.name || c.column)) || c).filter((c) => typeof c === 'string') : []);
+            }
+            if (!registry.screenerColumnsCover(wantCols)) {
+                throw _makeError('unsupported_tool', 'Unknown screener columns: ' + wantCols.filter((c) => !registry.screenerColumnsCover([c])).join(', '));
+            }
+        }
+        const args = {};
+        if (wantCols.length) args.columns = wantCols;
+        if (req.filters && typeof req.filters === 'object') args.filters = req.filters;
+        if (req.limit != null) args.limit = req.limit;
+        const v = registry.validate('run_screener', args);
+        if (!v.ok) throw _makeError(v.code || 'invalid_response', v.error || 'Screener call rejected');
+        const res = await adapter.callTool('run_screener', args, cancellable);
+        return _marketData('screener', [], null, _asRows(res));
+    }
 
-    return { resolveSymbol, getPrice, getOhlcv, getTechnicals, getNews };
+    return { resolveSymbol, getPrice, getPrices, getOhlcv, getTechnicals, getNews, getFundamentals, getStory, getEconomic, runScreener };
 }
 
 // formatMarketContext(marketData) -> text grounding context for the LLM leg.

@@ -43,6 +43,18 @@ test('F5 timeframe validated per-tool schema, not global map', () => {
     assert.ok(bad.accepted.length === 2, 'accepted values reported');
 });
 
+test('F7 unknown/generic tickers route without hardcoded list', () => {
+    const a = detectFinancialIntent('Berapa harga ZZZQ sekarang?');
+    assert.ok(a && a.intent === 'market_price', JSON.stringify(a));
+    assert.ok(a.symbols.indexOf('ZZZQ') >= 0, JSON.stringify(a));
+    const b = detectFinancialIntent('Analisis QQQQ M15');
+    assert.ok(b && b.intent === 'technical_analysis', JSON.stringify(b));
+    const c = detectFinancialIntent('TLKM');
+    assert.ok(c && c.symbols.indexOf('TLKM') >= 0, JSON.stringify(c));
+    const d = detectFinancialIntent('harga asdfgh');
+    assert.equal(d, null, 'lowercase non-ticker must not route');
+});
+
 test('F6 planner minimum calls per intent', () => {
     assert.deepEqual(planMarketCalls({ intent: 'market_price', symbols: ['BTC'] }).steps, ['resolve:BTC', 'market_price']);
     const ta = planMarketCalls({ intent: 'technical_analysis', symbols: ['X'], wantsBars: false });

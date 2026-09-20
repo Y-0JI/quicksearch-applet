@@ -56,6 +56,14 @@ function createMcpTransport(opts) {
     const initTimeoutMs = typeof opts.initTimeoutMs === 'number' ? opts.initTimeoutMs : DEFAULT_INIT_TIMEOUT_MS;
     const stateless = !!opts.stateless;
     const requireSession = !!opts.requireSession;
+    // Explicit lifecycle mode (P0): 'legacy' | 'modern' | 'auto' (default).
+    // Versions are config candidates, never proof of server behavior.
+    const mode = opts.mode === 'legacy' || opts.mode === 'modern' ? opts.mode : 'auto';
+    const modernVersions = Array.isArray(opts.modernVersions) && opts.modernVersions.length
+        ? opts.modernVersions.slice() : ['2026-07-28'];
+    // Modern discovery mechanism: undefined = none; 'server-discover' = call
+    // server/discover first. Never assumed — only when explicitly configured.
+    const discovery = opts.discovery === 'server-discover' ? 'server-discover' : null;
 
     let seq = 0;
     let negotiatedVersion = null;
@@ -112,7 +120,10 @@ function createMcpTransport(opts) {
             const ra = res && res.headers ? _header(res.headers, 'retry-after') : null;
             throw _makeError('rate_limited', 'TradingView rate limited', { status, retryAfter: ra != null ? ra : undefined });
         }
-        if (status !== 200) throw _makeError('network_error', 'MCP request failed (HTTP ' + status + ')', { status });
+        if (status !== 200) {
+            if (status === 202 || status === 204) return {};
+            throw _makeError('network_error', 'MCP request failed (HTTP ' + status + ')', { status });
+        }
         const ct = (res && (res.contentType || _header(res.headers, 'content-type'))) || '';
         const text = res ? String(res.bodyText || '') : '';
         let frames = null;
@@ -148,8 +159,26 @@ function createMcpTransport(opts) {
         sessionId = null;
         negotiatedVersion = null;
         discovered = null;
+        _lastHeaders = null;
+        if (mode === 'modern') return _setupModern(cancellable);
+        if (mode === 'legacy') return _setupLegacy(cancellable);
+        return _setupAuto(cancellable);
+    }
+
+    function _legacyCandidates() {
+        return supportedVersions.filter((v) => modernVersions.indexOf(v) < 0);
+    }
+    function _modernCandidates() {
+        return supportedVersions.filter((v) => modernVersions.indexOf(v) >= 0);
+    }
+
+    // LEGACY PATH ONLY: initialize -> initialized -> (session capture).
+    // Never calls server/discover. Never falls back to modern silently.
+    async function _setupLegacy(cancellable) {
+        const cands = _legacyCandidates();
+        if (!cands.length) throw _makeError('unsupported_protocol', 'No legacy protocol version configured');
         let lastErr = null;
-        for (const v of supportedVersions) {
+        for (const v of cands) {
             try {
                 const res = await _post('initialize', {
                     protocolVersion: v,
@@ -157,55 +186,59 @@ function createMcpTransport(opts) {
                     clientInfo: { name: 'quicksearch', version: '1.0' }
                 }, cancellable, initTimeoutMs, null);
                 const serverV = res && (res.protocolVersion || (res.serverInfo && res.serverInfo.version)) || v;
-                if (supportedVersions.indexOf(serverV) < 0) throw _makeError('unsupported_protocol', 'Unsupported MCP protocol version: ' + serverV);
+                if (cands.indexOf(serverV) < 0) throw _makeError('unsupported_protocol', 'Unsupported MCP protocol version: ' + serverV);
                 negotiatedVersion = serverV;
-                return _afterInit(cancellable, res);
+                const sid = _lastSessionHeader();
+                if (sid) sessionId = String(sid);
+                if (requireSession && !sessionId) {
+                    throw _makeError('invalid_response', 'Session-based protocol requires Mcp-Session-Id but server provided none');
+                }
+                try {
+                    await _post('notifications/initialized', {}, cancellable, initTimeoutMs, null);
+                } catch (e) {
+                    if (e && (e.code === 'cancelled' || e.code === 'auth_expired' || e.code === 'auth_missing' || e.code === 'auth_forbidden' || e.code === 'timeout')) throw e;
+                }
+                return { mode: 'legacy', version: negotiatedVersion, stateless: false, discovered: null };
             } catch (e) {
                 lastErr = e;
-                if (e && (e.code === 'cancelled' || e.code === 'auth_expired' || e.code === 'auth_missing' || e.code === 'auth_forbidden' || e.code === 'timeout')) throw e;
-                if (e && e.code === 'unsupported_protocol') {
-                    if (supportedVersions.length === 1) throw e;
-                    continue;
-                }
-                if (e && (e.code === 'network_error' || e.code === 'rate_limited')) throw e;
+                if (e && (e.code === 'cancelled' || e.code === 'auth_expired' || e.code === 'auth_missing' || e.code === 'auth_forbidden' || e.code === 'timeout' || e.code === 'network_error' || e.code === 'rate_limited')) throw e;
+                if (e && e.code === 'unsupported_protocol' && cands.length === 1) throw e;
+                if (e && e.code === 'invalid_response' && requireSession) throw e;
                 continue;
             }
         }
-        throw lastErr || _makeError('unsupported_protocol', 'No supported MCP protocol version');
+        throw lastErr || _makeError('unsupported_protocol', 'No supported legacy protocol version');
     }
 
-    async function _afterInit(cancellable, initRes) {
-        if (stateless) {
-            const wantsDiscover = !!(initRes && initRes.capabilities && initRes.capabilities.discover);
-            if (!wantsDiscover) return { version: negotiatedVersion, stateless: true, discovered: null };
-            try {
-                const caps = await call('server/discover', {}, cancellable).catch(() => null);
-                if (caps) discovered = caps;
-                return { version: negotiatedVersion, stateless: true, discovered };
-            } catch (e) {
-                return { version: negotiatedVersion, stateless: true, discovered: null };
-            }
+    // MODERN PATH ONLY: no legacy initialize/initialized handshake.
+    // server/discover ONLY when explicitly configured via opts.discovery.
+    async function _setupModern(cancellable) {
+        if (requireSession) throw _makeError('invalid_response', 'Modern stateless mode is incompatible with requireSession');
+        const cands = _modernCandidates();
+        if (!cands.length) throw _makeError('unsupported_protocol', 'No modern protocol version configured');
+        negotiatedVersion = cands[0];
+        if (discovery === 'server-discover') {
+            const caps = await call('server/discover', {}, cancellable);
+            discovered = caps;
+            return { mode: 'modern', version: negotiatedVersion, stateless: true, discovered };
         }
-        return _legacyInit(cancellable);
+        return { mode: 'modern', version: negotiatedVersion, stateless: true, discovered: null };
     }
 
-    async function _legacyInit(cancellable) {
-        if (requireSession && !sessionId) {
-            const sid = _lastSessionHeader();
-            if (sid) sessionId = sid;
-            if (!sessionId) throw _makeError('invalid_response', 'Session-based protocol requires Mcp-Session-Id but server provided none');
+    // AUTO: legacy first; explicit fallback to modern ONLY when the server
+    // observably lacks the legacy method (method-not-found), and only when a
+    // modern candidate is configured. Auth/network/rate errors fail closed.
+    async function _setupAuto(cancellable) {
+        try {
+            return await _setupLegacy(cancellable);
+        } catch (e) {
+            const legacyGone = e && (e.code === 'unsupported_tool' || /method not found/i.test(String(e.message || '')));
+            if (!legacyGone) throw e;
+            if (!_modernCandidates().length) throw _makeError('unsupported_protocol', 'Legacy initialize unavailable and no modern version configured');
+            const info = await _setupModern(cancellable);
+            info.fallback = 'legacy-initialize-unavailable';
+            return info;
         }
-        try { await call('notifications/initialized', {}, cancellable); } catch (e) {}
-        if (!stateless) {
-            try {
-                const caps = await call('server/discover', {}, cancellable).catch(() => null);
-                if (caps && caps !== null && typeof caps === 'object') {
-                    discovered = caps;
-                    return { version: negotiatedVersion, stateless: false, discovered };
-                }
-            } catch (e) {}
-        }
-        return { version: negotiatedVersion, stateless: false, discovered: null };
     }
 
     let _lastHeaders = null;

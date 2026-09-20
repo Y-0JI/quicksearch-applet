@@ -89,39 +89,45 @@ test('M9 unsupported version folds to unsupported_protocol after exhausting list
 test('M10 legacy setup captures session id; missing on session-based is error', async () => {
     const initRes = { protocolVersion: '2025-06-18', capabilities: {} };
     const httpNoSess = mockHttp(okJson(initRes, {}));
-    const t = createMcpTransport({ httpRequest: httpNoSess, supportedVersions: ['2025-06-18'], requireSession: true });
+    const t = createMcpTransport({ httpRequest: httpNoSess, supportedVersions: ['2025-06-18'], mode: 'legacy', requireSession: true });
     await assert.rejects(t.setup(null), (e) => e && e.code === 'invalid_response');
     const httpSess = mockHttp([
         { status: 200, headers: { 'mcp-session-id': 'ABC' }, bodyText: JSON.stringify({ jsonrpc: '2.0', id: 1, result: initRes }), contentType: 'application/json' },
-        { status: 200, headers: {}, bodyText: JSON.stringify({ jsonrpc: '2.0', id: 2, result: {} }), contentType: 'application/json' }
+        { status: 202, headers: {}, bodyText: '', contentType: 'application/json' }
     ]);
-    const t2 = createMcpTransport({ httpRequest: httpSess, supportedVersions: ['2025-06-18'], requireSession: true });
+    const t2 = createMcpTransport({ httpRequest: httpSess, supportedVersions: ['2025-06-18'], mode: 'legacy', requireSession: true });
     await t2.setup(null);
     assert.equal(t2.sessionId(), 'ABC');
-    assert.equal(httpSess.calls[1].headers['Mcp-Session-Id'], 'ABC');
 });
 
-test('M11 stateless setup sends no session and needs none', async () => {
-    const initRes = { protocolVersion: '2026-07-28', capabilities: {} };
-    const http = mockHttp(okJson(initRes, {}));
-    const t = createMcpTransport({ httpRequest: http, supportedVersions: ['2026-07-28'], stateless: true });
+test('M11 legacy setup sends session id on follow-up calls; modern sends none', async () => {
+    const initRes = { protocolVersion: '2025-06-18', capabilities: {} };
+    const http = mockHttp([
+        { status: 200, headers: { 'mcp-session-id': 'ABC' }, bodyText: JSON.stringify({ jsonrpc: '2.0', id: 1, result: initRes }), contentType: 'application/json' },
+        { status: 202, headers: {}, bodyText: '', contentType: 'application/json' },
+        { status: 200, headers: {}, bodyText: JSON.stringify({ jsonrpc: '2.0', id: 3, result: { tools: [] } }), contentType: 'application/json' }
+    ]);
+    const t = createMcpTransport({ httpRequest: http, supportedVersions: ['2025-06-18'], mode: 'legacy' });
     await t.setup(null);
-    assert.equal(t.sessionId(), null);
+    await t.call('tools/list', {}, null);
+    assert.equal(http.calls[2].headers['Mcp-Session-Id'], 'ABC');
+    const httpM = mockHttp(okJson({ tools: [] }, {}));
+    const tm = createMcpTransport({ httpRequest: httpM, supportedVersions: ['2026-07-28'], mode: 'modern' });
+    await tm.setup(null);
+    await tm.call('tools/list', {}, null);
+    assert.ok(!httpM.calls[0].headers['Mcp-Session-Id'], 'modern sends no session header');
 });
 
-test('M12 server/discover called only when advertised', async () => {
-    const initRes = { protocolVersion: '2026-07-28', capabilities: { discover: true } };
-    const discRes = { capabilities: { tools: true } };
+test('M12 legacy never auto-discovers; modern discover only when configured', async () => {
+    const initRes = { protocolVersion: '2025-06-18', capabilities: { discover: true } };
     const http = mockHttp([
         { status: 200, headers: {}, bodyText: JSON.stringify({ jsonrpc: '2.0', id: 1, result: initRes }), contentType: 'application/json' },
-        { status: 200, headers: {}, bodyText: JSON.stringify({ jsonrpc: '2.0', id: 2, result: discRes }), contentType: 'application/json' }
+        { status: 200, headers: {}, bodyText: JSON.stringify({ jsonrpc: '2.0', id: 2, result: {} }), contentType: 'application/json' },
+        { status: 200, headers: {}, bodyText: JSON.stringify({ jsonrpc: '2.0', id: 3, result: { tools: [] } }), contentType: 'application/json' }
     ]);
-    const t = createMcpTransport({ httpRequest: http, supportedVersions: ['2026-07-28'], stateless: true });
+    const t = createMcpTransport({ httpRequest: http, supportedVersions: ['2025-06-18'], mode: 'legacy' });
     await t.setup(null);
-    assert.equal(http.calls.length, 2);
-    assert.ok(JSON.stringify(http.calls[1].body).includes('server/discover'));
-    const http2 = mockHttp(okJson({ protocolVersion: '2026-07-28', capabilities: {} }, {}));
-    const t2 = createMcpTransport({ httpRequest: http2, supportedVersions: ['2026-07-28'], stateless: true });
-    await t2.setup(null);
-    assert.equal(http2.calls.length, 1);
+    const called = http.calls.map((c) => JSON.parse(c.body).method);
+    assert.ok(called.indexOf('server/discover') < 0, 'legacy must not call server/discover even when advertised');
+    assert.deepEqual(called.slice(0, 2), ['initialize', 'notifications/initialized']);
 });
