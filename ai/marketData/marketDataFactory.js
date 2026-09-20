@@ -21,6 +21,10 @@ let plannerMod = null;
 try { plannerMod = require('./minCallPlanner.js'); } catch (e) {}
 try { if (!plannerMod) plannerMod = require('./marketData/minCallPlanner.js'); } catch (e) {}
 try { if (!plannerMod) plannerMod = require('ai/marketData/minCallPlanner.js'); } catch (e) {}
+let oauthStoreMod = null;
+try { oauthStoreMod = require('./oauth/oauthTokenStore.js'); } catch (e) {}
+try { if (!oauthStoreMod) oauthStoreMod = require('./marketData/oauth/oauthTokenStore.js'); } catch (e) {}
+try { if (!oauthStoreMod) oauthStoreMod = require('ai/marketData/oauth/oauthTokenStore.js'); } catch (e) {}
 
 function _mergeLabelled(kind, parts) {
     const symbols = [];
@@ -39,6 +43,30 @@ function createMarketDataFromConfig(cfg) {
         return { marketDataTool: null, adapter: null, auth: null, disabled: true };
     }
     const auth = (authMod && typeof authMod.createAuthStub === 'function') ? authMod.createAuthStub() : null;
+    // OAuth provider (optional): cfg.oauth { tokenStore, discovery, clientId,
+    // httpPostJson, createListener, openBrowser, ports, path/callbackPath,
+    // timeoutMs/authTimeoutMs, scope } upgrades the stub to a TokenStore-backed
+    // provider with bounded refresh + production beginAuthorization. Without it
+    // the stub keeps legacy no-auth behavior. No browser/listener is ever
+    // constructed here — both are injected (applet Gio launcher + GJS
+    // listener in production, mocks in tests).
+    let authProvider = cfg.authProvider || auth;
+    if (!cfg.authProvider && cfg.oauth && cfg.oauth.tokenStore && authMod && typeof authMod.createOAuthProvider === 'function') {
+        try {
+            authProvider = authMod.createOAuthProvider({
+                tokenStore: cfg.oauth.tokenStore,
+                discovery: cfg.oauth.discovery || null,
+                clientId: cfg.oauth.clientId || null,
+                httpPostJson: cfg.oauth.httpPostJson || null,
+                createListener: cfg.oauth.createListener || cfg.createListener || null,
+                openBrowser: cfg.oauth.openBrowser || cfg.openBrowser || null,
+                ports: cfg.oauth.ports || cfg.ports || null,
+                callbackPath: cfg.oauth.callbackPath || cfg.oauth.path || cfg.callbackPath || null,
+                authTimeoutMs: cfg.oauth.authTimeoutMs || cfg.oauth.timeoutMs || cfg.authTimeoutMs || null,
+                scope: cfg.oauth.scope || null
+            });
+        } catch (e) { authProvider = auth; }
+    }
     const adapter = adapterMod.createMcpAdapter({
         httpRequest: cfg.httpRequest,
         endpoint: cfg.endpoint,
@@ -47,7 +75,7 @@ function createMarketDataFromConfig(cfg) {
         mode: cfg.mode,
         discovery: cfg.discovery,
         metadataUrl: cfg.metadataUrl,
-        authProvider: cfg.authProvider || auth,
+        authProvider: authProvider,
         stateless: cfg.stateless,
         requireSession: cfg.requireSession,
         timeoutMs: cfg.timeoutMs,
@@ -152,7 +180,7 @@ function createMarketDataFromConfig(cfg) {
         },
         _core: core
     };
-    return { marketDataTool, adapter, auth, disabled: false };
+    return { marketDataTool, adapter, auth: authProvider, disabled: false };
 }
 
 module.exports = { createMarketDataFromConfig };
