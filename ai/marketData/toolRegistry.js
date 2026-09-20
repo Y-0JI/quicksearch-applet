@@ -69,11 +69,67 @@ function createToolRegistry(opts) {
             const spec = props[k] || {};
             const v = a[k];
             if (v == null) continue;
-            if (spec.type === 'string' && typeof v !== 'string') return { ok: false, code: 'invalid_response', error: 'Param ' + k + ' must be string' };
-            if (spec.type === 'integer' && !Number.isInteger(v)) return { ok: false, code: 'invalid_response', error: 'Param ' + k + ' must be integer' };
-            if (spec.type === 'number' && typeof v !== 'number') return { ok: false, code: 'invalid_response', error: 'Param ' + k + ' must be number' };
+            const vt = _checkType(k, v, spec);
+            if (!vt.ok) return vt;
             if (Array.isArray(spec.enum) && spec.enum.length && spec.enum.indexOf(v) < 0) {
                 return { ok: false, code: 'unsupported_timeframe', error: 'Unsupported value for ' + k + ': ' + String(v) + '. Accepted: ' + spec.enum.join(', ') };
+            }
+        }
+        return { ok: true };
+    }
+
+    function _checkType(k, v, spec) {
+        const type = spec.type;
+        if (!type) return { ok: true };
+        if (type === 'string' && typeof v !== 'string') return { ok: false, code: 'invalid_response', error: 'Param ' + k + ' must be string' };
+        if (type === 'integer' && !Number.isInteger(v)) return { ok: false, code: 'invalid_response', error: 'Param ' + k + ' must be integer' };
+        if (type === 'number' && typeof v !== 'number') return { ok: false, code: 'invalid_response', error: 'Param ' + k + ' must be number' };
+        if (type === 'boolean' && typeof v !== 'boolean') return { ok: false, code: 'invalid_response', error: 'Param ' + k + ' must be boolean' };
+        if (type === 'object' && (typeof v !== 'object' || v === null || Array.isArray(v))) {
+            return { ok: false, code: 'invalid_response', error: 'Param ' + k + ' must be object' };
+        }
+        if (type === 'object' && spec.properties && typeof spec.properties === 'object') {
+            const sub = _checkObjectProps(k, v, spec);
+            if (!sub.ok) return sub;
+        }
+        if (type === 'array') {
+            if (!Array.isArray(v)) return { ok: false, code: 'invalid_response', error: 'Param ' + k + ' must be array' };
+            if (spec.minItems != null && v.length < spec.minItems) {
+                return { ok: false, code: 'invalid_response', error: 'Param ' + k + ' needs at least ' + spec.minItems + ' items' };
+            }
+            if (spec.maxItems != null && v.length > spec.maxItems) {
+                return { ok: false, code: 'invalid_response', error: 'Param ' + k + ' allows at most ' + spec.maxItems + ' items' };
+            }
+            const itemType = spec.items && spec.items.type;
+            if (itemType) {
+                for (const item of v) {
+                    if (itemType === 'string' && typeof item !== 'string') return { ok: false, code: 'invalid_response', error: 'Param ' + k + ' items must be string' };
+                    if (itemType === 'integer' && !Number.isInteger(item)) return { ok: false, code: 'invalid_response', error: 'Param ' + k + ' items must be integer' };
+                    if (itemType === 'number' && typeof item !== 'number') return { ok: false, code: 'invalid_response', error: 'Param ' + k + ' items must be number' };
+                    if (itemType === 'boolean' && typeof item !== 'boolean') return { ok: false, code: 'invalid_response', error: 'Param ' + k + ' items must be boolean' };
+                }
+            }
+        }
+        return { ok: true };
+    }
+
+    // Nested object validation: required sub-fields + per-property type/enum.
+    function _checkObjectProps(k, v, spec) {
+        const subReq = Array.isArray(spec.required) ? spec.required : [];
+        for (const sk of subReq) {
+            if (v[sk] == null || (typeof v[sk] === 'string' && !v[sk].trim())) {
+                return { ok: false, code: 'invalid_response', error: 'Param ' + k + '.' + sk + ' is required' };
+            }
+        }
+        const subProps = (spec.properties && typeof spec.properties === 'object') ? spec.properties : {};
+        for (const sk of Object.keys(subProps)) {
+            const sspec = subProps[sk] || {};
+            const sv = v[sk];
+            if (sv == null) continue;
+            const r = _checkType(k + '.' + sk, sv, sspec);
+            if (!r.ok) return r;
+            if (Array.isArray(sspec.enum) && sspec.enum.length && sspec.enum.indexOf(sv) < 0) {
+                return { ok: false, code: 'unsupported_timeframe', error: 'Unsupported value for ' + k + '.' + sk + ': ' + String(sv) };
             }
         }
         return { ok: true };

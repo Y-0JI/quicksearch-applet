@@ -48,6 +48,13 @@ function _priceArgsFor(registry, name, symbol) {
         if (k === 'columns') continue;
         return null;
     }
+    // Price-candidate compatibility for single-symbol batch use:
+    // get_symbol_data_batch with array schema accepts per-symbol calls too.
+    if (name === 'get_symbol_data_batch') {
+        const symSpec = props.symbols || {};
+        if (symSpec.type === 'string') return { symbols: symbol };
+        return { symbols: [symbol] };
+    }
     if (props.symbol || required.indexOf('symbol') >= 0) args.symbol = symbol;
     else if (props.symbols || required.indexOf('symbols') >= 0) args.symbols = symbol;
     else return null;
@@ -62,8 +69,24 @@ function _priceArgsFor(registry, name, symbol) {
     else if (required.indexOf('count') >= 0) args.count = 1;
     return args;
 }
-function _asRows(res) {
-    if (!res || typeof res !== 'object') return [];
+// P2: price-bearing check — at least one row carries a numeric price-like
+// field (close/price/last/c or OHLC set). Verbatim server fields kept;
+// a tool whose response has none is skipped as incompatible price source.
+const _PRICE_KEYS = ['close', 'price', 'last', 'lastprice', 'last_price', 'c', 'open', 'high', 'low'];
+function _priceBearing(rows) {
+    if (!Array.isArray(rows)) return false;
+    for (const r of rows) {
+        if (r == null) continue;
+        if (typeof r === 'number' && isFinite(r)) return true;
+        if (typeof r === 'object') {
+            for (const k of _PRICE_KEYS) {
+                if (typeof r[k] === 'number' && isFinite(r[k])) return true;
+            }
+        }
+    }
+    return false;
+}
+function _asRows(res) {    if (!res || typeof res !== 'object') return [];
     for (const k of ['bars', 'rows', 'data', 'results', 'items', 'news']) {
         if (Array.isArray(res[k])) return res[k].slice();
     }
@@ -86,20 +109,24 @@ function createMarketDataTool(opts) {
         return [];
     }
     async function resolveSymbol(raw, cancellable) {
+        const q = String(raw == null ? '' : raw).trim();
+        if (!q) throw _makeError('symbol_required', 'No instrument symbol or entity in market query');
         if (!registry.isCallable('search_symbols')) {
-            if (/:/.test(String(raw || ''))) return String(raw).trim();
+            if (/:/.test(q)) return q;
             throw _makeError('unsupported_tool', 'Symbol search unavailable');
         }
-        const res = await adapter.callTool('search_symbols', { query: String(raw || '').trim() }, cancellable);
+        const res = await adapter.callTool('search_symbols', { query: q }, cancellable);
         const cands = _symbolsOf(res).map((s) => (s && (s.symbol || s.ticker)) || '').filter(Boolean);
-        if (!cands.length) throw _makeError('no_results', 'Symbol not found: ' + raw);
-        const exact = cands.filter((c) => c.toUpperCase() === String(raw).toUpperCase() || c.toUpperCase().endsWith(':' + String(raw).toUpperCase()));
+        if (!cands.length) throw _makeError('no_results', 'Symbol not found: ' + q);
+        const exact = cands.filter((c) => c.toUpperCase() === q.toUpperCase() || c.toUpperCase().endsWith(':' + q.toUpperCase()));
         if (exact.length === 1) return exact[0];
         if (cands.length === 1) return cands[0];
-        throw _makeError('ambiguous_symbol', 'Ambiguous symbol: ' + raw, { candidates: cands });
+        throw _makeError('ambiguous_symbol', 'Ambiguous symbol: ' + q, { candidates: cands });
     }
     function _marketData(kind, symbols, interval, rows, sources) {
-        return { type: 'market_data', kind, symbols: symbols || [], interval: interval || null, rows: rows || [], attribution: 'TradingView', sources: sources || [] };
+        // Market-native result keeps server fields verbatim. snapshot:true
+        // marks retrieved/delayed data — never "live tick".
+        return { type: 'market_data', kind, symbols: symbols || [], interval: interval || null, rows: rows || [], attribution: 'TradingView', snapshot: true, sources: sources || [] };
     }
     async function getPrice(rawSymbol, cancellable) {
         const symbol = await resolveSymbol(rawSymbol, cancellable);
@@ -108,12 +135,40 @@ function createMarketDataTool(opts) {
             if (!registry.isCallable(name)) continue;
             const args = _priceArgsFor(registry, name, symbol);
             if (!args) continue;
+            // P2: get_symbol_data is NOT assumed to be a quote API. When the
+            // schema exposes a `columns` selector, request explicit price
+            // columns; otherwise accept the fixed shape but mark snapshot
+            // semantics (never "live tick").
+            const props = _propsOf(registry, name);
+            if (props.columns && args.columns == null) {
+                const cols = _quoteColumnsFor(name);
+                if (cols) args.columns = cols;
+            }
             const v = registry.validate(name, args);
             if (!v.ok) continue;
             const res = await adapter.callTool(name, args, cancellable);
-            return _marketData('market_price', [symbol], args.interval || null, _asRows(res));
+            const out = _marketData('market_price', [symbol], args.interval || null, _asRows(res));
+            out.snapshot = true;
+            // P2 data-shape awareness: a market-price result must carry at
+            // least one price-bearing field; otherwise the tool is not a
+            // compatible price source for this call (try next candidate).
+            if (!_priceBearing(out.rows)) continue;
+            return out;
         }
         throw _makeError('unsupported_tool', 'No compatible market-price tool available');
+    }
+    function _quoteColumnsFor(name) {
+        // Only when the schema declares a columns-like selector; values are
+        // validated against get_screener_columns-style discovery when available.
+        try {
+            if (registry.screenerColumnsCached()) {
+                const want = ['close', 'change'];
+                if (registry.screenerColumnsCover(want)) return want;
+                if (registry.screenerColumnsCover(['close'])) return ['close'];
+                return null;
+            }
+        } catch (e) {}
+        return ['close'];
     }
     // Multi-symbol market-price: batch tool when schema-compatible, else bounded
     // single calls in order. Any ambiguous symbol fails the whole request.
@@ -124,14 +179,16 @@ function createMarketDataTool(opts) {
         for (const raw of list) resolved.push(await resolveSymbol(raw, cancellable));
         if (registry.isCallable('get_symbol_data_batch')) {
             const props = _propsOf(registry, 'get_symbol_data_batch');
-            if (props.symbols || _requiredOf(registry, 'get_symbol_data_batch').indexOf('symbols') >= 0) {
-                const args = { symbols: resolved.join(',') };
-                const v = registry.validate('get_symbol_data_batch', args);
-                if (v.ok) {
-                    const res = await adapter.callTool('get_symbol_data_batch', args, cancellable);
-                    const rows = _asRows(res);
-                    return _marketData('market_price', resolved, null, rows.length ? rows : resolved.map((s) => ({ symbol: s })));
-                }
+            const symSpec = props.symbols || {};
+            // Schema truth: ARRAY when the schema says array (default when
+            // untyped-but-required); CSV string ONLY when declared string.
+            const asArray = symSpec.type !== 'string';
+            const args = asArray ? { symbols: resolved.slice() } : { symbols: resolved.join(',') };
+            const v = registry.validate('get_symbol_data_batch', args);
+            if (v.ok) {
+                const res = await adapter.callTool('get_symbol_data_batch', args, cancellable);
+                const rows = _asRows(res);
+                return _marketData('market_price', resolved, null, rows.length ? rows : resolved.map((s) => ({ symbol: s })));
             }
         }
         const rows = [];
@@ -209,6 +266,49 @@ function createMarketDataTool(opts) {
         const res = await adapter.callTool('get_economic_data', { symbol: sym }, cancellable);
         return _marketData('economic', [sym], null, _asRows(res));
     }
+    // Generic economic resolution via get_economic_symbols (source of truth).
+    // entity: { country, indicator } — no hardcoded ticker map. 0 → no_results,
+    // 1 → use, >1 → ambiguous_symbol.
+    async function resolveEconomic(entity, cancellable) {
+        entity = entity || {};
+        if (!registry.isCallable('get_economic_symbols')) throw _makeError('unsupported_tool', 'Economic symbol discovery unavailable');
+        const args = {};
+        try {
+            const schema = registry.get('get_economic_symbols').inputSchema || {};
+            const props = (schema && schema.properties) || {};
+            if (entity.country && props.country) args.country = entity.country;
+            if (entity.indicator && props.search) args.search = entity.indicator;
+            else if (entity.indicator && props.query) args.query = entity.indicator;
+            else if (entity.indicator && props.indicator) args.indicator = entity.indicator;
+        } catch (e) {}
+        const v = registry.validate('get_economic_symbols', args);
+        if (!v.ok) throw _makeError(v.code || 'invalid_response', v.error || 'Economic discovery rejected');
+        const res = await adapter.callTool('get_economic_symbols', args, cancellable);
+        const cands = _econSymbolsOf(res, entity);
+        if (!cands.length) throw _makeError('no_results', 'No economic indicator found');
+        if (cands.length > 1) throw _makeError('ambiguous_symbol', 'Ambiguous economic indicator', { candidates: cands });
+        return cands[0];
+    }
+    function _econSymbolsOf(res, entity) {
+        try {
+            const arr = res && (res.symbols || res.tickers || res.results || res.items);
+            if (Array.isArray(arr)) {
+                const out = arr.map((s) => (typeof s === 'string' ? s : (s && (s.symbol || s.ticker)) || '')).filter(Boolean);
+                return _filterEcon(out, entity);
+            }
+            if (res && typeof res === 'object') {
+                const keys = Object.keys(res).filter((k) => /^ECONOMICS:/i.test(k));
+                if (keys.length) return _filterEcon(keys, entity);
+            }
+        } catch (e) {}
+        return [];
+    }
+    function _filterEcon(cands, entity) {
+        if (!entity || !entity.country) return cands;
+        const cc = String(entity.country).toUpperCase();
+        const hit = cands.filter((c) => String(c).toUpperCase().indexOf(cc) >= 0);
+        return hit.length ? hit : cands;
+    }
     // Screener with real cache wiring: get_screener_columns fetched once,
     // cached, reused. Unknown columns fail closed. Empty cache never valid.
     async function runScreener(req, cancellable) {
@@ -236,7 +336,7 @@ function createMarketDataTool(opts) {
         return _marketData('screener', [], null, _asRows(res));
     }
 
-    return { resolveSymbol, getPrice, getPrices, getOhlcv, getTechnicals, getNews, getFundamentals, getStory, getEconomic, runScreener };
+    return { resolveSymbol, resolveEconomic, getPrice, getPrices, getOhlcv, getTechnicals, getNews, getFundamentals, getStory, getEconomic, runScreener };
 }
 
 // formatMarketContext(marketData) -> text grounding context for the LLM leg.

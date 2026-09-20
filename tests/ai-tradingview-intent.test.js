@@ -55,6 +55,18 @@ test('F7 unknown/generic tickers route without hardcoded list', () => {
     assert.equal(d, null, 'lowercase non-ticker must not route');
 });
 
+test('F8 entity-aware candidates without ticker list (resolver decides)', () => {
+    for (const q of ['NVIDIA', 'Nvidia', 'Apple', 'Bitcoin', 'Gold', 'BBCA', 'TLKM']) {
+        const r = detectFinancialIntent(q);
+        assert.ok(r && r.entity, q + ' must yield entity candidate');
+        assert.ok(r.symbols.length > 0 || r.entity, q);
+    }
+    assert.equal(detectFinancialIntent('EUR/USD').symbols[0], 'EURUSD');
+    assert.ok(detectFinancialIntent('Ada berita terbaru tentang NVIDIA?').intent === 'market_news');
+    assert.equal(detectFinancialIntent('Berita terbaru Linux Mint'), null);
+    assert.equal(detectFinancialIntent('harga laptop'), null);
+});
+
 test('F6 planner minimum calls per intent', () => {
     assert.deepEqual(planMarketCalls({ intent: 'market_price', symbols: ['BTC'] }).steps, ['resolve:BTC', 'market_price']);
     const ta = planMarketCalls({ intent: 'technical_analysis', symbols: ['X'], wantsBars: false });

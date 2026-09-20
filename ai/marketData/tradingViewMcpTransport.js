@@ -76,6 +76,10 @@ function createMcpTransport(opts) {
 
     function _headers(extra) {
         const h = { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' };
+        // Wire protocol metadata: version header rides every request once a
+        // version is negotiated (modern requirement; harmless on legacy).
+        // Never sent pre-negotiation — there is nothing truthful to send.
+        if (negotiatedVersion) h['Mcp-Protocol-Version'] = negotiatedVersion;
         if (sessionId) h['Mcp-Session-Id'] = sessionId;
         if (extra && typeof extra === 'object') {
             for (const k of Object.keys(extra)) h[k] = extra[k];
@@ -177,6 +181,132 @@ function createMcpTransport(opts) {
     async function _setupLegacy(cancellable) {
         const cands = _legacyCandidates();
         if (!cands.length) throw _makeError('unsupported_protocol', 'No legacy protocol version configured');
+        return _setupLegacyWith(cancellable, cands);
+    }
+
+    // MODERN PATH ONLY: capability/version-aware negotiation, no legacy handshake.
+    // Negotiation sources (server truth, in order):
+    //   1. GET <endpoint> metadata document when the server exposes one
+    //      (opts.metadataUrl or endpoint with Accept: application/json on GET):
+    //      { protocolVersions: [...], discovery: 'server-discover' | <url> | null,
+    //        session: 'required' | 'stateless' }.
+    //   2. Explicit config (opts.discovery / supportedVersions intersection).
+    // If neither yields a mutually-supported version → unsupported_protocol.
+    // server/discover is used ONLY when the negotiated capability advertises it.
+    async function _setupModern(cancellable) {
+        if (requireSession) throw _makeError('invalid_response', 'Modern stateless mode is incompatible with requireSession');
+        const cands = _modernCandidates();
+        if (!cands.length) throw _makeError('unsupported_protocol', 'No modern protocol version configured');
+        const meta = await _fetchServerMetadata(cancellable);
+        let serverVersions = meta && Array.isArray(meta.protocolVersions) ? meta.protocolVersions : null;
+        const mutual = serverVersions
+            ? cands.filter((v) => serverVersions.indexOf(v) >= 0)
+            : cands.slice();
+        if (!mutual.length) {
+            throw _makeError('unsupported_protocol', 'No mutually-supported MCP protocol version (client: ' + cands.join(',') + (serverVersions ? '; server: ' + serverVersions.join(',') : '; server advertised none') + ')');
+        }
+        negotiatedVersion = mutual[0];
+        const discoverable = (meta && meta.discovery) || discovery;
+        if (discoverable === 'server-discover') {
+            const caps = await call('server/discover', {}, cancellable);
+            discovered = caps;
+            return { mode: 'modern', version: negotiatedVersion, stateless: true, discovered };
+        }
+        if (discoverable) {
+            throw _makeError('unsupported_protocol', 'Advertised discovery mechanism not supported: ' + String(discoverable).slice(0, 80));
+        }
+        return { mode: 'modern', version: negotiatedVersion, stateless: true, discovered: null };
+    }
+
+    // Best-effort GET metadata fetch. Returns null (not an error) when the
+    // server exposes no metadata document — caller falls back to config.
+    // HTTP/auth failures propagate (fail closed, never mistaken for "no meta").
+    async function _fetchServerMetadata(cancellable) {
+        if (_isCancelled(cancellable)) throw _makeError('cancelled', 'cancelled');
+        const url = String(opts.metadataUrl || '').trim();
+        if (!url) return null;
+        let token = null;
+        if (getAccessToken) {
+            try { token = await getAccessToken(); } catch (e) { token = null; }
+        }
+        const headers = { 'Accept': 'application/json' };
+        if (token) headers['Authorization'] = 'Bearer ' + token;
+        const res = await Promise.race([
+            Promise.resolve().then(() => httpRequest({ url, method: 'GET', headers, timeoutMs: initTimeoutMs }, cancellable)),
+            new Promise((_, rej) => {
+                const t = setTimeout(() => rej(_makeError('timeout', 'MCP metadata timeout')), initTimeoutMs);
+                if (t && typeof t.unref === 'function') { try { t.unref(); } catch (e) {} }
+            })
+        ]).catch((e) => {
+            if (e && e.code) throw e;
+            throw _makeError('network_error', _sanitize(e && e.message) || 'MCP network error');
+        });
+        if (_isCancelled(cancellable)) throw _makeError('cancelled', 'cancelled');
+        const status = res && res.status != null ? res.status : 0;
+        if (status === 401) throw _makeError('auth_expired', 'TradingView authentication required or expired', { status });
+        if (status === 403) throw _makeError('auth_forbidden', 'TradingView access forbidden (plan/scope)', { status });
+        if (status === 404 || status === 405) return null;
+        if (status === 429) throw _makeError('rate_limited', 'TradingView rate limited', { status });
+        if (status < 200 || status >= 300) throw _makeError('network_error', 'MCP metadata failed (HTTP ' + status + ')', { status });
+        let obj = null;
+        try { obj = JSON.parse(String((res && res.bodyText) || '')); } catch (e) { return null; }
+        if (!obj || typeof obj !== 'object') return null;
+        return obj;
+    }
+
+    // AUTO: capability-aware, never legacy-blind. Order:
+    //   1. If a metadata URL is configured, fetch it first: server-advertised
+    //      versions decide the path (modern intersection → modern, else legacy
+    //      when a legacy candidate exists). Auth/network errors fail closed.
+    //   2. Without metadata: try legacy initialize; explicit fallback to modern
+    //      ONLY when the server observably lacks the legacy method
+    //      (method-not-found), and only with a modern candidate configured.
+    async function _setupAuto(cancellable) {
+        if (String(opts.metadataUrl || '').trim()) {
+            let meta = null;
+            try {
+                meta = await _fetchServerMetadata(cancellable);
+            } catch (e) {
+                throw e;
+            }
+            if (meta && Array.isArray(meta.protocolVersions)) {
+                const modernHit = _modernCandidates().filter((v) => meta.protocolVersions.indexOf(v) >= 0);
+                if (modernHit.length) {
+                    negotiatedVersion = modernHit[0];
+                    const discoverable = meta.discovery || discovery;
+                    if (discoverable === 'server-discover') {
+                        const caps = await call('server/discover', {}, cancellable);
+                        discovered = caps;
+                        return { mode: 'modern', version: negotiatedVersion, stateless: true, discovered };
+                    }
+                    if (discoverable) throw _makeError('unsupported_protocol', 'Advertised discovery mechanism not supported: ' + String(discoverable).slice(0, 80));
+                    return { mode: 'modern', version: negotiatedVersion, stateless: true, discovered: null };
+                }
+                const legacyHit = _legacyCandidates().filter((v) => meta.protocolVersions.indexOf(v) >= 0);
+                if (legacyHit.length) {
+                    const saved = supportedVersions.slice();
+                    try {
+                        return await _setupLegacyWith(cancellable, legacyHit);
+                    } finally {
+                        void saved;
+                    }
+                }
+                throw _makeError('unsupported_protocol', 'No mutually-supported MCP protocol version (client: ' + supportedVersions.join(',') + '; server: ' + meta.protocolVersions.join(',') + ')');
+            }
+        }
+        try {
+            return await _setupLegacy(cancellable);
+        } catch (e) {
+            const legacyGone = e && (e.code === 'unsupported_tool' || /method not found/i.test(String(e.message || '')));
+            if (!legacyGone) throw e;
+            if (!_modernCandidates().length) throw _makeError('unsupported_protocol', 'Legacy initialize unavailable and no modern version configured');
+            const info = await _setupModern(cancellable);
+            info.fallback = 'legacy-initialize-unavailable';
+            return info;
+        }
+    }
+
+    async function _setupLegacyWith(cancellable, cands) {
         let lastErr = null;
         for (const v of cands) {
             try {
@@ -208,37 +338,6 @@ function createMcpTransport(opts) {
             }
         }
         throw lastErr || _makeError('unsupported_protocol', 'No supported legacy protocol version');
-    }
-
-    // MODERN PATH ONLY: no legacy initialize/initialized handshake.
-    // server/discover ONLY when explicitly configured via opts.discovery.
-    async function _setupModern(cancellable) {
-        if (requireSession) throw _makeError('invalid_response', 'Modern stateless mode is incompatible with requireSession');
-        const cands = _modernCandidates();
-        if (!cands.length) throw _makeError('unsupported_protocol', 'No modern protocol version configured');
-        negotiatedVersion = cands[0];
-        if (discovery === 'server-discover') {
-            const caps = await call('server/discover', {}, cancellable);
-            discovered = caps;
-            return { mode: 'modern', version: negotiatedVersion, stateless: true, discovered };
-        }
-        return { mode: 'modern', version: negotiatedVersion, stateless: true, discovered: null };
-    }
-
-    // AUTO: legacy first; explicit fallback to modern ONLY when the server
-    // observably lacks the legacy method (method-not-found), and only when a
-    // modern candidate is configured. Auth/network/rate errors fail closed.
-    async function _setupAuto(cancellable) {
-        try {
-            return await _setupLegacy(cancellable);
-        } catch (e) {
-            const legacyGone = e && (e.code === 'unsupported_tool' || /method not found/i.test(String(e.message || '')));
-            if (!legacyGone) throw e;
-            if (!_modernCandidates().length) throw _makeError('unsupported_protocol', 'Legacy initialize unavailable and no modern version configured');
-            const info = await _setupModern(cancellable);
-            info.fallback = 'legacy-initialize-unavailable';
-            return info;
-        }
     }
 
     let _lastHeaders = null;

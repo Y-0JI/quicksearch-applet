@@ -12,7 +12,7 @@ function mockHttp(handler) {
     fn.calls = calls;
     return fn;
 }
-function methods(http) { return http.calls.map((c) => { try { return JSON.parse(c.body).method; } catch (e) { return '?'; } }); }
+function methods(http) { return http.calls.filter((c) => String(c.method || 'POST') === 'POST').map((c) => { try { return JSON.parse(c.body).method; } catch (e) { return '?'; } }); }
 
 test('L1 modern mode never sends legacy initialize', async () => {
     const http = mockHttp((req, n) => rpcResult(n, { tools: [] }));
@@ -24,12 +24,12 @@ test('L1 modern mode never sends legacy initialize', async () => {
     assert.equal(t.sessionId(), null);
 });
 
-test('L2 modern stateless needs no session id; tools/list works without it', async () => {
+test('L2 modern stateless needs no session id; calls carry version header, no session', async () => {
     const http = mockHttp((req, n) => rpcResult(n, { tools: [] }));
     const t = createMcpTransport({ httpRequest: http, supportedVersions: ['2026-07-28'], mode: 'modern' });
     await t.setup(null);
-    const res = await t.call('tools/list', {}, null);
-    assert.deepEqual(res, { tools: [] });
+    await t.call('tools/list', {}, null);
+    assert.equal(http.calls[0].headers['Mcp-Protocol-Version'], '2026-07-28');
     assert.ok(!http.calls[0].headers['Mcp-Session-Id'], 'no session header sent');
 });
 
@@ -127,4 +127,95 @@ test('L12 auto mode does not swallow auth errors as version mismatch', async () 
     const t = createMcpTransport({ httpRequest: http, supportedVersions: ['2025-06-18', '2026-07-28'], mode: 'auto' });
     await assert.rejects(t.setup(null), (e) => e && (e.code === 'auth_expired' || e.code === 'auth_missing'));
     assert.equal(http.calls.length, 1, 'fail closed on first auth error, no silent retry storm');
+});
+
+test('L13 modern negotiates version from server metadata intersection', async () => {
+    const http = mockHttp((req, n) => {
+        if (String(req.method || 'POST') === 'GET') {
+            return { status: 200, headers: {}, bodyText: JSON.stringify({ protocolVersions: ['2025-11-25'], discovery: null }), contentType: 'application/json' };
+        }
+        return rpcResult(n, {});
+    });
+    const t = createMcpTransport({ httpRequest: http, supportedVersions: ['2026-07-28', '2025-11-25'], modernVersions: ['2026-07-28', '2025-11-25'], mode: 'modern', metadataUrl: 'https://x.test/meta' });
+    const info = await t.setup(null);
+    assert.equal(info.version, '2025-11-25', 'server-advertised intersection wins, not cands[0]');
+    assert.equal(http.calls[0].method, 'GET');
+    assert.ok(!http.calls[0].headers['Mcp-Protocol-Version'], 'no version header pre-negotiation');
+});
+
+test('L14 modern fails closed when no mutually-supported version', async () => {
+    const http = mockHttp((req) => {
+        if (String(req.method || 'POST') === 'GET') {
+            return { status: 200, headers: {}, bodyText: JSON.stringify({ protocolVersions: ['1999-01-01'] }), contentType: 'application/json' };
+        }
+        return rpcResult(1, {});
+    });
+    const t = createMcpTransport({ httpRequest: http, supportedVersions: ['2026-07-28'], mode: 'modern', metadataUrl: 'https://x.test/meta' });
+    await assert.rejects(t.setup(null), (e) => e && e.code === 'unsupported_protocol');
+});
+
+test('L15 modern metadata auth failure propagates, never treated as no-meta', async () => {
+    const http = mockHttp((req) => {
+        if (String(req.method || 'POST') === 'GET') return { status: 401, headers: {}, bodyText: '{}', contentType: 'application/json' };
+        return rpcResult(1, {});
+    });
+    const t = createMcpTransport({ httpRequest: http, supportedVersions: ['2026-07-28'], mode: 'modern', metadataUrl: 'https://x.test/meta' });
+    await assert.rejects(t.setup(null), (e) => e && (e.code === 'auth_expired' || e.code === 'auth_missing'));
+});
+
+test('L16 modern server/discover unavailable fails closed, no legacy retry', async () => {
+    const http = mockHttp((req, n) => rpcError(n, -32601, 'Method not found'));
+    const t = createMcpTransport({ httpRequest: http, supportedVersions: ['2026-07-28'], mode: 'modern', discovery: 'server-discover' });
+    await assert.rejects(t.setup(null), (e) => e && (e.code === 'unsupported_tool' || e.code === 'invalid_response'));
+    assert.ok(methods(http).indexOf('initialize') < 0, 'no silent legacy fallback from modern mode');
+});
+
+test('L17 auto prefers modern metadata when advertised, legacy-only otherwise', async () => {
+    const httpModern = mockHttp((req, n) => {
+        if (String(req.method || 'POST') === 'GET') {
+            return { status: 200, headers: {}, bodyText: JSON.stringify({ protocolVersions: ['2026-07-28'] }), contentType: 'application/json' };
+        }
+        return rpcResult(n, {});
+    });
+    const t = createMcpTransport({ httpRequest: httpModern, supportedVersions: ['2025-06-18', '2026-07-28'], mode: 'auto', metadataUrl: 'https://x.test/meta' });
+    const info = await t.setup(null);
+    assert.equal(info.mode, 'modern');
+    assert.ok(methods(httpModern).indexOf('initialize') < 0, 'no legacy probe when metadata proves modern');
+    const httpLegacy = mockHttp((req) => {
+        if (String(req.method || 'POST') === 'GET') return { status: 404, headers: {}, bodyText: '{}', contentType: 'application/json' };
+        const body = JSON.parse(req.body);
+        const m = body.method;
+        const id = body.id;
+        if (m === 'initialize') return rpcResult(id, { protocolVersion: '2025-06-18', capabilities: {} }, {});
+        if (m === 'notifications/initialized') return { status: 202, headers: {}, bodyText: '', contentType: 'application/json' };
+        return rpcResult(id, {});
+    });
+    const t2 = createMcpTransport({ httpRequest: httpLegacy, supportedVersions: ['2025-06-18', '2026-07-28'], mode: 'auto', metadataUrl: 'https://x.test/meta' });
+    const info2 = await t2.setup(null);
+    assert.equal(info2.mode, 'legacy');
+});
+
+test('L18 modern never sends notifications/initialized', async () => {
+    const http = mockHttp((req, n) => rpcResult(n, { tools: [] }));
+    const t = createMcpTransport({ httpRequest: http, supportedVersions: ['2026-07-28'], mode: 'modern', discovery: 'server-discover' });
+    await t.setup(null).catch(() => {});
+    const t2 = createMcpTransport({ httpRequest: http, supportedVersions: ['2026-07-28'], mode: 'modern' });
+    await t2.setup(null);
+    assert.ok(methods(http).indexOf('notifications/initialized') < 0, 'modern must never send initialized');
+});
+
+test('L19 403/network/timeout/429 never trigger protocol fallback', async () => {
+    const mk = (resp) => mockHttp(() => resp);
+    for (const [resp, code] of [
+        [{ status: 403, headers: {}, bodyText: 'x', contentType: 'text/plain' }, 'auth_forbidden'],
+        [{ status: 0, headers: {}, bodyText: '', contentType: '' }, 'network_error'],
+        [{ status: 429, headers: {}, bodyText: 'x', contentType: 'text/plain' }, 'rate_limited']
+    ]) {
+        const t = createMcpTransport({ httpRequest: mk(resp), supportedVersions: ['2025-06-18', '2026-07-28'], mode: 'auto' });
+        await assert.rejects(t.setup(null), (e) => e && e.code === code, 'expected ' + code);
+        assert.equal(mk(resp).calls.length, 0);
+    }
+    const hanging = () => new Promise(() => {});
+    const t = createMcpTransport({ httpRequest: hanging, supportedVersions: ['2025-06-18', '2026-07-28'], mode: 'auto', timeoutMs: 15, initTimeoutMs: 15 });
+    await assert.rejects(t.setup(null), (e) => e && e.code === 'timeout');
 });

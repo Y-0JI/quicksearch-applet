@@ -52,6 +52,19 @@ function createMarketDataFromConfig(cfg) {
         timeoutMs: cfg.timeoutMs
     });
     const core = toolMod.createMarketDataTool({ adapter });
+    // Missing instrument for an instrument-requiring intent → symbol_required
+    // (a no_results-family code), never an empty-string tool call.
+    function _needSymbol(plan, p, symbols) {
+        const list = Array.isArray(symbols) && symbols.length ? symbols.slice()
+            : (Array.isArray(plan && plan.symbols) && plan.symbols.length ? plan.symbols.slice() : []);
+        if (list.length) return list;
+        // Entity/instrument phrase fallback: resolver decides via search_symbols.
+        const entity = (p && p.entity) || (plan && plan.entity);
+        if (entity && String(entity).trim()) return [String(entity).trim()];
+        const e = new Error('No instrument symbol or entity in market query');
+        e.code = 'symbol_required';
+        throw e;
+    }
     const marketDataTool = {
         detect: (q) => {
             try { return intentMod.detectFinancialIntent(q); } catch (e) { return null; }
@@ -64,16 +77,18 @@ function createMarketDataFromConfig(cfg) {
             const tfs = (p && p.timeframes) || (plan && plan.timeframes) || [];
             const tf = tfs.length ? tfs[0] : 'D1';
             if (intent === 'market_price') {
-                if (symbols.length > 1) return core.getPrices(symbols, cancellable);
-                return core.getPrice(symbols[0] || '', cancellable);
+                const list = _needSymbol(plan, p, symbols);
+                if (list.length > 1) return core.getPrices(list, cancellable);
+                return core.getPrice(list[0], cancellable);
             }
             if (intent === 'market_ohlcv') {
-                if (symbols.length > 1) {
+                const list = _needSymbol(plan, p, symbols);
+                if (list.length > 1) {
                     const parts = [];
-                    for (const s of symbols) parts.push(await core.getOhlcv(await core.resolveSymbol(s, cancellable), tf, 100, cancellable));
+                    for (const s of list) parts.push(await core.getOhlcv(await core.resolveSymbol(s, cancellable), tf, 100, cancellable));
                     return _mergeLabelled('market_ohlcv', parts);
                 }
-                return core.getOhlcv(await core.resolveSymbol(symbols[0] || '', cancellable), tf, 100, cancellable);
+                return core.getOhlcv(await core.resolveSymbol(list[0], cancellable), tf, 100, cancellable);
             }
             if (intent === 'technical_analysis') {
                 const runOne = async (raw) => {
@@ -87,26 +102,42 @@ function createMarketDataFromConfig(cfg) {
                     }
                     return core.getTechnicals(symbol, tf, cancellable);
                 };
-                if (symbols.length > 1) {
+                const list = _needSymbol(plan, p, symbols);
+                if (list.length > 1) {
                     const parts = [];
-                    for (const s of symbols) parts.push(await runOne(s));
+                    for (const s of list) parts.push(await runOne(s));
                     return _mergeLabelled('technicals', parts);
                 }
-                return runOne(symbols[0] || '');
+                return runOne(list[0]);
             }
-            if (intent === 'fundamental_analysis') return core.getFundamentals(symbols[0] || '', !!(plan && plan.wantsConsensus), cancellable);
+            if (intent === 'fundamental_analysis') {
+                const list = _needSymbol(plan, p, symbols);
+                return core.getFundamentals(list[0], !!(plan && plan.wantsConsensus), cancellable);
+            }
             if (intent === 'market_news') {
-                const md = await core.getNews(await core.resolveSymbol(symbols[0] || '', cancellable), cancellable);
+                const list = _needSymbol(plan, p, symbols);
+                const md = await core.getNews(await core.resolveSymbol(list[0], cancellable), cancellable);
                 if (plan && plan.wantsStory && md.rows && md.rows[0] && md.rows[0].id) {
                     return core.getStory(md.rows[0].id, cancellable);
                 }
                 return md;
             }
             if (intent === 'financial_screener') return core.runScreener({ columns: (plan && plan.columns) || [], filters: (plan && plan.filters) || {}, limit: (plan && plan.limit) }, cancellable);
-            if (intent === 'economic_data') return core.getEconomic(symbols[0] || ((plan && plan.economicSymbol) || ''), cancellable);
+            if (intent === 'economic_data') {
+                const explicit = symbols.length ? symbols[0] : ((plan && plan.economicSymbol) || '');
+                if (explicit && /:/.test(explicit)) return core.getEconomic(explicit, cancellable);
+                const entity = (p && p.econEntity) || (plan && plan.econEntity) || {};
+                if (!entity.country && !entity.indicator) {
+                    const e = new Error('No economic entity in market query');
+                    e.code = 'symbol_required';
+                    throw e;
+                }
+                const resolved = await core.resolveEconomic(entity, cancellable);
+                return core.getEconomic(resolved, cancellable);
+            }
             if (intent === 'symbol_lookup') {
+                const list = _needSymbol(plan, p, symbols);
                 const out = [];
-                const list = symbols.length ? symbols : [''];
                 for (const raw of list) {
                     const symbol = await core.resolveSymbol(raw, cancellable);
                     out.push({ symbol });
