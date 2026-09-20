@@ -43,6 +43,7 @@ function createMcpAdapter(opts) {
         modernVersions: opts.modernVersions,
         mode: opts.mode,
         discovery: opts.discovery,
+        metadataUrl: opts.metadataUrl,
         getAccessToken: authProvider && typeof authProvider.getAccessToken === 'function' ? () => authProvider.getAccessToken() : (typeof opts.getAccessToken === 'function' ? opts.getAccessToken : null),
         timeoutMs: opts.timeoutMs,
         initTimeoutMs: opts.initTimeoutMs,

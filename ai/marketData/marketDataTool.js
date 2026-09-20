@@ -69,17 +69,18 @@ function _priceArgsFor(registry, name, symbol) {
     else if (required.indexOf('count') >= 0) args.count = 1;
     return args;
 }
-// P2: price-bearing check — at least one row carries a numeric price-like
-// field (close/price/last/c or OHLC set). Verbatim server fields kept;
-// a tool whose response has none is skipped as incompatible price source.
-const _PRICE_KEYS = ['close', 'price', 'last', 'lastprice', 'last_price', 'c', 'open', 'high', 'low'];
+// P2: CURRENT-PRICE semantics — a row counts as current-price evidence ONLY
+// when it carries a price-like field (price/last/close/c). Bare OHLC fields
+// (open/high/low WITHOUT close) are bar components, not a current quote.
+// getOhlcv() keeps accepting full OHLC rows; getPrice() does not.
+const _QUOTE_KEYS = ['close', 'price', 'last', 'lastprice', 'last_price', 'c'];
 function _priceBearing(rows) {
     if (!Array.isArray(rows)) return false;
     for (const r of rows) {
         if (r == null) continue;
         if (typeof r === 'number' && isFinite(r)) return true;
         if (typeof r === 'object') {
-            for (const k of _PRICE_KEYS) {
+            for (const k of _QUOTE_KEYS) {
                 if (typeof r[k] === 'number' && isFinite(r[k])) return true;
             }
         }
@@ -130,15 +131,17 @@ function createMarketDataTool(opts) {
     }
     async function getPrice(rawSymbol, cancellable) {
         const symbol = await resolveSymbol(rawSymbol, cancellable);
-        const order = ['get_symbol_data', 'get_symbol_data_batch', 'get_ohlcv'];
+        const hit = await _tryPriceCandidates(symbol, ['get_symbol_data', 'get_symbol_data_batch', 'get_ohlcv'], cancellable);
+        if (!hit) throw _makeError('unsupported_tool', 'No compatible market-price tool available');
+        return _marketData('market_price', [symbol], hit.interval, hit.rows);
+    }
+    // Single shared price-candidate runner: schema-compatible args +
+    // price-bearing response required. Returns {interval, rows} or null.
+    async function _tryPriceCandidates(symbol, order, cancellable) {
         for (const name of order) {
             if (!registry.isCallable(name)) continue;
             const args = _priceArgsFor(registry, name, symbol);
             if (!args) continue;
-            // P2: get_symbol_data is NOT assumed to be a quote API. When the
-            // schema exposes a `columns` selector, request explicit price
-            // columns; otherwise accept the fixed shape but mark snapshot
-            // semantics (never "live tick").
             const props = _propsOf(registry, name);
             if (props.columns && args.columns == null) {
                 const cols = _quoteColumnsFor(name);
@@ -147,15 +150,11 @@ function createMarketDataTool(opts) {
             const v = registry.validate(name, args);
             if (!v.ok) continue;
             const res = await adapter.callTool(name, args, cancellable);
-            const out = _marketData('market_price', [symbol], args.interval || null, _asRows(res));
-            out.snapshot = true;
-            // P2 data-shape awareness: a market-price result must carry at
-            // least one price-bearing field; otherwise the tool is not a
-            // compatible price source for this call (try next candidate).
-            if (!_priceBearing(out.rows)) continue;
-            return out;
+            const rows = _asRows(res);
+            if (!_priceBearing(rows)) continue;
+            return { interval: args.interval || null, rows };
         }
-        throw _makeError('unsupported_tool', 'No compatible market-price tool available');
+        return null;
     }
     function _quoteColumnsFor(name) {
         // Only when the schema declares a columns-like selector; values are
@@ -188,7 +187,11 @@ function createMarketDataTool(opts) {
             if (v.ok) {
                 const res = await adapter.callTool('get_symbol_data_batch', args, cancellable);
                 const rows = _asRows(res);
-                return _marketData('market_price', resolved, null, rows.length ? rows : resolved.map((s) => ({ symbol: s })));
+                if (_priceBearing(rows)) {
+                    return _marketData('market_price', resolved, null, rows.length ? rows : resolved.map((s) => ({ symbol: s })));
+                }
+                // Batch responded but rows carry no current-price fields:
+                // fall through to bounded single calls (may use other tools).
             }
         }
         const rows = [];
@@ -199,18 +202,10 @@ function createMarketDataTool(opts) {
         return _marketData('market_price', resolved, null, rows);
     }
     async function getPriceBySymbol(symbol, cancellable) {
-        const order = ['get_symbol_data', 'get_ohlcv'];
-        for (const name of order) {
-            if (!registry.isCallable(name)) continue;
-            const args = _priceArgsFor(registry, name, symbol);
-            if (!args) continue;
-            const v = registry.validate(name, args);
-            if (!v.ok) continue;
-            const res = await adapter.callTool(name, args, cancellable);
-            const rows = _asRows(res);
-            return Object.assign({ symbol }, rows[0] && typeof rows[0] === 'object' ? rows[0] : { value: rows[0] });
-        }
-        throw _makeError('unsupported_tool', 'No compatible market-price tool available');
+        const hit = await _tryPriceCandidates(symbol, ['get_symbol_data', 'get_ohlcv'], cancellable);
+        if (!hit) throw _makeError('unsupported_tool', 'No compatible market-price tool available');
+        const rows = hit.rows;
+        return Object.assign({ symbol }, rows[0] && typeof rows[0] === 'object' ? rows[0] : { value: rows[0] });
     }
     async function getOhlcv(symbol, canonTf, count, cancellable) {
         const acc = _enumOf(registry, 'get_ohlcv', 'interval') || [];
@@ -336,7 +331,7 @@ function createMarketDataTool(opts) {
         return _marketData('screener', [], null, _asRows(res));
     }
 
-    return { resolveSymbol, resolveEconomic, getPrice, getPrices, getOhlcv, getTechnicals, getNews, getFundamentals, getStory, getEconomic, runScreener };
+    return { resolveSymbol, resolveEconomic, getPrice, getPriceBySymbol, getPrices, getOhlcv, getTechnicals, getNews, getFundamentals, getStory, getEconomic, runScreener };
 }
 
 // formatMarketContext(marketData) -> text grounding context for the LLM leg.

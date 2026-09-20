@@ -46,10 +46,12 @@ function createMarketDataFromConfig(cfg) {
         modernVersions: cfg.modernVersions,
         mode: cfg.mode,
         discovery: cfg.discovery,
+        metadataUrl: cfg.metadataUrl,
         authProvider: cfg.authProvider || auth,
         stateless: cfg.stateless,
         requireSession: cfg.requireSession,
-        timeoutMs: cfg.timeoutMs
+        timeoutMs: cfg.timeoutMs,
+        initTimeoutMs: cfg.initTimeoutMs
     });
     const core = toolMod.createMarketDataTool({ adapter });
     // Missing instrument for an instrument-requiring intent → symbol_required

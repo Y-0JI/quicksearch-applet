@@ -118,7 +118,7 @@ test('R6 single-symbol fallback loops without dropping', async () => {
     ]);
     const ad = mockAdapter(reg, {
         search_symbols: (args) => ({ symbols: [{ symbol: 'E:' + args.query }] }),
-        get_symbol_data: (args) => ({ close: args.symbol })
+        get_symbol_data: (args) => ({ symbol: args.symbol, close: 100 + String(args.symbol).length })
     });
     const tool = createMarketDataTool({ adapter: ad });
     const out = await tool.getPrices(['A', 'B', 'C'], null);
@@ -332,4 +332,98 @@ test('R19 non-price-shaped tool skipped as price source', async () => {
     const out = await tool.getPrice('X', null);
     assert.equal(ad.calls[ad.calls.length - 1].name, 'get_ohlcv', 'price-shape-less tool skipped');
     assert.equal(out.rows[0].c, 42);
+});
+
+test('R20 price matrix: quote fields pass, bare OHLC rejected', async () => {
+    const mk = (quoteRes) => {
+        const reg = regWith([
+            { name: 'search_symbols', description: 's', inputSchema: symSchema() },
+            { name: 'get_symbol_data', description: 'q', inputSchema: { type: 'object', properties: { symbol: { type: 'string' } }, required: ['symbol'] } }
+        ]);
+        const ad = mockAdapter(reg, { search_symbols: { symbols: [{ symbol: 'X:Y' }] }, get_symbol_data: quoteRes });
+        return createMarketDataTool({ adapter: ad });
+    };
+    assert.equal((await mk({ price: 123 }).getPrice('X', null)).rows[0].price, 123);
+    assert.equal((await mk({ last: 123 }).getPrice('X', null)).rows[0].last, 123);
+    assert.equal((await mk({ close: 123 }).getPrice('X', null)).rows[0].close, 123);
+    await assert.rejects(mk({ open: 123, high: 125, low: 120 }).getPrice('X', null), (e) => e && e.code === 'unsupported_tool');
+});
+
+test('R21 getPriceBySymbol: valid passes, priceless rejects', async () => {
+    const reg = regWith([
+        { name: 'search_symbols', description: 's', inputSchema: symSchema() },
+        { name: 'get_symbol_data', description: 'q', inputSchema: { type: 'object', properties: { symbol: { type: 'string' } }, required: ['symbol'] } }
+    ]);
+    const okAd = mockAdapter(reg, { get_symbol_data: { last: 9 } });
+    const okTool = createMarketDataTool({ adapter: okAd });
+    assert.equal((await okTool.getPriceBySymbol('X:Y', null)).last, 9);
+    const badAd = mockAdapter(reg, { get_symbol_data: { note: 'no price' } });
+    await assert.rejects(createMarketDataTool({ adapter: badAd }).getPriceBySymbol('X:Y', null), (e) => e && e.code === 'unsupported_tool');
+});
+
+test('R22 batch priceless rows fall back to singles', async () => {
+    const reg = regWith([
+        { name: 'search_symbols', description: 's', inputSchema: symSchema() },
+        { name: 'get_symbol_data', description: 'q', inputSchema: { type: 'object', properties: { symbol: { type: 'string' } }, required: ['symbol'] } },
+        { name: 'get_symbol_data_batch', description: 'qb', inputSchema: { type: 'object', properties: { symbols: { type: 'array', items: { type: 'string' } } }, required: ['symbols'] } }
+    ]);
+    const ad = mockAdapter(reg, {
+        search_symbols: (args) => ({ symbols: [{ symbol: 'E:' + args.query }] }),
+        get_symbol_data: (args) => ({ symbol: args.symbol, close: 50 }),
+        get_symbol_data_batch: { rows: [{ symbol: 'E:A', note: 'x' }] },
+        get_ohlcv: { bars: [{ c: 42 }] }
+    });
+    const tool = createMarketDataTool({ adapter: ad });
+    const out = await tool.getPrices(['A', 'B'], null);
+    assert.deepEqual(out.symbols, ['E:A', 'E:B']);
+    assert.ok(out.rows.every((r) => typeof r.close === 'number'), 'single-call fallback rows carry price');
+});
+
+test('R23 first candidate priceless, second valid wins', async () => {
+    const reg = regWith([
+        { name: 'search_symbols', description: 's', inputSchema: symSchema() },
+        { name: 'get_symbol_data', description: 'q', inputSchema: { type: 'object', properties: { symbol: { type: 'string' } }, required: ['symbol'] } },
+        { name: 'get_ohlcv', description: 'o', inputSchema: ohlcvSchema() }
+    ]);
+    const ad = mockAdapter(reg, {
+        search_symbols: { symbols: [{ symbol: 'X:Y' }] },
+        get_symbol_data: { description: 'shapeless' },
+        get_ohlcv: { bars: [{ c: 77 }] }
+    });
+    const out = await createMarketDataTool({ adapter: ad }).getPrice('X', null);
+    assert.equal(ad.calls[ad.calls.length - 1].name, 'get_ohlcv');
+    assert.equal(out.rows[0].c, 77);
+});
+
+test('R24 all candidates priceless fails existing behavior', async () => {
+    const reg = regWith([
+        { name: 'search_symbols', description: 's', inputSchema: symSchema() },
+        { name: 'get_symbol_data', description: 'q', inputSchema: { type: 'object', properties: { symbol: { type: 'string' } }, required: ['symbol'] } }
+    ]);
+    const ad = mockAdapter(reg, { search_symbols: { symbols: [{ symbol: 'X:Y' }] }, get_symbol_data: { open: 1, high: 2, low: 3 } });
+    await assert.rejects(createMarketDataTool({ adapter: ad }).getPrice('X', null), (e) => e && e.code === 'unsupported_tool');
+});
+
+test('R25 metadataUrl propagation factory to transport', async () => {
+    const { createMarketDataFromConfig } = require('../ai/marketData/marketDataFactory.js');
+    const seen = [];
+    const httpRequest = async (req) => {
+        seen.push(req);
+        if (String(req.method || 'POST') === 'GET') {
+            return { status: 200, headers: {}, bodyText: JSON.stringify({ protocolVersions: ['2026-07-28'] }), contentType: 'application/json' };
+        }
+        const body = JSON.parse(req.body);
+        return { status: 200, headers: {}, bodyText: JSON.stringify({ jsonrpc: '2.0', id: body.id, result: {} }), contentType: 'application/json' };
+    };
+    const { adapter } = createMarketDataFromConfig({ enabled: true, httpRequest, mode: 'modern', metadataUrl: 'https://meta.test/mcp' });
+    const info = await adapter.setup(null);
+    assert.equal(info.version, '2026-07-28');
+    assert.ok(seen.some((r) => String(r.method || '') === 'GET' && r.url === 'https://meta.test/mcp'), 'metadata GET reached transport');
+    const { adapter: adapter2 } = createMarketDataFromConfig({ enabled: true, httpRequest, mode: 'modern' });
+    const seen2 = [];
+    const http2 = async (req) => { seen2.push(req); const body = JSON.parse(req.body); return { status: 200, headers: {}, bodyText: JSON.stringify({ jsonrpc: '2.0', id: body.id, result: {} }), contentType: 'application/json' }; };
+    const f2 = createMarketDataFromConfig({ enabled: true, httpRequest: http2, mode: 'modern' });
+    await f2.adapter.setup(null);
+    assert.ok(!seen2.some((r) => String(r.method || '') === 'GET'), 'no metadata fetch when unconfigured (backward compatible)');
+    void adapter2;
 });
