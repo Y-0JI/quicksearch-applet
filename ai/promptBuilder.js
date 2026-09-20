@@ -153,6 +153,17 @@ const GROUNDED_GUIDANCE = [
     'If a claim relies only on a snippet, say so; if the evidence is insufficient to decide, say what remains unverified — do not invent a resolution and do not search again.'
 ].join(' ');
 
+// Appended ONLY on the financial market-data leg. Delay-aware, non-predictive,
+// attribution-required. Never claims real-time unless the tool states it.
+const MARKET_GUIDANCE = [
+    'Data pasar: TradingView. Ground the market answer ONLY on the TradingView market data provided.',
+    'Menurut data TradingView yang tersedia: frame prices and indicator values as retrieved data, never as live ticks; do not call the data "real-time" unless the tool response explicitly states it.',
+    'Indikator menunjukkan kondisi teknikal saat ini, bukan kepastian arah harga; jangan menjanjikan profit atau hasil trading.',
+    'Attribute market facts to TradingView; label any value computed by the AI from OHLCV as AI-computed, not as a TradingView figure.',
+    'When multiple symbols or timeframes are present, label each section clearly and never mix values without labels.',
+    'Do not emit raw MCP JSON unless the user explicitly asks for it.'
+].join(' ');
+
 // G3/G7.4: OPTIONAL structured-output guidance (Generative UI).
 // Default stays natural Markdown. The model may emit one exact JSON envelope
 // ONLY when a structured card genuinely helps; never forced, never invented data.
@@ -171,10 +182,11 @@ const STRUCTURED_UI_GUIDANCE = [
 // consumer that only inspects that it exists. Use buildSystemPrompt() for actual generation.
 const SYSTEM_PROMPT = CORE_SYSTEM_PROMPT;
 
-// opts: { intent?: {primary, flags?, depth?, secondary?}, grounded?: boolean }
+// opts: { intent?: {primary, flags?, depth?, secondary?}, grounded?: boolean, marketData?: boolean }
 // Builds CORE + the guidance for the detected intent (+depth block when the user explicitly
 // asked detailed/concise, +completeness when requested, +grounded evidence rules when this is
-// the evidence leg). Depth is read from intent.depth: 'detailed' swaps in the depth-aware
+// the evidence leg, +MARKET_GUIDANCE only on the financial market-data leg).
+// Depth is read from intent.depth: 'detailed' swaps in the depth-aware
 // intent guidance + DEPTH_DETAILED_GUIDANCE (explicit depth overrides default brevity),
 // 'concise' appends CONCISE_GUIDANCE. No intent -> core only.
 function buildSystemPrompt(opts) {
@@ -193,6 +205,7 @@ function buildSystemPrompt(opts) {
     else if (depth === 'concise') parts.push(CONCISE_GUIDANCE);
     if (flags.completeness) parts.push(COMPLETENESS_GUIDANCE);
     if (opts.grounded) parts.push(GROUNDED_GUIDANCE);
+    if (opts.marketData) parts.push(MARKET_GUIDANCE);
     parts.push(STRUCTURED_UI_GUIDANCE);
     return parts.join('\n\n');
 }
@@ -376,4 +389,4 @@ function buildHistoryMessages(history, limit) {
     return kept;
 }
 
-module.exports = { buildSystemPrompt, buildGroundingContext, buildUserPrompt, buildHistoryMessages, buildRuntimeContext, buildExpandedGroundingContext, SYSTEM_PROMPT, CORE_SYSTEM_PROMPT, STRUCTURED_UI_GUIDANCE, INTENT_GUIDANCE, DETAILED_INTENT_GUIDANCE, DEPTH_DETAILED_GUIDANCE, CONCISE_GUIDANCE, COMPLETENESS_GUIDANCE, GROUNDED_GUIDANCE, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_MSG_LEN, HISTORY_CHAR_BUDGET };
+module.exports = { buildSystemPrompt, buildGroundingContext, buildUserPrompt, buildHistoryMessages, buildRuntimeContext, buildExpandedGroundingContext, SYSTEM_PROMPT, CORE_SYSTEM_PROMPT, STRUCTURED_UI_GUIDANCE, INTENT_GUIDANCE, DETAILED_INTENT_GUIDANCE, DEPTH_DETAILED_GUIDANCE, CONCISE_GUIDANCE, COMPLETENESS_GUIDANCE, GROUNDED_GUIDANCE, MARKET_GUIDANCE, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_MSG_LEN, HISTORY_CHAR_BUDGET };

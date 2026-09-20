@@ -21,11 +21,44 @@ let _contractPath = null;
     }
 })();
 
+function _unwrapSingleFencedBlock(text) {
+    const t = String(text).trim();
+    if (t.length < 7) return null;
+    if (t.slice(0, 3) !== '```') return null;
+    if (t.slice(-3) !== '```') return null;
+    const firstLineEnd = t.indexOf('\n');
+    let innerStart = 3;
+    if (firstLineEnd !== -1) {
+        const fenceTag = t.slice(3, firstLineEnd).trim().toLowerCase();
+        if (fenceTag !== '' && fenceTag !== 'json') return null;
+        innerStart = firstLineEnd + 1;
+    } else {
+        const fenceTag = t.slice(3, -3).trim().toLowerCase();
+        if (fenceTag !== '' && fenceTag !== 'json') return null;
+        return null;
+    }
+    const inner = t.slice(innerStart, -3).trim();
+    if (!inner) return null;
+    return inner;
+}
+
+function _parseWithFenceTolerance(text) {
+    const direct = contractMod.parseGenerativeUIResponse(text);
+    if (direct && direct.valid === true && direct.value) return direct;
+    const inner = _unwrapSingleFencedBlock(text);
+    if (inner === null) return direct;
+    try {
+        return contractMod.parseGenerativeUIResponse(inner);
+    } catch (e) {
+        return direct;
+    }
+}
+
 function resolveAssistantUi(text) {
     try {
         if (typeof text !== 'string') return null;
         if (!contractMod || typeof contractMod.parseGenerativeUIResponse !== 'function') return null;
-        const r = contractMod.parseGenerativeUIResponse(text);
+        const r = _parseWithFenceTolerance(text);
         if (!r || r.valid !== true || !r.value) return null;
         return r.value;
     } catch (e) {
@@ -44,7 +77,7 @@ function diagnoseAssistantUi(text) {
         }
         let r = null;
         try {
-            r = contractMod.parseGenerativeUIResponse(text);
+            r = _parseWithFenceTolerance(text);
         } catch (eParse) {
             return { hasUi: false, reason: 'threw', parserLoaded: true, valid: false, hasValue: false,
                 threw: String(eParse && eParse.message || eParse).slice(0, 120) };

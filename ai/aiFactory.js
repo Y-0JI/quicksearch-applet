@@ -72,9 +72,10 @@ if (!sourceContentExpanderMod) {
     } catch (e2) {}
 }
 
-let generativeUiMod = null;
-_r = _tryRequireWithDiagnostics('generativeUi', ['./ai/generativeUi.js', './generativeUi.js', 'ai/generativeUi.js']);
+let generativeUiMod = null;_r = _tryRequireWithDiagnostics('generativeUi', ['./ai/generativeUi.js', './generativeUi.js', 'ai/generativeUi.js']);
 generativeUiMod = _r.module;
+let marketDataFactoryMod = null;_r = _tryRequireWithDiagnostics('marketDataFactory', ['./ai/marketData/marketDataFactory.js', './marketData/marketDataFactory.js', 'ai/marketData/marketDataFactory.js']);
+marketDataFactoryMod = _r.module;
 
 function resolveAssistantUi(text) {
     try {
@@ -438,6 +439,13 @@ function createAiEngine(opts) {
         }
     }
     const engineOpts = { provider, promptBuilder: opts.promptBuilder, sourceFormatter: opts.sourceFormatter, enableGrounding };
+    if (opts.marketDataTool !== undefined) engineOpts.marketDataTool = opts.marketDataTool;
+    else if (opts.marketData && marketDataFactoryMod && typeof marketDataFactoryMod.createMarketDataFromConfig === 'function') {
+        try {
+            const md = marketDataFactoryMod.createMarketDataFromConfig(opts.marketData);
+            if (md && md.marketDataTool) engineOpts.marketDataTool = md.marketDataTool;
+        } catch (e) {}
+    }
     if (opts.generationStrategy && typeof opts.generationStrategy === 'object') engineOpts.generationStrategy = opts.generationStrategy;
     if (sourceContentExpander) engineOpts.sourceContentExpander = sourceContentExpander;
     if (webSearchTool !== undefined) engineOpts.webSearchTool = webSearchTool;

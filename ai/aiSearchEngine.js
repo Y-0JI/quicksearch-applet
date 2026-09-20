@@ -10,6 +10,9 @@ let retrievalQualityMod = _tryReq('./ai/retrievalQuality.js') || _tryReq('./retr
 let toolCallMarkupMod = _tryReq('./ai/toolCallMarkup.js') || _tryReq('./toolCallMarkup.js') || _tryReq('ai/toolCallMarkup.js');
 let responseIntentMod = _tryReq('./ai/responseIntent.js') || _tryReq('./responseIntent.js') || _tryReq('ai/responseIntent.js');
 let liveDataMod = _tryReq('./ai/liveDataFallback.js') || _tryReq('./liveDataFallback.js') || _tryReq('ai/liveDataFallback.js');
+let financialIntentMod = _tryReq('./ai/marketData/financialIntent.js') || _tryReq('./marketData/financialIntent.js') || _tryReq('ai/marketData/financialIntent.js');
+let minCallPlannerMod = _tryReq('./ai/marketData/minCallPlanner.js') || _tryReq('./marketData/minCallPlanner.js') || _tryReq('ai/marketData/minCallPlanner.js');
+let marketDataToolMod = _tryReq('./ai/marketData/marketDataTool.js') || _tryReq('./marketData/marketDataTool.js') || _tryReq('ai/marketData/marketDataTool.js');
 if (!promptBuilderMod) try { global.log("[quicksearch@yoji] aiSearchEngine missing promptBuilder"); } catch (e) {}
 if (!sourceFormatterMod) try { global.log("[quicksearch@yoji] aiSearchEngine missing sourceFormatter"); } catch (e) {}
 
@@ -26,7 +29,11 @@ const ERROR_MESSAGES = {
     auth_error: 'AI authentication failed',
     rate_limited: 'AI rate limited',
     network_error: 'AI network error',
-    cancelled: null
+    cancelled: null,
+    ambiguous_symbol: 'Ambiguous symbol — clarification needed',
+    unsupported_timeframe: 'Unsupported timeframe for this market tool',
+    auth_forbidden: 'Market data access forbidden',
+    auth_expired: 'Market data authentication expired'
 };
 
 // P2 (AI Pipeline V3): ai/responseIntent.js is the SINGLE source of truth for live/current
@@ -333,6 +340,8 @@ function createAISearchEngine(deps) {
         };
     }
 
+    const marketDataTool = deps.marketDataTool || null;
+
     let gen = 0;
     let currentCancellable = null;
     let destroyed = false;
@@ -414,9 +423,39 @@ function createAISearchEngine(deps) {
 
     function _stale(myGen) { return myGen !== gen; }
 
-    // P4/P9: build a grounded-leg provider payload: runtime context marks web mode +
-    // evidence used, and the web (factual) generation temperature is forwarded as a hint.
-    function _groundedPayload(q, groundingContext, groundingContextObj, sources) {
+// Financial market leg (TradingView MCP, additive): detect BEFORE the live web
+// path. Returns the detected plan object or null (→ existing flow untouched).
+function _detectFinancial(q) {
+    try {
+        if (financialIntentMod && typeof financialIntentMod.detectFinancialIntent === 'function') {
+            return financialIntentMod.detectFinancialIntent(String(q || ''));
+        }
+    } catch (e) {}
+    return null;
+}
+// Financial market leg payload: same shape as the grounded web leg, but the
+// system prompt carries MARKET_GUIDANCE (financial leg only) and the grounding
+// context is market-native text (never web sources).
+function _marketPayload(promptBuilder, q, marketContext) {
+    let systemPrompt = '';
+    try {
+        const intent = _detectIntent(q);
+        systemPrompt = promptBuilder.buildSystemPrompt({ intent: intent || undefined, grounded: true, marketData: true });
+    } catch (e) { systemPrompt = ''; }
+    if (!systemPrompt) {
+        try { systemPrompt = promptBuilder.buildSystemPrompt({ marketData: true }); } catch (e2) { systemPrompt = ''; }
+    }
+    return { query: q, systemPrompt, groundingContext: marketContext, searchResults: [], tools: [] };
+}
+function _marketErrorCode(err) {
+    if (!err) return 'provider_error';
+    if (typeof err.code === 'string' && err.code) return err.code;
+    return 'provider_error';
+}
+
+// P4/P9: build a grounded-leg provider payload: runtime context marks web mode +
+// evidence used, and the web (factual) generation temperature is forwarded as a hint.
+function _groundedPayload(q, groundingContext, groundingContextObj, sources) {
         const p = {
             query: q,
             systemPrompt: _buildRequestSystemPrompt(promptBuilder, true, q),
@@ -622,6 +661,7 @@ function createAISearchEngine(deps) {
             if (extra.stage) { e.stage = extra.stage; e._stage = extra.stage; }
             if (extra.status != null) { e.status = extra.status; e.httpStatus = extra.status; }
             if (extra.name) e.name = extra.name;
+            if (extra.candidates) e.candidates = extra.candidates;
             return callbacks(e);
         }
         if (callbacks && typeof callbacks.onError === 'function') {
@@ -629,6 +669,7 @@ function createAISearchEngine(deps) {
             if (extra.stage) { payload.stage = extra.stage; payload._stage = extra.stage; }
             if (extra.status != null) { payload.status = extra.status; payload.httpStatus = extra.status; }
             if (extra.name) payload.name = extra.name;
+            if (extra.candidates) payload.candidates = extra.candidates;
             return callbacks.onError(payload);
         }
         if (callbacks && typeof callbacks.onDone === 'function') {
@@ -637,6 +678,7 @@ function createAISearchEngine(deps) {
             if (extra.stage) { e.stage = extra.stage; e._stage = extra.stage; }
             if (extra.status != null) { e.status = extra.status; e.httpStatus = extra.status; }
             if (extra.name) e.name = extra.name;
+            if (extra.candidates) e.candidates = extra.candidates;
             return callbacks.onDone(e);
         }
     }
@@ -675,6 +717,73 @@ function createAISearchEngine(deps) {
                 try { p.history = historyMessages; } catch (e) {}
             }
             return p;
+        }
+
+        // Financial market leg (TradingView MCP, additive): runs BEFORE the live
+        // web path. marketDataTool is injected (mock-first); without it this block
+        // is inert and the existing flow is byte-identical. Fail closed: market
+        // errors surface honestly, never substituted with web/stale numbers.
+        if (enableGrounding && marketDataTool && typeof marketDataTool.fetch === 'function') {
+            let finPlan = null;
+            try {
+                finPlan = (typeof marketDataTool.detect === 'function')
+                    ? marketDataTool.detect(q)
+                    : _detectFinancial(q);
+            } catch (e) { finPlan = null; }
+            if (finPlan) {
+                (async () => {
+                    if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                    let marketData = null;
+                    try {
+                        marketData = await marketDataTool.fetch(finPlan, myCancellable);
+                    } catch (mErr) {
+                        if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                        const code = _marketErrorCode(mErr);
+                        if (code === 'cancelled') return;
+                        let msg = (mErr && mErr.message) || ERROR_MESSAGES[code] || ERROR_MESSAGES.provider_error;
+                        try {
+                            if (marketDataToolMod && typeof marketDataToolMod.sanitizeMarketError === 'function') {
+                                msg = marketDataToolMod.sanitizeMarketError(msg);
+                            } else {
+                                msg = String(msg).replace(/Bearer\s+[A-Za-z0-9._\-~+\/]+=*/gi, 'Bearer [REDACTED]');
+                            }
+                        } catch (e2) {}
+                        const extra = {};
+                        if (mErr && mErr.candidates) extra.candidates = mErr.candidates;
+                        return _deliverError(myGen, myCancellable, callbacks, code, msg, extra);
+                    }
+                    if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                    if (!marketData || marketData.type !== 'market_data') {
+                        return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
+                    }
+                    let marketContext = '';
+                    try {
+                        if (marketDataToolMod && typeof marketDataToolMod.formatMarketContext === 'function') {
+                            marketContext = marketDataToolMod.formatMarketContext(marketData);
+                        } else {
+                            marketContext = 'Market data (TradingView): ' + JSON.stringify(marketData.rows || []).slice(0, 4000);
+                        }
+                    } catch (e) { marketContext = ''; }
+                    try {
+                        provider.request(_withHistory(_marketPayload(promptBuilder, q, marketContext)), myCancellable, (err2, res2) => {
+                            if (_stale(myGen) || _isCancelled(myCancellable) || destroyed) return;
+                            if (err2) {
+                                const n3 = _normalizeProviderError(err2);
+                                if (n3.code === 'cancelled') return;
+                                return _deliverError(myGen, myCancellable, callbacks, n3.code, n3.message, { stage: n3.stage, status: n3.status, name: n3.name });
+                            }
+                            if (!res2 || res2.type !== 'answer' || typeof res2.text !== 'string' || !String(res2.text).trim()) {
+                                return _deliverError(myGen, myCancellable, callbacks, 'invalid_response', ERROR_MESSAGES.invalid_response);
+                            }
+                            return _deliverAnswer(myGen, myCancellable, callbacks, res2.text, [], _metaOf(res2));
+                        });
+                    } catch (e) {
+                        const n = _normalizeProviderError(e);
+                        return _deliverError(myGen, myCancellable, callbacks, n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
+                    }
+                })();
+                return;
+            }
         }
 
         // P3 (AI Pipeline V3): for live/current queries, web search FIRST then ONE grounded AI
@@ -1033,6 +1142,57 @@ function createAISearchEngine(deps) {
         let groundedSources = null;
         let toolCallPending = false;
         let settled = false;
+
+        // Financial market leg (TradingView MCP, additive — mirrors search()):
+        // runs BEFORE the live web path. Inert without injected marketDataTool.
+        if (enableGrounding && marketDataTool && typeof marketDataTool.fetch === 'function') {
+            let finPlanS = null;
+            try {
+                finPlanS = (typeof marketDataTool.detect === 'function')
+                    ? marketDataTool.detect(q)
+                    : _detectFinancial(q);
+            } catch (e) { finPlanS = null; }
+            if (finPlanS) {
+                (async () => {
+                    if (settled || _staleS() || _isCancelled(myCancellable) || destroyed) return;
+                    let marketData = null;
+                    try {
+                        marketData = await marketDataTool.fetch(finPlanS, myCancellable);
+                    } catch (mErr) {
+                        if (settled || _staleS() || _isCancelled(myCancellable) || destroyed) return;
+                        const code = _marketErrorCode(mErr);
+                        if (code === 'cancelled') return;
+                        let msg = (mErr && mErr.message) || ERROR_MESSAGES[code] || ERROR_MESSAGES.provider_error;
+                        try { msg = String(msg).replace(/Bearer\s+[A-Za-z0-9._\-~+\/]+=*/gi, 'Bearer [REDACTED]'); } catch (e2) {}
+                        return emitError(code, msg, mErr && mErr.candidates ? { candidates: mErr.candidates } : undefined);
+                    }
+                    if (settled || _staleS() || _isCancelled(myCancellable) || destroyed) return;
+                    if (!marketData || marketData.type !== 'market_data') {
+                        return emitError('invalid_response', ERROR_MESSAGES.invalid_response);
+                    }
+                    let marketContext = '';
+                    try {
+                        if (marketDataToolMod && typeof marketDataToolMod.formatMarketContext === 'function') {
+                            marketContext = marketDataToolMod.formatMarketContext(marketData);
+                        } else {
+                            marketContext = 'Market data (TradingView): ' + JSON.stringify(marketData.rows || []).slice(0, 4000);
+                        }
+                    } catch (e) { marketContext = ''; }
+                    accumulatedText = '';
+                    try {
+                        provider.streamRequest(
+                            _withHistory(_marketPayload(promptBuilder, q, marketContext)),
+                            myCancellable,
+                            handleSecondStreamEvent
+                        );
+                    } catch (e) {
+                        const n = _normalizeProviderError(e);
+                        emitError(n.code, n.message, { stage: n.stage, status: n.status, name: n.name });
+                    }
+                })();
+                return;
+            }
+        }
 
         // P3 (AI Pipeline V3): for live/current queries, WEB SEARCH FIRST then stream ONLY the
         // grounded synthesis — a first AI draft is never generated on the successful path, so

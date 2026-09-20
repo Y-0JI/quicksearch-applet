@@ -23,7 +23,7 @@ const _COMPLETENESS_RE = /(semua|seluruh|lengkap|lengkapnya|daftar\s*lengkap|sku
 // "live" counts as a temporal marker only when it is NOT part of a technology noun phrase
 // (live streaming/chat/video/tv/…) — otherwise "Apa itu live streaming?" is vocabulary, not live.
 const _STRONG_LIVE_RE = /(hari\s*ini|minggu\s*ini|sekarang|saat\s*ini|terbaru|terkini|\blive\b(?!\s+(?:streaming|stream|chat|video|tv|show|music|concert|event|webinar|session|broadcast|feed))|\blatest\b|\btoday\b|\bcurrent\b|right\s*now|real-?time|besok|kemarin)/i;
-const _LIVE_SUBJECT_RE = /(harga|saham|kurs|cuaca|skor|klasemen|jadwal|berita|hasil\s*pertandingan|schedule|price|score|weather|news|stock|forex)/i;
+const _LIVE_SUBJECT_RE = /(harga|saham|kurs|cuaca|skor|klasemen|jadwal|berita|pertandingan|laga|fixture|hasil\s*pertandingan|schedule|price|score|weather|news|stock|forex)/i;
 const _DATA_RE = /(berapa|statistik|spesifikasi|angka|jumlah|total|ukuran|data|persentase|rate|specs|specification|statistics)/i;
 const _LIST_RE = /(daftar|list|pemain|skuad|anggota|items|checklist|semua\s*pemain|nama\s*[-–]|menu)/i;
 
@@ -95,12 +95,24 @@ function _hasConceptualIntent(s) {
     return _CONCEPTUAL_RE.test(s);
 }
 
+// FIX-C: temporal event question asks for an ACTUAL upcoming fixture, not an
+// explanation — treat as live even when the wording also matches the generic
+// explanation classifier ("kapan" is in _isExplanation). Generic vocabulary only:
+// temporal marker + event word, no team whitelist. Conceptual/process questions
+// ("bagaimana ... dibuat", "cara kerja ...") have no temporal marker, stay NOT live.
+const _TEMPORAL_MARKER_RE = /\b(kapan|berikutnya|selanjutnya|mendatang|next|upcoming)\b/i;
+const _EVENT_WORD_RE = /(jadwal|pertandingan|laga|fixture|bermain|\bmain\b|bertanding|lawan|musuh|match|skor|klasemen|liga)/i;
+function _isTemporalEventRequest(s) {
+    return _TEMPORAL_MARKER_RE.test(s) && _EVENT_WORD_RE.test(s);
+}
+
 // FINAL PRIORITY RULE: strong temporal/live signal is checked FIRST and always wins. Then
-// vocabulary, then conceptual; then a live subject with an implicit current-value request.
-// prediction/perkiraan/update never matter.
+// vocabulary, then temporal-event request, then conceptual; then a live subject with an
+// implicit current-value request. prediction/perkiraan/update never matter.
 function _isIntentLive(s) {
     if (_STRONG_LIVE_RE.test(s)) return true;
     if (_isDefinitionQuery(s)) return false;
+    if (_isTemporalEventRequest(s)) return true;
     if (_hasConceptualIntent(s)) return false;
     return _LIVE_SUBJECT_RE.test(s);
 }
@@ -139,7 +151,9 @@ function detectResponseIntent(query) {
     out.flags.live = _isIntentLive(normalized);
     out.depth = _detectDepth(normalized);
 
-    if (_isComparison(normalized)) {
+    if (_isTemporalEventRequest(normalized)) {
+        out.primary = 'current';
+    } else if (_isComparison(normalized)) {
         out.primary = 'comparison';
     } else if (_isTroubleshooting(normalized)) {
         out.primary = 'troubleshooting';
@@ -149,7 +163,7 @@ function detectResponseIntent(query) {
         out.primary = 'explanation';
     } else if ((out.flags.completeness && _LIST_RE.test(normalized)) || /(daftar\s*(lengkap|semua|seluruh)|semua\s+pemain|skuad\s+lengkap|full\s+(list|squad)|list\s+all|complete\s+list)/i.test(normalized)) {
         out.primary = 'list';
-    } else if (out.flags.live && /(harga|saham|kurs|cuaca|skor|hasil|klasemen|berita|jadwal|schedule|price|score|weather|news|hasil\s+pertandingan)/i.test(normalized)) {
+    } else if (out.flags.live && /(harga|saham|kurs|cuaca|skor|hasil|klasemen|berita|jadwal|pertandingan|laga|fixture|schedule|price|score|weather|news|hasil\s+pertandingan)/i.test(normalized)) {
         out.primary = 'current';
         out.flags.completeness = out.flags.completeness; // keep flag as-is
     } else if (_DATA_RE.test(normalized) || _LIST_RE.test(normalized)) {
