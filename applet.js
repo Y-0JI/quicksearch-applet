@@ -880,6 +880,7 @@ class QuickSearchApplet extends Applet.IconApplet {
         this.settings.bind("debounce-ms", "debounce_ms", () => this._rebuildEngine());
         this.settings.bind("show-recent", "show_recent");
         this.settings.bind("panel-icon", "panel_icon", () => this._applyPanelIcon());
+        this._applyPanelIcon();
         this.settings.bind("recent-queries", "recent_queries_json");
         this.settings.bind("web-search-api-key", "web_search_api_key", () => { this._rebuildEngine(); this._rebuildAiEngine(); });
         this.settings.bind("searxng-url", "searxng_url", () => { this._rebuildEngine(); this._rebuildAiEngine(); });
